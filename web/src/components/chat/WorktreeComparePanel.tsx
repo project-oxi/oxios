@@ -74,9 +74,9 @@ function classifyDiffLine(line: string): RawDiffLine['kind'] {
 }
 
 const LINE_STYLE: Record<RawDiffLine['kind'], string> = {
-  hunk: 'text-cyan-600 dark:text-cyan-400 bg-cyan-500/5',
-  add: 'text-green-700 dark:text-green-400 bg-green-500/10',
-  del: 'text-red-700 dark:text-red-400 bg-red-500/10',
+  hunk: 'text-diff-hunk bg-diff-hunk/5',
+  add: 'text-diff-add bg-diff-add/10',
+  del: 'text-diff-del bg-diff-del/10',
   file: 'text-muted-foreground font-medium',
   context: 'text-foreground/70',
 }

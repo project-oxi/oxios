@@ -126,6 +126,10 @@
   /* Interactive primary — dedicated button fill (canonical blue) */
   --color-interactive-primary: var(--color-interactive-primary);
   --color-interactive-primary-foreground: var(--color-interactive-primary-foreground);
+  /* Diff line colors (git diff renderer) */
+  --color-diff-add: var(--color-diff-add);
+  --color-diff-del: var(--color-diff-del);
+  --color-diff-hunk: var(--color-diff-hunk);
 
   /* Micro label text size — badges, metadata only. Prefer text-xs for readable text. */
   --text-2xs: 10px;
@@ -227,6 +231,10 @@
   /* Interactive primary (canonical blue button fill) */
   --color-interactive-primary:           oklch(0.45 0.14 250);
   --color-interactive-primary-foreground: oklch(0.985 0 0);
+  /* Diff line colors (add=green / del=red / hunk=cyan) */
+  --color-diff-add: oklch(0.52 0.15 150);
+  --color-diff-del: oklch(0.54 0.22 25);
+  --color-diff-hunk: oklch(0.55 0.11 220);
 
   /* ── Tier 3: Component tokens ─────────────────────────────────────── */
   --button-radius:         var(--radius-md);
@@ -373,6 +381,10 @@
   /* Interactive primary — lighter fill for dark (dark text passes) */
   --color-interactive-primary:           oklch(0.70 0.14 250);
   --color-interactive-primary-foreground: oklch(0.15 0.02 265);
+  /* Diff line colors — L-only lift for dark (§3.1) */
+  --color-diff-add: oklch(0.78 0.16 150);
+  --color-diff-del: oklch(0.72 0.19 22);
+  --color-diff-hunk: oklch(0.78 0.12 220);
 
   /* Primary follows --color-interactive-primary (dark value set above). */
   --accent: var(--color-surface-muted);

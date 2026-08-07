@@ -5,6 +5,7 @@
 //! - StateStore markdown/JSON read/write
 //! - EventBus publish/subscribe
 //! - Agent lifecycle and orchestrator integration
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 #[path = "common/mod.rs"]
 mod common;

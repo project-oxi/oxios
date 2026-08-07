@@ -7,6 +7,10 @@
 //! into a shared mpsc channel. The gateway dispatches them concurrently
 //! with semaphore-bounded parallelism.
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod active_web_dist;
 pub mod channel;
 pub mod error_classify;

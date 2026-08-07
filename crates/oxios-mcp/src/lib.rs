@@ -24,6 +24,10 @@
 //!              MCP Server Process
 //! ```
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod client;
 pub mod protocol;
 pub mod validation;

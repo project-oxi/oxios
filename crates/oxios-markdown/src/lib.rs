@@ -22,6 +22,10 @@
 //! let content = fs.read("brain", "Rust.md").unwrap();
 //! ```
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod backlinks;
 pub mod chat;
 pub mod checklist;

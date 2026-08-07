@@ -5,6 +5,7 @@
 //! - L2 model/provider swap when L1 is exhausted — records a FallbackEvent.
 //! - QuotaExhausted skips L1 (goes straight to provider swap).
 //! - AttemptBudget bounds total attempts.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 #[path = "common/mod.rs"]
 mod common;

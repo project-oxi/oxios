@@ -14,6 +14,8 @@
 //!    to `Always` in Phase 3, after the dynamic resolver).
 //! 5. The binary-overload fix keeps `grant_key()` returning `exec:<binary>`
 //!    in allow-list mode (the `command` field must NOT leak into binary).
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -1,4 +1,5 @@
 //! Gateway unit tests — channel registration and message type validation.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use oxios_gateway::message::{IncomingMessage, OutgoingMessage};
 

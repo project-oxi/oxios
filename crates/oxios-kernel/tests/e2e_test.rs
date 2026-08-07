@@ -7,6 +7,7 @@
 //! `MockSupervisor` and `MockIntentEngine`. Uses `Orchestrator::with_config`
 //! to control evolution iterations explicitly, so each test verifies a
 //! specific pipeline path.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 #[path = "common/mod.rs"]
 mod common;

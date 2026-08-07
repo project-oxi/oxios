@@ -5,6 +5,9 @@
 //! persistent state management.
 
 #![allow(missing_docs)]
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 
 // ─── Lifecycle ──────────────────────────────────────────────────────
 // Agent 생성, 실행, 종료. OS의 init + process management.

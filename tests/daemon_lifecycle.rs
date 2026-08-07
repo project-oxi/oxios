@@ -3,6 +3,7 @@
 //! Tests DaemonManager's status resolution, stale pidfile cleanup,
 //! and orphan detection — the multi-source liveness interpretation
 //! that is the core of daemon reliability.
+#![allow(clippy::unwrap_used)] // `.unwrap()` on setup ops is idiomatic in tests (workspace convention)
 
 use oxios_kernel::{DaemonManager, DaemonStatus};
 

@@ -1,6 +1,8 @@
 //! Performance benchmarks for oxios-kernel.
 //!
 //! Run with: `cargo bench --bench kernel_bench`
+#![allow(missing_docs)] // criterion_group macro items lack docs (benches have no public API)
+#![allow(clippy::unwrap_used)] // bench setup uses `.unwrap()` (idiomatic for benchmarks)
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use tempfile::TempDir;

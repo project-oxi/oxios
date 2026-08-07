@@ -3,6 +3,7 @@
 //! Tests System Call methods without a real LLM. Verifies core kernel
 //! subsystems (state_store, git_layer, audit_trail, budget, resource_monitor)
 //! work together correctly.
+#![allow(clippy::unwrap_used)] // `.unwrap()` on setup ops is idiomatic in tests (workspace convention)
 
 use std::path::PathBuf;
 use tempfile::TempDir;

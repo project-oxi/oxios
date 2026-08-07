@@ -7,6 +7,10 @@
 //! surviving external call is `review`, gated on a Directive that carries
 //! acceptance criteria.
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 pub mod resilience;
 
 pub mod directive;

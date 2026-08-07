@@ -6,6 +6,7 @@
 //! moved by the expected delta.
 //!
 //! Run with `cargo test -p oxios-gateway --test reliability_metrics`.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

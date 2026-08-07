@@ -4,6 +4,10 @@
 //! Use `oxios --foreground` to run in the foreground (for debugging).
 //! First run without credentials triggers an interactive setup wizard.
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 mod commands;
 mod default_skills;
 mod embedded_web;

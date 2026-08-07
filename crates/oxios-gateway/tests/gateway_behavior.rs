@@ -13,6 +13,7 @@
 //! kernel's canonical fakes instead of duplicating them.
 
 #![allow(dead_code)]
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 #[path = "../../oxios-kernel/tests/common/mod.rs"]
 mod common;

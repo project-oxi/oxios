@@ -27,6 +27,10 @@
 //! use oxios_memory::cosine_similarity_f32;
 //! ```
 
+// `.unwrap()` in tests is idiomatic (workspace convention); suppressed only
+// under `cfg(test)` so production code remains linted by the `--lib` clippy pass.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 // ─── Memory subsystem modules (extracted from oxios-kernel) ──
 pub mod memory;
 

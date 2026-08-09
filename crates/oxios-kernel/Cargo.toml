@@ -77,8 +77,8 @@ once_cell = { workspace = true }
 blake3 = { workspace = true }
 tracing-subscriber = { workspace = true }
 parking_lot = { workspace = true }
-wasmtime = { version = "36.0.10", features = ["cranelift"], optional = true }
-wasmtime-wasi = { version = "36.0.10", optional = true }
+wasmtime = { version = "36.0.13", features = ["cranelift"], optional = true }
+wasmtime-wasi = { version = "36.0.13", optional = true }
 sysinfo = "0.35"
 dirs = { workspace = true }
 libc = { workspace = true }

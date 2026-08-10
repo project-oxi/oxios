@@ -279,15 +279,7 @@ export function SearchView({ query: propQuery, messageId }: SearchViewProps) {
                             </p>
                           )}
                         </div>
-                        <div className="flex gap-1 shrink-0 mt-0.5 items-center">
-                          {/* Screenshot thumbnail (lazy-loaded from /api/screenshot) */}
-                          <img
-                            src={`/api/screenshot?url=${encodeURIComponent(item.url)}&w=400&h=300`}
-                            alt=""
-                            loading="lazy"
-                            className="w-16 h-12 rounded border border-border/40 object-cover bg-muted/30"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                          />
+                        <div className="flex gap-1 shrink-0 mt-0.5">
                           {cached && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-status-success-subtle text-status-success-on-subtle">
                               Browsed

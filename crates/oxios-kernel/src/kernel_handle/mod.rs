@@ -21,12 +21,16 @@ pub mod project_api;
 pub mod security_api;
 pub mod state_api;
 pub mod timeline_api;
+#[cfg(feature = "screenshot")]
+pub mod screenshot_api;
 pub mod token_maxing_api;
 
 pub use crate::host_tools::HostToolsApi;
 pub use a2a_api::A2aApi;
 pub use agent_api::AgentApi;
 pub use browser_api::BrowserApi;
+#[cfg(feature = "screenshot")]
+pub use screenshot_api::{ScreenshotEngine, ScreenshotViewport};
 pub use calendar_api::CalendarApi;
 pub use compression_api::CompressionApi;
 pub use email_api::EmailApi;

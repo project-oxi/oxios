@@ -10,6 +10,10 @@ repository = "https://github.com/project-oxi/oxios"
 default = ["sqlite-memory"]
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
 native-browser = ["oxicode-sdk/native-browser"]
+# screenshot: CSS-aware rendering via oxibrowser-core 0.20 (Blitz-backed).
+# Independent of native-browser — creates its own Browser instance for
+# visual capture, separate from the SDK's browse-tool engine.
+screenshot = ["dep:oxibrowser-core"]
 sqlite-memory = ["dep:rusqlite", "dep:sqlite-vec", "oxios-memory/sqlite-memory"]
 
 # MLX embedding provider (Apple Silicon only)
@@ -38,6 +42,11 @@ oxicode-agent = "0.66.0"
 # features). Published to crates.io; resolved from the registry.
 oximemo-core = { version = "0.7", optional = true }
 oxiline-core = { version = "0.3", optional = true }
+# oxibrowser-core 0.20 — CSS-aware headless browser (Blitz-backed).
+# Behind the `screenshot` feature. Independent of the SDK's oxibrowser-core
+# 0.16 (used by native-browser) — this creates a separate Browser instance
+# for visual screenshot capture with real CSS rendering.
+oxibrowser-core = { version = "0.20", optional = true }
 # oxicode-ai no longer needed directly — all types re-exported via oxicode-sdk
 tokio = { workspace = true }
 futures = { workspace = true }

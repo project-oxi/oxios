@@ -87,6 +87,10 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
             "browse_script",
         ]);
 
+        // Screenshot capture (CSS-aware, Blitz-backed).
+        #[cfg(feature = "screenshot")]
+        names.push("browse_screenshot");
+
         names
     }
 

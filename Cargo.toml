@@ -177,7 +177,7 @@ qrcode = "0.14"
 local-ip-address = "0.6"
 hostname = "0.4"
 [features]
-default = ["web", "cli", "browser", "sqlite-memory"]
+default = ["web", "cli", "browser", "screenshot", "sqlite-memory"]
 # web: HTTP API server (Axum). Source: src/api/ (merged from surface/oxios-web per RFC-026)
 web = ["dep:axum", "dep:tower", "dep:tower-http",
        "dep:mime_guess", "dep:futures-util", "dep:tokio-stream",
@@ -187,6 +187,10 @@ cli = ["dep:reedline"]
 # telegram: Telegram bot channel. Source: src/channels/telegram/ (merged from channels/oxios-telegram per RFC-026)
 telegram = []
 browser = ["oxios-kernel/native-browser"]
+# screenshot: CSS-aware screenshot rendering via oxibrowser-core 0.20 (Blitz-backed).
+# Produces real pixel-accurate PNGs of web pages — full navigation, JS execution,
+# external CSS loading, then Blitz CSS render. Independent of SDK version.
+screenshot = ["oxios-kernel/screenshot"]
 sqlite-memory = ["oxios-kernel/sqlite-memory"]
 embedding-gguf = ["oxios-kernel/embedding-gguf"]
 # First-party app modules (opt-in, default-off). See
@@ -248,9 +252,12 @@ webbrowser = "1.0"
  toml_edit = "0.22"
 include_dir = "0.7"
 
-# oxibrowser is a sister project (unchanged by the oxi->oxicode rename) but its
-# core crate was bumped to 0.17 by oxicode-sdk 0.66.0's native-browser feature.
-oxibrowser = "0.17"
+# oxibrowser is a sister project (unchanged by the oxi->oxicode rename).
+# 0.20.0 ships the Blitz-backed CSS rendering pipeline (oxibrowser-render,
+# integrated into oxibrowser-core): Stylo CSS + Taffy layout + vello_cpu
+# paint → real pixel screenshots via Tab::screenshot().
+# oxibrowser-core is added to oxios-kernel behind the `screenshot` feature.
+oxibrowser = "0.20"
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }

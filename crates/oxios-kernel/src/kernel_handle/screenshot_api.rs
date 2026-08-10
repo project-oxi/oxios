@@ -78,17 +78,28 @@ impl ScreenshotEngine {
     ///
     /// Performs full page load (HTTP fetch + external CSS + JS execution),
     /// then renders the live DOM through the Blitz pipeline. The tab is
-    /// closed after capture.
+    /// always closed — even on error — to prevent session leaks.
     ///
     /// # Arguments
-    /// * `url` - Target URL
+    /// * `url` - Target URL (must be `http` or `https`)
     /// * `viewport` - Capture dimensions (width controls layout; height is
     ///   informational since screenshots are always full-page)
     ///
     /// # Errors
-    /// Returns an error if the browser cannot initialize, navigation fails,
-    /// or the render pipeline errors.
+    /// Returns an error if the URL scheme is invalid, the browser cannot
+    /// initialize, navigation times out (30s), or the render pipeline errors.
     pub async fn capture(&self, url: &str, viewport: ScreenshotViewport) -> anyhow::Result<Vec<u8>> {
+        // Defense-in-depth: reject non-http(s) schemes. oxibrowser-core's
+        // own SSRF filter (CIDR blocking, scheme-aware) handles the rest.
+        let parsed = url::Url::parse(url)
+            .map_err(|e| anyhow::anyhow!("invalid URL '{url}': {e}"))?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            other => return Err(anyhow::anyhow!(
+                "screenshot URL must be http or https, got '{other}'"
+            )),
+        }
+
         let browser = self.browser().await?;
 
         let tab = browser
@@ -96,19 +107,25 @@ impl ScreenshotEngine {
             .await
             .map_err(|e| anyhow::anyhow!("new_tab failed: {e}"))?;
 
-        tab.goto(url)
-            .await
-            .map_err(|e| anyhow::anyhow!("navigation to {url} failed: {e}"))?;
+        // Navigate + screenshot with a 30s timeout. The tab is closed in
+        // ALL paths (success, error, timeout) to prevent session leaks.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                tab.goto(url).await
+                    .map_err(|e| anyhow::anyhow!("navigation to {url} failed: {e}"))?;
+                tab.screenshot(viewport.width)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("screenshot capture failed: {e}"))
+            },
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("screenshot timed out after 30s for {url}"));
 
-        let png = tab
-            .screenshot(viewport.width)
-            .await
-            .map_err(|e| anyhow::anyhow!("screenshot capture failed: {e}"))?;
-
-        // Non-fatal cleanup.
+        // Always close the tab — success or failure.
         let _ = tab.close().await;
 
-        Ok(png)
+        result?
     }
 }
 

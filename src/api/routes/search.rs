@@ -5,7 +5,7 @@
 //! requiring an active agent session.
 //!
 //! - `POST /api/search` — web search (DDG/Wiki/Bing)
-//! - `POST /api/browse` — browse a URL and return markdown content
+//! - `GET  /api/screenshot` — render a URL to a CSS-laid-out PNG
 
 use std::sync::Arc;
 
@@ -152,4 +152,54 @@ pub(crate) async fn handle_browse(
         status: page.status,
         elapsed_ms: elapsed,
     }))
+}
+
+// ── Screenshot ──────────────────────────────────────────────────────────
+
+/// Query parameters for `GET /api/screenshot`.
+#[derive(Debug, Deserialize)]
+pub struct ScreenshotQuery {
+    /// URL to screenshot.
+    pub url: String,
+    /// Viewport width in CSS pixels (default 1280).
+    pub w: Option<u32>,
+    /// Viewport height in CSS pixels (default 800).
+    pub h: Option<u32>,
+}
+
+/// `GET /api/screenshot?url=...&w=1280&h=800` — render a URL to PNG.
+///
+/// Performs full navigation (HTTP fetch + external CSS + JS execution),
+/// then captures the live DOM through the Blitz CSS rendering pipeline.
+/// Returns `image/png` binary body — use directly as `<img src>`.
+///
+/// Only available with the `screenshot` feature.
+#[cfg(feature = "screenshot")]
+pub(crate) async fn handle_screenshot(
+    _state: State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<ScreenshotQuery>,
+) -> Result<axum::response::Response, AppError> {
+    use oxios_kernel::ScreenshotViewport;
+    use std::sync::LazyLock;
+
+    static ENGINE: LazyLock<std::sync::Arc<oxios_kernel::ScreenshotEngine>> =
+        LazyLock::new(|| std::sync::Arc::new(oxios_kernel::ScreenshotEngine::new()));
+    let engine = &*ENGINE;
+
+    let viewport = ScreenshotViewport {
+        width: q.w.unwrap_or(1280).clamp(320, 4096),
+        height: q.h.unwrap_or(800).clamp(240, 4096),
+        scale: 1.0,
+    };
+
+    let png = engine
+        .capture(&q.url, viewport)
+        .await
+        .map_err(|e| AppError::Internal(format!("screenshot failed: {e}")))?;
+
+    Ok(axum::response::Response::builder()
+        .header("content-type", "image/png")
+        .header("cache-control", "public, max-age=86400")
+        .body(axum::body::Body::from(png))
+        .unwrap())
 }

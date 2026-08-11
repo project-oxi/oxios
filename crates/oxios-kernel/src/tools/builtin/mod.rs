@@ -32,7 +32,7 @@ pub mod project_tool;
 pub mod resource_tool;
 pub mod security_tool;
 pub mod skill_forge_tool;
-#[cfg(feature = "screenshot")]
+#[cfg(feature = "browser")]
 pub mod screenshot_tool;
 #[cfg(feature = "timeline")]
 pub mod timeline_tool;
@@ -55,7 +55,7 @@ pub use security_tool::SecurityTool;
 pub use skill_forge_tool::SkillForgeTool;
 #[cfg(feature = "timeline")]
 pub use timeline_tool::TimelineTool;
-#[cfg(feature = "screenshot")]
+#[cfg(feature = "browser")]
 pub use screenshot_tool::ScreenshotTool;
 
 use crate::KernelHandle;
@@ -154,7 +154,7 @@ pub fn register_all_kernel_tools(registry: &ToolRegistry, kernel: &KernelHandle,
         registry.register(ImageGenerationTool::from_kernel(kernel));
     }
 
-    // Screenshot capture (CSS-aware, Blitz-backed — `screenshot` feature).
-    #[cfg(feature = "screenshot")]
+    // Screenshot capture (CSS-aware, Blitz-backed — `browser` feature).
+    #[cfg(feature = "browser")]
     registry.register(ScreenshotTool::from_kernel(kernel));
 }

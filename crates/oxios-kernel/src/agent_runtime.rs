@@ -929,8 +929,8 @@ async fn run_agent(
     // Pre-initialize the browser engine so the synchronous registration path
     // can attach browse tools. The engine is a shared `OnceCell` on the
     // KernelHandle, so this is a one-time cost; agents without a Browser
-    // capability still skip tool registration. No-op without `native-browser`.
-    #[cfg(feature = "native-browser")]
+    // capability still skip tool registration. No-op without `browser`.
+    #[cfg(feature = "browser")]
     if let Some(browser) = &kernel_handle.browser
         && let Err(e) = browser.engine().await
     {

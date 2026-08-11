@@ -298,7 +298,7 @@ pub use kernel_handle::{
     ProviderCategory, ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot,
     RoutingUpdate, SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
 };
-#[cfg(feature = "screenshot")]
+#[cfg(feature = "browser")]
 pub use kernel_handle::{ScreenshotEngine, ScreenshotViewport};
 pub use session_context::SessionContext;
 

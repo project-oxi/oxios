@@ -1,6 +1,6 @@
 # RFC-046: Browser Independence — Direct oxibrowser-core
 
-> **Status**: In Progress (2026-08-11)
+> **Status**: Done (implemented 2026-08-11)
 > **Supersedes**: `rfc-browser-migration.md` (which migrated TO the SDK)
 
 ## Summary

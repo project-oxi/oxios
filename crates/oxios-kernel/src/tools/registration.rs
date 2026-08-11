@@ -60,22 +60,23 @@ pub fn register_always_on(registry: &ToolRegistry, search_cache: Arc<SearchCache
 
 /// Register the headless-browser browse tools when the engine is available.
 ///
-/// The concrete registration runs only with the `native-browser` feature;
-/// without it this is a no-op stub so the file compiles unchanged.
-#[cfg(feature = "native-browser")]
+/// Uses oxios-owned tools (RFC-046) backed by `oxibrowser-core` 0.20 directly.
+/// Only compiled with the `browser` feature; without it this is a no-op stub.
+#[cfg(feature = "browser")]
 fn register_browser_tools(kernel: &KernelHandle, registry: &ToolRegistry) {
+    use crate::tools::browse::{BrowseTool, BrowseExtractTool, BrowseSessionTool, BrowseScriptTool};
     if let Some(browser) = &kernel.browser
         && let Some(engine) = browser.try_engine()
     {
-        registry.register(oxicode_sdk::BrowseTool::new(engine.clone()));
-        registry.register(oxicode_sdk::BrowseExtractTool::new(engine.clone()));
-        registry.register(oxicode_sdk::BrowseSessionTool::new(engine.clone()));
-        registry.register(oxicode_sdk::BrowseScriptTool::new(engine));
+        registry.register(BrowseTool::new(engine.clone()));
+        registry.register(BrowseExtractTool::new(engine.clone()));
+        registry.register(BrowseSessionTool::new(engine.clone()));
+        registry.register(BrowseScriptTool::new(engine));
     }
 }
 
-/// No-op stub when the `native-browser` feature is disabled.
-#[cfg(not(feature = "native-browser"))]
+/// No-op stub when the `browser` feature is disabled.
+#[cfg(not(feature = "browser"))]
 fn register_browser_tools(_kernel: &KernelHandle, _registry: &ToolRegistry) {}
 
 /// Register always-on tools with access gate and (RFC-035) approval wrapping.

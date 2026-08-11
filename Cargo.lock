@@ -6175,7 +6175,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "oxibrowser-core 0.16.0",
- "oxibrowser-webapi 0.16.0",
+ "oxibrowser-webapi",
  "serde",
  "serde_json",
  "sha1",
@@ -6206,44 +6206,7 @@ dependencies = [
  "html5ever 0.29.1",
  "image",
  "markup5ever 0.14.1",
- "oxibrowser-webapi 0.16.0",
- "parking_lot",
- "percent-encoding",
- "pollster",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "string_cache 0.8.9",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "wreq",
- "wreq-util",
-]
-
-[[package]]
-name = "oxibrowser-core"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdf567eea7dcca326c99bfbd21e8381dc814ef9eed315bcd031bb562a92a7e8a"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64",
- "boa_engine",
- "boa_gc",
- "bytes",
- "chrono",
- "encoding_rs",
- "futures",
- "getrandom 0.3.4",
- "html5ever 0.29.1",
- "image",
- "markup5ever 0.14.1",
- "oxibrowser-webapi 0.17.0",
+ "oxibrowser-webapi",
  "parking_lot",
  "percent-encoding",
  "pollster",
@@ -6332,21 +6295,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxibrowser-webapi"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe36c42b886616f0fbabf0131766dd75838741aa37888c9a3d819c91ac53dae5"
-dependencies = [
- "html5ever 0.29.1",
- "markup5ever 0.14.1",
- "serde",
- "serde_json",
- "string_cache 0.8.9",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
 name = "oxicode-agent"
 version = "0.66.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6360,7 +6308,6 @@ dependencies = [
  "glob",
  "libc",
  "oxibrowser 0.16.0",
- "oxibrowser-core 0.16.0",
  "oxicode-ai",
  "oxicode-api-stability",
  "oxicode-hashline",
@@ -6478,7 +6425,6 @@ dependencies = [
  "flate2",
  "glob",
  "globset",
- "oxibrowser-core 0.17.0",
  "oxicode-agent",
  "oxicode-ai",
  "oxicode-api-stability",
@@ -6680,6 +6626,7 @@ dependencies = [
  "once_cell",
  "oxibrowser-core 0.20.0",
  "oxicode-agent",
+ "oxicode-ai",
  "oxicode-sdk",
  "oxiline-core",
  "oximemo-core",

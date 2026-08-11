@@ -124,10 +124,10 @@ arc-swap = "1.7"
 # oxicode engine — single dependency for everything (oxicode-ai re-exported via oxicode-sdk).
 # 0.66.0: project renamed from oxi -> oxicode (CHANGELOG 0.65.0 Breaking).
 # oxios enables only the features it consumes:
-#   browser         — BrowseConfig / BrowserEngine (kernel_handle/browser_api.rs)
 #   delegation      — SdkSubagentRunner (subagent_runner.rs)
 #   circuit-breaker — CircuitBreaker trait + DefaultCircuitBreaker (agent_runtime LLM breaker)
-oxicode-sdk = { version = "0.66.0", features = ["browser", "delegation", "circuit-breaker", "router"] }
+# Browser tools are now oxios-owned (RFC-046) — direct oxibrowser-core dep, no SDK browser feature.
+oxicode-sdk = { version = "0.66.0", features = ["delegation", "circuit-breaker", "router"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
@@ -186,11 +186,10 @@ web = ["dep:axum", "dep:tower", "dep:tower-http",
 cli = ["dep:reedline"]
 # telegram: Telegram bot channel. Source: src/channels/telegram/ (merged from channels/oxios-telegram per RFC-026)
 telegram = []
-browser = ["oxios-kernel/native-browser"]
-# screenshot: CSS-aware screenshot rendering via oxibrowser-core 0.20 (Blitz-backed).
-# Produces real pixel-accurate PNGs of web pages — full navigation, JS execution,
-# external CSS loading, then Blitz CSS render. Independent of SDK version.
-screenshot = ["oxios-kernel/screenshot"]
+browser = ["oxios-kernel/browser"]
+# screenshot: now part of the unified `browser` feature (RFC-046).
+# Kept as alias for backward compatibility with feature flags.
+screenshot = ["oxios-kernel/browser"]
 sqlite-memory = ["oxios-kernel/sqlite-memory"]
 embedding-gguf = ["oxios-kernel/embedding-gguf"]
 # First-party app modules (opt-in, default-off). See

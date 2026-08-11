@@ -78,18 +78,16 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
             // per-server at registration time, so they are not listed here.
         ];
 
-        // Headless browser — pure-Rust oxibrowser-core browse suite.
-        #[cfg(feature = "native-browser")]
+        // Headless browser — oxios-owned browse suite (RFC-046).
+        // browse + browse_screenshot share the unified `browser` feature.
+        #[cfg(feature = "browser")]
         names.extend([
             "browse",
             "browse_extract",
             "browse_session",
             "browse_script",
+            "browse_screenshot",
         ]);
-
-        // Screenshot capture (CSS-aware, Blitz-backed).
-        #[cfg(feature = "screenshot")]
-        names.push("browse_screenshot");
 
         names
     }
@@ -218,12 +216,13 @@ mod tests {
         //   kernel_agent, persona, cron, security, budget, resource, a2a×3,
         //   knowledge, ask_user, marketplace, skill_forge, calendar, send_email)
         // = 30. MCP tools are dynamic (per-server) and excluded.
-        // +4 browse tools when native-browser feature is enabled.
+        // +5 tools when browser feature is enabled (browse, browse_extract,
+        // browse_session, browse_script, browse_screenshot).
         #[allow(unused_mut)]
         let mut expected = 30_usize;
-        #[cfg(feature = "native-browser")]
+        #[cfg(feature = "browser")]
         {
-            expected += 4; // browse, browse_extract, browse_session, browse_script
+            expected += 5;
         }
         assert_eq!(
             names.len(),

@@ -9,11 +9,10 @@ repository = "https://github.com/project-oxi/oxios"
 [features]
 default = ["sqlite-memory"]
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
-native-browser = ["oxicode-sdk/native-browser"]
-# screenshot: CSS-aware rendering via oxibrowser-core 0.20 (Blitz-backed).
-# Independent of native-browser — creates its own Browser instance for
-# visual capture, separate from the SDK's browse-tool engine.
-screenshot = ["dep:oxibrowser-core"]
+# Unified browser feature — browse tools + screenshot, both via oxibrowser-core 0.20.
+# Replaces the former `native-browser` (SDK-dependent) and `screenshot` (standalone)
+# features with a single direct dependency on oxibrowser-core.
+browser = ["dep:oxibrowser-core", "dep:serde_yaml"]
 sqlite-memory = ["dep:rusqlite", "dep:sqlite-vec", "oxios-memory/sqlite-memory"]
 
 # MLX embedding provider (Apple Silicon only)
@@ -38,22 +37,24 @@ oxios-mcp = { version = "1.38.1", path = "../oxios-mcp" }
 oxios-memory = { version = "1.38.1", path = "../oxios-memory" }
 oxicode-sdk = { workspace = true }
 oxicode-agent = "0.66.0"
+# oxicode-ai — needed for ContentBlock/ImageContent in browse tool screenshots.
+# The SDK re-exports ContentBlock but not ImageContent, so we depend directly.
+oxicode-ai = "0.66.0"
 # First-party app module cores (optional, opt-in via the `memo`/`timeline`
 # features). Published to crates.io; resolved from the registry.
 oximemo-core = { version = "0.7", optional = true }
 oxiline-core = { version = "0.3", optional = true }
-# oxibrowser-core 0.20 — CSS-aware headless browser (Blitz-backed).
-# Behind the `screenshot` feature. Independent of the SDK's oxibrowser-core
-# 0.16 (used by native-browser) — this creates a separate Browser instance
-# for visual screenshot capture with real CSS rendering.
+# oxibrowser-core 0.20 — direct dependency for browse tools + screenshot.
+# Behind the unified `browser` feature (RFC-046). Replaces the former SDK
+# browser port (oxicode-sdk's `browser`/`native-browser` features).
 oxibrowser-core = { version = "0.20", optional = true }
-# oxicode-ai no longer needed directly — all types re-exported via oxicode-sdk
+# serde_yaml — YAML step parsing for BrowseScriptTool. Behind `browser` feature.
+serde_yaml = { version = "0.9", optional = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
 uuid = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }

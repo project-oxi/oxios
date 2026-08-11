@@ -102,7 +102,7 @@ impl AgentTool for ScreenshotTool {
 
         // Save to cache dir so the agent can reference the file.
         let cache_dir = dirs::cache_dir()
-            .or_else(|| dirs::home_dir())
+            .or_else(dirs::home_dir)
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
             .join("oxios")
             .join("screenshots");

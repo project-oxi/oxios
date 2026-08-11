@@ -2293,9 +2293,9 @@ pub struct BrowserConfig {
     #[serde(default = "default_browser_enabled")]
     pub enabled: bool,
 
-    /// Engine configuration — deserialized directly into the SDK's
-    /// [`BrowseConfig`] and propagated to the pure-Rust `oxibrowser-core`
-    /// backend on first use. All fields have sensible defaults.
+    /// Engine configuration — deserialized directly into oxios's
+    /// [`BrowseConfig`] and propagated to the `oxibrowser-core` backend
+    /// on first use (RFC-046). All fields have sensible defaults.
     ///
     /// ```toml
     /// [browser.engine]
@@ -2304,9 +2304,9 @@ pub struct BrowserConfig {
     /// js_timeout_ms = 10000
     /// ```
     ///
-    /// [`BrowseConfig`]: oxicode_sdk::BrowseConfig
+    /// [`BrowseConfig`]: crate::tools::browse::BrowseConfig
     #[serde(default)]
-    pub engine: oxicode_sdk::BrowseConfig,
+    pub engine: crate::tools::browse::BrowseConfig,
 }
 
 fn default_browser_enabled() -> bool {
@@ -2317,7 +2317,7 @@ impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            engine: oxicode_sdk::BrowseConfig::default(),
+            engine: crate::tools::browse::BrowseConfig::default(),
         }
     }
 }

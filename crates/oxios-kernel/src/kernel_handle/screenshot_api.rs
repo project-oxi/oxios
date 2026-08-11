@@ -1,16 +1,17 @@
 //! Screenshot API — CSS-aware web page screenshot capture.
 //!
-//! Wraps [`oxibrowser_core::Browser`] (0.20) behind a lazily-initialized
+//! Wraps [`oxibrowser_core::Browser`] (0.21) behind a lazily-initialized
 //! engine. The browser performs full navigation — HTTP fetch, external
-//! stylesheet loading, JS execution — then captures the live DOM through
-//! the integrated Blitz rendering pipeline (Stylo CSS + Taffy layout +
-//! vello_cpu paint) to produce a pixel-accurate PNG.
+//! stylesheet loading, JS execution (incl. WASM 1.0 via wasmi ↔ boa bridge)
+//! — then captures the live DOM through the integrated Blitz rendering
+//! pipeline (Stylo CSS + Taffy layout + vello_cpu paint) to produce a
+//! pixel-accurate PNG. Tab::print_to_pdf is also available.
 //!
-//! Independent of the SDK's `native-browser` browse tools (which use
-//! oxibrowser-core 0.16). This engine uses 0.20 directly for CSS-quality
-//! screenshots.
+//! Independent of the SDK's browsing tools (oxicode-sdk 0.72 dropped its
+//! browser re-exports). This engine uses oxibrowser-core directly for
+//! CSS-quality screenshots.
 //!
-//! Only available with the `screenshot` feature.
+//! Only available with the `browser` (formerly `screenshot`) feature.
 
 use std::sync::Arc;
 

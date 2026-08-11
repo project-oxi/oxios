@@ -1,7 +1,9 @@
 //! Concrete browser engine — wraps `oxibrowser-core` directly.
 //!
 //! No trait abstraction, no dyn dispatch. There is exactly one backend
-//! (`oxibrowser-core` 0.20), so concrete types are simpler and faster.
+//! (`oxibrowser-core` 0.21), so concrete types are simpler and faster.
+//! 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa bridge)
+//! and the BrowserEvent::PdfExported lifecycle event.
 //!
 //! `OxiosBrowser` manages a background event-drain task that routes
 //! `BrowserEvent`s to per-tab callbacks via `TabCallbackRegistry`.
@@ -31,7 +33,8 @@ fn extract_event_tab_id(event: &oxibrowser_core::BrowserEvent) -> uuid::Uuid {
         NavigationStarted { tab_id, .. }
         | WaitingForSelector { tab_id, .. }
         | DocumentReady { tab_id, .. }
-        | ScreenshotCaptured { tab_id, .. } => *tab_id,
+        | ScreenshotCaptured { tab_id, .. }
+        | PdfExported { tab_id, .. } => *tab_id,
         _ => uuid::Uuid::nil(),
     }
 }
@@ -75,13 +78,23 @@ fn browse_progress_from_event(event: &oxibrowser_core::BrowserEvent) -> Option<B
             width: *viewport_width,
             duration_ms: duration.as_millis() as u64,
         }),
+        PdfExported {
+            bytes,
+            viewport_width,
+            duration,
+            ..
+        } => Some(BrowseProgress::PdfExported {
+            bytes: *bytes,
+            width: *viewport_width,
+            duration_ms: duration.as_millis() as u64,
+        }),
         _ => None,
     }
 }
 
 // ── OxiosBrowser ────────────────────────────────────────────────────────
 
-/// Browser engine powered by `oxibrowser-core` 0.20.
+/// Browser engine powered by `oxibrowser-core` 0.21.
 ///
 /// Spins a background task that drains the browser's event stream and invokes
 /// whatever callback is registered in the `TabCallbackRegistry` for the

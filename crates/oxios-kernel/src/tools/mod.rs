@@ -6,7 +6,6 @@
 pub mod a2a_tools;
 pub mod ask_user_tool;
 pub mod builtin;
-#[cfg(feature = "browser")]
 pub mod browse;
 pub mod exec_tool;
 pub mod gated_tool;

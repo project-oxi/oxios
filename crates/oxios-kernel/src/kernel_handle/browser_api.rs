@@ -4,23 +4,23 @@
 //! 0.20 dependency). The engine is lazily initialized on first use and shared
 //! across every agent run that holds the same [`KernelHandle`].
 //!
-//! Only available with the `browser` feature. Without it, [`BrowserApi::try_engine`]
-//! always returns `None` and no browse tools are registered.
+//! Only available with the `browser` feature. Without it, the struct still
+//! exists (holding just the config) but `try_engine`/`engine` are absent —
+//! all callers are `#[cfg(feature = "browser")]`-gated.
 //!
 //! [`OxiosBrowser`]: crate::tools::browse::OxiosBrowser
 
-use std::sync::Arc;
-
 use crate::config::OxiosConfig;
-use crate::tools::browse::{BrowseConfig, OxiosBrowser};
+use crate::tools::browse::BrowseConfig;
 
 /// Headless browser facade.
 ///
-/// Holds the [`BrowseConfig`] and a lazily-initialized engine cell.
+/// Holds the [`BrowseConfig`] and (with the `browser` feature) a
+/// lazily-initialized engine cell.
 pub struct BrowserApi {
     /// Lazily-initialized shared engine. `None` until first `engine().await`.
     #[cfg(feature = "browser")]
-    engine: tokio::sync::OnceCell<Arc<OxiosBrowser>>,
+    engine: tokio::sync::OnceCell<std::sync::Arc<crate::tools::browse::OxiosBrowser>>,
     /// Engine configuration (propagated to the backend on init).
     config: BrowseConfig,
 }
@@ -58,19 +58,17 @@ impl BrowserApi {
     ///
     /// The underlying `OxiosBrowser` (wrapping `oxibrowser-core`) is created
     /// exactly once; subsequent calls return the cached handle.
-    ///
-    /// Only available with the `browser` feature.
     #[cfg(feature = "browser")]
-    pub async fn engine(&self) -> anyhow::Result<Arc<OxiosBrowser>> {
+    pub async fn engine(&self) -> anyhow::Result<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
         self.engine
             .get_or_try_init(|| async {
-                let backend = OxiosBrowser::with_config(self.config.clone())
+                let backend = crate::tools::browse::OxiosBrowser::with_config(self.config.clone())
                     .await
                     .map_err(|e| anyhow::anyhow!("browser engine init failed: {e}"))?;
-                Ok(Arc::new(backend))
+                Ok(std::sync::Arc::new(backend))
             })
             .await
-            .map(Arc::clone)
+            .map(std::sync::Arc::clone)
     }
 
     /// Synchronous accessor — returns the engine only if already initialized.
@@ -78,13 +76,9 @@ impl BrowserApi {
     /// Used by the (synchronous) tool registration path, which relies on the
     /// agent runtime having awaited [`engine`](Self::engine) first.
     #[cfg(feature = "browser")]
-    pub fn try_engine(&self) -> Option<Arc<OxiosBrowser>> {
+    pub fn try_engine(
+        &self,
+    ) -> Option<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
         self.engine.get().cloned()
-    }
-
-    /// Without `browser`, no engine is ever available.
-    #[cfg(not(feature = "browser"))]
-    pub fn try_engine(&self) -> Option<Arc<OxiosBrowser>> {
-        None
     }
 }

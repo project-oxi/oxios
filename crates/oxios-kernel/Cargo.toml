@@ -12,7 +12,7 @@ wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Unified browser feature — browse tools + screenshot, both via oxibrowser-core 0.20.
 # Replaces the former `native-browser` (SDK-dependent) and `screenshot` (standalone)
 # features with a single direct dependency on oxibrowser-core.
-browser = ["dep:oxibrowser-core", "dep:serde_yaml"]
+browser = ["dep:oxibrowser-core"]
 sqlite-memory = ["dep:rusqlite", "dep:sqlite-vec", "oxios-memory/sqlite-memory"]
 
 # MLX embedding provider (Apple Silicon only)
@@ -48,8 +48,8 @@ oxiline-core = { version = "0.3", optional = true }
 # Behind the unified `browser` feature (RFC-046). Replaces the former SDK
 # browser port (oxicode-sdk's `browser`/`native-browser` features).
 oxibrowser-core = { version = "0.20", optional = true }
-# serde_yaml — YAML step parsing for BrowseScriptTool. Behind `browser` feature.
-serde_yaml = { version = "0.9", optional = true }
+# serde_yaml — YAML parsing (skill frontmatter + BrowseScriptTool steps).
+serde_yaml = "0.9"
 tokio = { workspace = true }
 futures = { workspace = true }
 async-trait = { workspace = true }

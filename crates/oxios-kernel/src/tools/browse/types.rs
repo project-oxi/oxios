@@ -63,7 +63,7 @@ impl PageContent {
     }
 }
 
-/// Convert an `oxibrowser_core::BrowseResult` into [`PageContent`].
+#[cfg(feature = "browser")]
 pub(crate) fn browse_result_to_page_content(page: oxibrowser_core::BrowseResult) -> PageContent {
     PageContent {
         url: page.url,

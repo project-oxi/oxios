@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.39.0] - 2026-08-11
+
+### Changed
+- **oxicode-sdk 0.66.0 → 0.73.0** — adopted the latest SDK release.
+  oxicode-sdk 0.72 dropped its browsing re-exports (BrowseTool,
+  BrowseSessionTool, OxicodeBrowserEngine, the `browsing_tools()` /
+  `native_browser_tools()` factories, and the `.browsing()` / `.native_browser()`
+  AgentBuilder methods). The `browser` / `native-browser` features of
+  `oxicode-sdk` are gone. oxios already depended on oxibrowser-core directly
+  (RFC-046), so no call-site churn — the type-level surface (`BrowseProgress`,
+  `BrowseProgressCallback`, `ToolExecutionMode`, `AgentTool`, `StreamDelta`,
+  `SubagentRunner`, `ForkResult`, `ContentBlock`, `ImageContent`) is still
+  re-exported and used as before. 0.73.0 added `BrowseProgress::PdfExported`,
+  surfaced end-to-end via the new `BrowserEvent::PdfExported` event from
+  oxibrowser-core 0.21.
+- **oxibrowser 0.20 → 0.21 / oxibrowser-core 0.20 → 0.21** — picked up
+  `Tab::print_to_pdf` (a Rust API, not just CDP) and WebAssembly 1.0 (MVP)
+  support via the wasmi ↔ boa_engine bridge (fuel-metered: 10M-instruction
+  budget per Store; infinite WASM loops trap as `RuntimeError` instead of
+  hanging the JS thread). Pages using `<script>` modules that load WASM now
+  run.
+
+### Added
+- **Browse event mapping** — `BrowserEvent::PdfExported` is now mapped to
+  `BrowseProgress::PdfExported` in the kernel's event-drain loop, so
+  per-tab progress callbacks (and the UI card label "PDF ready — …") fire
+  on `Tab::print_to_pdf` calls. Tab-id extraction covers the new event too.
+
 ## [1.38.1] - 2026-08-07
 
 ### Fixed

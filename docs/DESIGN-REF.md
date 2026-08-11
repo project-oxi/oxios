@@ -1,29 +1,25 @@
 # Design System Reference
 
-> **Pointer file** — this project follows the **Oxi Ecosystem Unified Design System**.
+> **Pointer file** — this project follows the **Oxi Design System**.
 
 ## Canonical document
 
-`project-oxi/.github/DESIGN.md` (v1.0 · 2026-07-31) — the unified design system for
-the oxi ecosystem (oxinot · oxipage · oxios). **Single source of truth.**
+- **Living authority:** the **oxi-design-system** managed skill
+  (`~/.omp/agent/managed-skills/oxi-design-system/DESIGN.md`, v1.0, project-agnostic, refined
+  2026-08-03). Token values, component specs, theming, type, motion, accessibility.
+- **In-ecosystem mirror:** `project-oxi/.github/DESIGN.md` (v1.0, 2026-07-31). Content-equivalent.
 
-A full canonical-spec copy also lives at `web/DESIGN.md` (~1150 lines, with a 16-line
-oxios migration-status header prepended). `web/UNIFIED-DESIGN.md` documents the
-oxios-specific surface identity (status colors, dashboard density, chart/message tokens)
-and the residual migration steps; common tokens / components / philosophy come from the
-canonical document above.
+## This project's design doc
 
-## This project's adaptation
+**[`../DESIGN.md`](../DESIGN.md)** (repo root) — the single oxios design doc. It holds the
+oxios surface identity (dashboard density, status-as-mechanism), the project-specific token
+extensions the portable spec allows (charts, messages, diff, editor, settings), the verified
+migration status, and the documented token divergences from the portable spec.
 
-`web/UNIFIED-DESIGN.md` — oxios-specific surfaces + remaining migration.
+## Migration status — COMPLETE
 
-oxios is the **most complete implementation** of the unified system:
-- 3-tier token architecture fully implemented in `web/src/index.css`
-- **Status colors** (APCA-optimized) — oxios dashboard measured values are the canonical source
-- **Dashboard density** — `gap-2` rhythm, 3-zone sidebar+main+inspector layout
-- **Chart/message tokens** (`--chart-1..5`, `--message-*`) — oxios-exclusive
-
-## Migration status (remaining only)
-
-3-tier tokens are done. Remaining: `dark:` literal sweep → semantic, storage key `oxios-theme`→`oxi-theme`,
-editor font preset Serif removal, Geist→SUIT (10 refs in 3 files, zero in `.tsx`). See `web/UNIFIED-DESIGN.md`.
+oxios adopted the oxi system in `92a416708` (2026-07-31). All canonical migration-plan steps are
+done and verified (2026-08-11): 3-tier tokens, `dark:` sweep (zero in components), `oxi-theme`
+storage key with one-time legacy migration, SUIT/SUITE/Geist-Mono fonts, editor-preset Serif
+removal. oxios is the most complete implementation of the system — its measured dashboard status
+values are the canonical source. See root `DESIGN.md` §4 for the per-step evidence.

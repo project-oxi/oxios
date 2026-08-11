@@ -178,7 +178,9 @@ function DiffStatCard({
               <span className="ml-auto shrink-0 font-mono text-status-success-on-surface">
                 +{f.insertions}
               </span>
-              <span className="shrink-0 font-mono text-status-error-on-surface">-{f.deletions}</span>
+              <span className="shrink-0 font-mono text-status-error-on-surface">
+                -{f.deletions}
+              </span>
             </div>
           ))}
           {diff.files.length > 5 && (

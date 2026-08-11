@@ -297,7 +297,9 @@ export function SearchView({ query: propQuery, messageId }: SearchViewProps) {
                             alt=""
                             loading="lazy"
                             className="w-full max-h-64 rounded border border-border/40 object-cover object-top bg-muted/30"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                            onError={(e) => {
+                              ;(e.target as HTMLImageElement).style.display = 'none'
+                            }}
                           />
                           {!cached && !browsing && !browseErr && (
                             <button

@@ -1,6 +1,6 @@
 [package]
 name = "oxios"
-version = "1.38.1"
+version = "1.39.0"
 edition = "2024"
 description = "Oxios Agent OS — Agent Operating System powered by oxicode-sdk"
 license = "MIT"
@@ -122,12 +122,10 @@ parking_lot = "0.12"
 arc-swap = "1.7"
 
 # oxicode engine — single dependency for everything (oxicode-ai re-exported via oxicode-sdk).
-# 0.66.0: project renamed from oxi -> oxicode (CHANGELOG 0.65.0 Breaking).
-# oxios enables only the features it consumes:
-#   delegation      — SdkSubagentRunner (subagent_runner.rs)
-#   circuit-breaker — CircuitBreaker trait + DefaultCircuitBreaker (agent_runtime LLM breaker)
-# Browser tools are now oxios-owned (RFC-046) — direct oxibrowser-core dep, no SDK browser feature.
-oxicode-sdk = { version = "0.66.0", features = ["delegation", "circuit-breaker", "router"] }
+# 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
+# factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
+# oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
+oxicode-sdk = { version = "0.73.0", features = ["delegation", "circuit-breaker", "router"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
@@ -176,6 +174,7 @@ base64 = "0.22"
 qrcode = "0.14"
 local-ip-address = "0.6"
 hostname = "0.4"
+
 [features]
 default = ["web", "cli", "browser", "screenshot", "sqlite-memory"]
 # web: HTTP API server (Axum). Source: src/api/ (merged from surface/oxios-web per RFC-026)
@@ -201,11 +200,11 @@ timeline = ["oxios-kernel/timeline"]
 remote = ["dep:snow", "dep:tokio-tungstenite", "dep:base64", "dep:qrcode", "dep:local-ip-address", "dep:hostname"]
 
 [dependencies]
-oxios-kernel = { version = "1.38.1", path = "crates/oxios-kernel", default-features = false }
-oxios-calendar = { version = "1.38.1", path = "crates/oxios-calendar" }
-oxios-markdown = { version = "1.38.1", path = "crates/oxios-markdown" }
-oxios-ouroboros = { version = "1.38.1", path = "crates/oxios-ouroboros" }
-oxios-gateway = { version = "1.38.1", path = "crates/oxios-gateway" }
+oxios-kernel = { version = "1.39.0", path = "crates/oxios-kernel", default-features = false }
+oxios-calendar = { version = "1.39.0", path = "crates/oxios-calendar" }
+oxios-markdown = { version = "1.39.0", path = "crates/oxios-markdown" }
+oxios-ouroboros = { version = "1.39.0", path = "crates/oxios-ouroboros" }
+oxios-gateway = { version = "1.39.0", path = "crates/oxios-gateway" }
 oxicode-sdk = { workspace = true }
 
 # RFC-026: optional deps gated by features (were separate crates)
@@ -240,23 +239,21 @@ inquire = { workspace = true }
 libc = { workspace = true }
 console = { workspace = true }
 async-trait = { workspace = true }
- futures = { workspace = true }
+futures = { workspace = true }
 indicatif = "0.17"
 clap_complete = "4"
 webbrowser = "1.0"
- reqwest = { workspace = true }
- zip = { workspace = true }
- dirs = { workspace = true }
- sha2 = { workspace = true }
- toml_edit = "0.22"
+reqwest = { workspace = true }
+zip = { workspace = true }
+dirs = { workspace = true }
+sha2 = { workspace = true }
+toml_edit = "0.22"
 include_dir = "0.7"
 
-# oxibrowser is a sister project (unchanged by the oxi->oxicode rename).
-# 0.20.0 ships the Blitz-backed CSS rendering pipeline (oxibrowser-render,
-# integrated into oxibrowser-core): Stylo CSS + Taffy layout + vello_cpu
-# paint → real pixel screenshots via Tab::screenshot().
-# oxibrowser-core is added to oxios-kernel behind the `screenshot` feature.
-oxibrowser = "0.20"
+# oxibrowser 0.21 — search-only at the binary level. The headless engine lives
+# in oxios-kernel's `browser` feature via the direct oxibrowser-core 0.21 dep.
+# 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa_engine bridge).
+oxibrowser = "0.21"
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
@@ -264,8 +261,9 @@ base64 = { workspace = true, optional = true }
 qrcode = { workspace = true, optional = true }
 local-ip-address = { workspace = true, optional = true }
 hostname = { workspace = true, optional = true }
+
 [dev-dependencies]
-oxios-ouroboros = { version = "1.38.1", path = "crates/oxios-ouroboros" }
+oxios-ouroboros = { version = "1.39.0", path = "crates/oxios-ouroboros" }
 chrono = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
@@ -280,13 +278,14 @@ name = "remote_probe"
 # feature and cargo errors E0601 because the cfg-gated `main()` is
 # stripped. `required-features` makes cargo skip the example entirely.
 required-features = ["remote"]
+
 [patch.crates-io]
 oxios-kernel = { path = "crates/oxios-kernel" }
 # Uncomment for local development against oxicode/oxibrowser:
 # oxicode-ai = { path = "/Volumes/MERCURY/PROJECTS/oxicode/oxicode-ai" }
 # oxicode-agent = { path = "/Volumes/MERCURY/PROJECTS/oxicode/oxicode-agent" }
-# oxicode-sdk = { path = "/Volumes/MERCURY/PROJECTS/oxicode/oxicode-sdk" }
 # oxibrowser = { path = "/Volumes/MERCURY/PROJECTS/oxibrowser/crates/oxibrowser" }
+
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "oxios-kernel"
-version = "1.38.1"
+version = "1.39.0"
 edition = "2024"
 description = "Oxios kernel: supervisor, event bus, state store"
 license = "MIT"
@@ -9,7 +9,7 @@ repository = "https://github.com/project-oxi/oxios"
 [features]
 default = ["sqlite-memory"]
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
-# Unified browser feature — browse tools + screenshot, both via oxibrowser-core 0.20.
+# Unified browser feature — browse tools + screenshot, both via oxibrowser-core 0.21.
 # Replaces the former `native-browser` (SDK-dependent) and `screenshot` (standalone)
 # features with a single direct dependency on oxibrowser-core.
 browser = ["dep:oxibrowser-core"]
@@ -30,24 +30,27 @@ memo = ["dep:oximemo-core"]
 timeline = ["dep:oxiline-core", "dep:rusqlite"]
 
 [dependencies]
-oxios-ouroboros = { version = "1.38.1", path = "../oxios-ouroboros" }
-oxios-markdown = { version = "1.38.1", path = "../oxios-markdown" }
-oxios-calendar = { version = "1.38.1", path = "../oxios-calendar" }
-oxios-mcp = { version = "1.38.1", path = "../oxios-mcp" }
-oxios-memory = { version = "1.38.1", path = "../oxios-memory" }
+oxios-ouroboros = { version = "1.39.0", path = "../oxios-ouroboros" }
+oxios-markdown = { version = "1.39.0", path = "../oxios-markdown" }
+oxios-calendar = { version = "1.39.0", path = "../oxios-calendar" }
+oxios-mcp = { version = "1.39.0", path = "../oxios-mcp" }
+oxios-memory = { version = "1.39.0", path = "../oxios-memory" }
 oxicode-sdk = { workspace = true }
-oxicode-agent = "0.66.0"
+# 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
+# BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser
+# features — products own browsing themselves (RFC-046).
+oxicode-agent = "0.73.0"
 # oxicode-ai — needed for ContentBlock/ImageContent in browse tool screenshots.
 # The SDK re-exports ContentBlock but not ImageContent, so we depend directly.
-oxicode-ai = "0.66.0"
+oxicode-ai = "0.73.0"
 # First-party app module cores (optional, opt-in via the `memo`/`timeline`
 # features). Published to crates.io; resolved from the registry.
 oximemo-core = { version = "0.7", optional = true }
 oxiline-core = { version = "0.3", optional = true }
-# oxibrowser-core 0.20 — direct dependency for browse tools + screenshot.
-# Behind the unified `browser` feature (RFC-046). Replaces the former SDK
-# browser port (oxicode-sdk's `browser`/`native-browser` features).
-oxibrowser-core = { version = "0.20", optional = true }
+# oxibrowser-core 0.21 — direct dependency for browse tools + screenshot.
+# Behind the unified `browser` feature (RFC-046). 0.21 adds Tab::print_to_pdf +
+# WebAssembly support (wasmi ↔ boa_engine bridge).
+oxibrowser-core = { version = "0.21", optional = true }
 # serde_yaml — YAML parsing (skill frontmatter + BrowseScriptTool steps).
 serde_yaml = "0.9"
 tokio = { workspace = true }

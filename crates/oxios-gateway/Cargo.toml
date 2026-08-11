@@ -1,14 +1,14 @@
 [package]
 name = "oxios-gateway"
-version = "1.38.1"
+version = "1.39.0"
 edition = "2024"
 description = "Channel-agnostic message gateway for Oxios"
 license = "MIT"
 repository = "https://github.com/project-oxi/oxios"
 
 [dependencies]
-oxios-kernel = { version = "1.38.1", path = "../oxios-kernel", default-features = false, features = ["sqlite-memory"] }
-oxios-ouroboros = { version = "1.38.1", path = "../oxios-ouroboros" }
+oxios-kernel = { version = "1.39.0", path = "../oxios-kernel", default-features = false, features = ["sqlite-memory"] }
+oxios-ouroboros = { version = "1.39.0", path = "../oxios-ouroboros" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }

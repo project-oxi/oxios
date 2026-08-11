@@ -1,6 +1,6 @@
 [package]
 name = "oxios-ouroboros"
-version = "1.38.1"
+version = "1.39.0"
 edition = "2024"
 description = "Ouroboros spec-first protocol for Oxios"
 license = "MIT"

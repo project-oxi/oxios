@@ -785,7 +785,7 @@ mod tests {
 
     // The original SDK test module relied on the `BrowserEngine`/`BrowserTab`
     // traits to mock the browse backend. The new oxios-owned implementation
-    // uses concrete `OxiosBrowser`/`OxiosTab` built on `oxibrowser-core` 0.20,
+    // uses concrete `OxiosBrowser`/`OxiosTab` built on `oxibrowser-core` 0.21,
     // with no public constructor for tests to fabricate a tab without spinning
     // up a real browser. These tests therefore cover what we can without a
     // backend: the schema, action-string validation, missing-parameter errors,

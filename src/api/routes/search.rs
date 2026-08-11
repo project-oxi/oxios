@@ -121,7 +121,7 @@ pub(crate) async fn handle_browse(
 ) -> Result<Json<BrowseResponse>, AppError> {
     let start = std::time::Instant::now();
 
-    // Get the browser engine (requires native-browser feature)
+    // Get the browser engine (requires `browser` feature)
     let browser = state
         .kernel
         .browser

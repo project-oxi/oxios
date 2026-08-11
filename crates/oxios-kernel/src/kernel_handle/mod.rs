@@ -274,8 +274,7 @@ impl KernelHandle {
     /// Attach the browser facade (RFC: browser-migration).
     ///
     /// Called by the kernel assembler when `[browser].enabled` is set.
-    /// Without the `native-browser` feature the facade exists but never
-    /// produces an engine, so browse tools are not registered.
+    /// Without the `browser` feature the facade exists but never
     pub fn with_browser(mut self, api: Option<BrowserApi>) -> Self {
         self.browser = api;
         self

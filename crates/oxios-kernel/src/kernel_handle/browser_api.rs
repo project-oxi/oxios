@@ -1,8 +1,7 @@
 //! Browser API — headless browser engine facade (RFC-046: browser independence).
 //!
 //! Wraps the oxios-owned [`OxiosBrowser`] (concrete, direct `oxibrowser-core`
-//! 0.20 dependency). The engine is lazily initialized on first use and shared
-//! across every agent run that holds the same [`KernelHandle`].
+//! 0.21 dependency). The engine is lazily initialized on first use and shared
 //!
 //! Only available with the `browser` feature. Without it, the struct still
 //! exists (holding just the config) but `try_engine`/`engine` are absent —

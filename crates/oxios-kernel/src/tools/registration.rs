@@ -60,7 +60,7 @@ pub fn register_always_on(registry: &ToolRegistry, search_cache: Arc<SearchCache
 
 /// Register the headless-browser browse tools when the engine is available.
 ///
-/// Uses oxios-owned tools (RFC-046) backed by `oxibrowser-core` 0.20 directly.
+/// Uses oxios-owned tools (RFC-046) backed by `oxibrowser-core` 0.21 directly.
 /// Only compiled with the `browser` feature; without it this is a no-op stub.
 #[cfg(feature = "browser")]
 fn register_browser_tools(kernel: &KernelHandle, registry: &ToolRegistry) {

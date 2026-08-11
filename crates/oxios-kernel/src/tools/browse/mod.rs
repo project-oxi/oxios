@@ -1,4 +1,4 @@
-//! Oxios-owned browse tools — direct `oxibrowser-core` 0.20 dependency.
+//! Oxios-owned browse tools — direct `oxibrowser-core` 0.21 dependency.
 //!
 //! `config` and `types` are always compiled (no oxibrowser-core dependency)
 //! so that `BrowseConfig` and the data types remain available for the

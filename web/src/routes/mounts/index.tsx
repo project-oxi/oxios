@@ -152,7 +152,7 @@ function MountsPage() {
                   <button
                     type="button"
                     onClick={() => handleRescan(mount)}
-                    className="rounded-full bg-status-warning/10 px-2 py-0.5 text-xs text-status-warning hover:bg-status-warning/20 transition-colors"
+                    className="rounded-full bg-status-warning/10 px-2 py-0.5 text-xs text-status-warning-on-surface hover:bg-status-warning/20 transition-colors"
                     title={t('mounts.rescan')}
                   >
                     {t('mounts.needsRefresh')} ↻

@@ -606,7 +606,7 @@ function RunHistory({ taskId }: { taskId: string }) {
                     <p
                       className={cn(
                         'mt-0.5 line-clamp-2',
-                        run.error ? 'text-status-error' : 'text-muted-foreground',
+                        run.error ? 'text-status-error-on-surface' : 'text-muted-foreground',
                       )}
                     >
                       {run.error ?? run.summary}

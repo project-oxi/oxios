@@ -61,9 +61,9 @@ export const BrowseRender: ToolRenderComponent = ({ args, result, isRunning }) =
           <span
             className={`text-xs tabular-nums shrink-0 ${
               parsed.status === 200
-                ? 'text-status-success'
+                ? 'text-status-success-on-surface'
                 : parsed.status < 400
-                  ? 'text-status-warning'
+                  ? 'text-status-warning-on-surface'
                   : 'text-destructive'
             }`}
           >

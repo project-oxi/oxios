@@ -25,7 +25,7 @@ export const BashRender: ToolRenderComponent = ({ args, result, isRunning, durat
           Running...
         </div>
       ) : result != null ? (
-        <pre className="p-3 rounded bg-surface-sunken text-status-success text-xs overflow-x-auto max-h-96 whitespace-pre-wrap font-mono leading-relaxed">
+        <pre className="p-3 rounded bg-surface-sunken text-status-success-on-surface text-xs overflow-x-auto max-h-96 whitespace-pre-wrap font-mono leading-relaxed">
           {typeof result === 'string' ? result.slice(0, 10000) : JSON.stringify(result, null, 2)}
         </pre>
       ) : null}

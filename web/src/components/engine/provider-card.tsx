@@ -191,7 +191,7 @@ export function ProviderCard({ provider, onChangeKey, onRemove, isPending }: Pro
             variant="ghost"
             className={cn(
               'h-8 gap-1.5 text-xs',
-              validateState === 'valid' && 'text-status-success',
+              validateState === 'valid' && 'text-status-success-on-surface',
             )}
             onClick={handleValidate}
             disabled={validateState === 'validating' || isPending}

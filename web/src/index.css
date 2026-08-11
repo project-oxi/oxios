@@ -114,6 +114,10 @@
   --color-status-warning-on-subtle: var(--color-status-warning-on-subtle);
   --color-status-error-on-subtle: var(--color-status-error-on-subtle);
   --color-status-info-on-subtle: var(--color-status-info-on-subtle);
+  --color-status-success-on-surface: var(--color-status-success-on-surface);
+  --color-status-warning-on-surface: var(--color-status-warning-on-surface);
+  --color-status-error-on-surface: var(--color-status-error-on-surface);
+  --color-status-info-on-surface: var(--color-status-info-on-surface);
   /* Status tinted bg + subtle borders (canonical names; values from legacy vars) */
   --color-status-success-muted: var(--success-muted);
   --color-status-warning-muted: var(--warning-muted);
@@ -228,6 +232,13 @@
   --color-status-warning-on-subtle: oklch(0.45 0.14 70);
   --color-status-error-on-subtle:   oklch(0.42 0.18 27);
   --color-status-info-on-subtle:    oklch(0.42 0.16 259);
+  /* Status text on a PLAIN surface (icons/fills still use --color-status-* solid).
+     Darker variants so status-colored TEXT clears WCAG 4.5:1 on light surfaces
+     (solid status hues at L≈0.6 fail as text — keep them for icons/fills/dark text). */
+  --color-status-success-on-surface: oklch(0.40 0.13 163);
+  --color-status-warning-on-surface: oklch(0.45 0.14 70);
+  --color-status-error-on-surface:   oklch(0.42 0.18 27);
+  --color-status-info-on-surface:    oklch(0.42 0.16 259);
   /* Interactive primary (canonical blue button fill) */
   --color-interactive-primary:           oklch(0.45 0.14 250);
   --color-interactive-primary-foreground: oklch(0.985 0 0);
@@ -378,6 +389,12 @@
   --color-status-warning-on-subtle: oklch(0.82 0.10 70);
   --color-status-error-on-subtle:   oklch(0.78 0.12 27);
   --color-status-info-on-subtle:    oklch(0.78 0.10 259);
+  /* Status text on a plain surface (dark) — solid status hues already pass on dark;
+     these lift L for extra margin / consistency with the light -on-surface role. */
+  --color-status-success-on-surface: oklch(0.80 0.10 163);
+  --color-status-warning-on-surface: oklch(0.82 0.10 70);
+  --color-status-error-on-surface:   oklch(0.78 0.12 27);
+  --color-status-info-on-surface:    oklch(0.78 0.10 259);
   /* Interactive primary — lighter fill for dark (dark text passes) */
   --color-interactive-primary:           oklch(0.70 0.14 250);
   --color-interactive-primary-foreground: oklch(0.15 0.02 265);

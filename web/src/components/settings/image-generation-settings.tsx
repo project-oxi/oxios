@@ -107,7 +107,7 @@ export function ImageGenerationSettings({
             onValueChange={(id: string) => onImageModelChange(id)}
           />
           {imageModels.length === 0 && (
-            <p className="text-xs text-status-warning mt-2">
+            <p className="text-xs text-status-warning-on-surface mt-2">
               {t('settings.imageGeneration.noImageModels')}
             </p>
           )}

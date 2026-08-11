@@ -56,7 +56,7 @@ function CredentialBadge({ configured, source }: { configured: boolean; source: 
       variant="outline"
       className={
         configured
-          ? 'border-status-success/30 text-status-success'
+          ? 'border-status-success/30 text-status-success-on-surface'
           : 'border-muted-foreground/30 text-muted-foreground'
       }
     >

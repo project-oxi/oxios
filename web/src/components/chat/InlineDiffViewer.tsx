@@ -150,8 +150,8 @@ const KIND_STYLE: Record<DiffLine['kind'], string> = {
 }
 
 const KIND_GUTTER: Record<DiffLine['kind'], string> = {
-  add: 'text-status-success',
-  remove: 'text-status-error',
+  add: 'text-status-success-on-subtle',
+  remove: 'text-status-error-on-subtle',
   context: 'text-muted-foreground',
 }
 

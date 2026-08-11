@@ -148,8 +148,8 @@ function DiffStatCard({
       </button>
       {diff ? (
         <div className="mt-2 flex items-center gap-3 text-2xs font-mono">
-          <span className="text-status-success">+{diff.insertions}</span>
-          <span className="text-status-error">-{diff.deletions}</span>
+          <span className="text-status-success-on-surface">+{diff.insertions}</span>
+          <span className="text-status-error-on-surface">-{diff.deletions}</span>
           <div className="ml-auto flex items-center gap-1">
             <button
               type="button"
@@ -175,10 +175,10 @@ function DiffStatCard({
               className="flex items-center gap-1 truncate text-2xs text-muted-foreground"
             >
               <span className="truncate font-mono">{f.path}</span>
-              <span className="ml-auto shrink-0 font-mono text-status-success">
+              <span className="ml-auto shrink-0 font-mono text-status-success-on-surface">
                 +{f.insertions}
               </span>
-              <span className="shrink-0 font-mono text-status-error">-{f.deletions}</span>
+              <span className="shrink-0 font-mono text-status-error-on-surface">-{f.deletions}</span>
             </div>
           ))}
           {diff.files.length > 5 && (
@@ -189,12 +189,12 @@ function DiffStatCard({
       {/* Merge button / result */}
       <div className="mt-3">
         {mergeResult?.merged ? (
-          <div className="flex items-center gap-1.5 text-2xs text-status-success">
+          <div className="flex items-center gap-1.5 text-2xs text-status-success-on-surface">
             <CheckCircle2 className="h-3.5 w-3.5" />
             Merged into {mergeResult.target_branch}
           </div>
         ) : mergeResult && mergeResult.conflicts.length > 0 ? (
-          <div className="flex items-center gap-1.5 text-2xs text-status-error">
+          <div className="flex items-center gap-1.5 text-2xs text-status-error-on-surface">
             <XCircle className="h-3.5 w-3.5" />
             {mergeResult.conflicts.length} conflict
             {mergeResult.conflicts.length !== 1 ? 's' : ''}

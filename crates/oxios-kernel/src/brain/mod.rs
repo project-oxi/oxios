@@ -5,12 +5,14 @@
 //! unavailable: every operation returns `None`/empty and agent turns complete
 //! normally (spec §4 degradation contract).
 
-use crate::brain::config::BrainConfig;
+use futures::future::BoxFuture;
 use oxibrain_client::BrainClient;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::sync::Mutex;
+
+pub mod config;
+pub use config::BrainConfig;
 
 /// A live (or degraded) connection to the oxibrain daemon.
 ///
@@ -94,11 +96,11 @@ impl BrainConnection {
     /// Assemble recall context for an agent turn: layered context text within
     /// `budget` tokens. `None` when the daemon is unavailable.
     pub async fn recall(&self, query: &str, budget: usize) -> Option<String> {
+        let query = query.to_string();
+        let space = self.config.space.clone();
         let value = self
-            .call(|c| {
-                let query = query.to_string();
-                let space = self.config.space.clone();
-                async move { c.recall(&query, &space, budget).await }
+            .call(move |c| {
+                Box::pin(async move { c.recall(&query, &space, budget).await })
             })
             .await?;
         assemble_context_text(&value)
@@ -106,11 +108,11 @@ impl BrainConnection {
 
     /// Remember content as an episode. Returns the episode id.
     pub async fn remember(&self, content: &str, source: &str) -> Option<String> {
-        self.call(|c| {
-            let content = content.to_string();
-            let source = source.to_string();
-            let space = self.config.space.clone();
-            async move { c.ingest(&content, &space, &source).await }
+        let content = content.to_string();
+        let source = source.to_string();
+        let space = self.config.space.clone();
+        self.call(move |c| {
+            Box::pin(async move { c.ingest(&content, &space, &source).await })
         })
         .await
     }
@@ -119,21 +121,21 @@ impl BrainConnection {
 
     /// Hybrid/lexical/semantic/graph/community search. Raw daemon JSON.
     pub async fn search(&self, query: &str, mode: &str, limit: usize) -> Option<Value> {
-        self.call(|c| {
-            let query = query.to_string();
-            let mode = mode.to_string();
-            let space = self.config.space.clone();
-            async move { c.search(&query, &space, &mode, limit).await }
+        let query = query.to_string();
+        let mode = mode.to_string();
+        let space = self.config.space.clone();
+        self.call(move |c| {
+            Box::pin(async move { c.search(&query, &space, &mode, limit).await })
         })
         .await
     }
 
     /// An entity's current beliefs.
     pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
-        self.call(|c| {
-            let entity_id = entity_id.to_string();
-            let space = self.config.space.clone();
-            async move { c.get_entity(&entity_id, &space).await }
+        let entity_id = entity_id.to_string();
+        let space = self.config.space.clone();
+        self.call(move |c| {
+            Box::pin(async move { c.get_entity(&entity_id, &space).await })
         })
         .await
     }
@@ -145,40 +147,36 @@ impl BrainConnection {
         from: Option<i64>,
         to: Option<i64>,
     ) -> Option<Value> {
-        self.call(|c| {
-            let entity_id = entity_id.to_string();
-            let space = self.config.space.clone();
-            async move { c.timeline(&entity_id, &space, from, to).await }
+        let entity_id = entity_id.to_string();
+        let space = self.config.space.clone();
+        self.call(move |c| {
+            Box::pin(async move { c.timeline(&entity_id, &space, from, to).await })
         })
         .await
     }
 
     /// Provenance and confidence breakdown for a statement.
     pub async fn why(&self, statement_id: &str) -> Option<Value> {
-        self.call(|c| {
-            let statement_id = statement_id.to_string();
-            let space = self.config.space.clone();
-            async move { c.why(&statement_id, &space).await }
+        let statement_id = statement_id.to_string();
+        let space = self.config.space.clone();
+        self.call(move |c| {
+            Box::pin(async move { c.why(&statement_id, &space).await })
         })
         .await
     }
 
     /// List contradicted statements in the space.
     pub async fn contradictions(&self) -> Option<Value> {
-        self.call(|c| {
-            let space = self.config.space.clone();
-            async move { c.contradictions(&space).await }
-        })
-        .await
+        let space = self.config.space.clone();
+        self.call(move |c| Box::pin(async move { c.contradictions(&space).await }))
+            .await
     }
 
     /// Aggregate counts for the space.
     pub async fn stats(&self) -> Option<Value> {
-        self.call(|c| {
-            let space = self.config.space.clone();
-            async move { c.stats(&space).await }
-        })
-        .await
+        let space = self.config.space.clone();
+        self.call(move |c| Box::pin(async move { c.stats(&space).await }))
+            .await
     }
 
     // ── Shared plumbing ──────────────────────────────────────────────
@@ -186,10 +184,9 @@ impl BrainConnection {
     /// Run `f` against the connected client, handling degradation:
     /// - no client → one reconnect attempt; still none → `None`
     /// - call error → drop the dead client, log, `None`
-    async fn call<F, Fut, T>(&self, f: F) -> Option<T>
+    async fn call<F, T>(&self, f: F) -> Option<T>
     where
-        F: FnOnce(&mut BrainClient) -> Fut,
-        Fut: std::future::Future<Output = anyhow::Result<T>>,
+        F: FnOnce(&mut BrainClient) -> BoxFuture<'_, anyhow::Result<T>>,
     {
         let mut guard = self.client.lock().await;
         if guard.is_none() && !self.try_reconnect(&mut guard).await {
@@ -255,10 +252,6 @@ fn assemble_context_text(value: &Value) -> Option<String> {
     }
     Some(parts.join("\n\n"))
 }
-
-/// Convenience handle shared by tools and the runtime: an owned
-/// [`BrainConnection`] behind an `Arc`.
-pub type SharedBrain = Arc<BrainConnection>;
 
 #[cfg(test)]
 mod tests {

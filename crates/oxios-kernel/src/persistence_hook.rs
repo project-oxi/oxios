@@ -9,13 +9,13 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::brain::BrainConnection;
 use crate::engine::EngineHandle;
 use crate::event_bus::{EventBus, KernelEvent};
-use crate::memory::{MemoryEntry, MemoryManager, MemoryType, content_hash};
+use crate::memory_agent::sona::TrajectoryStep;
 use crate::state_store::StateStore;
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::types::{NoteMeta, NoteQuality, NoteSource};
-use oxios_memory::memory::sona::TrajectoryStep;
 use oxios_ouroboros::Directive;
 
 /// A planned write to the knowledge vault.
@@ -85,7 +85,7 @@ pub struct KnowledgeSaveRecord {
 /// to memory and/or knowledge, using heuristic rules first and an
 /// optional LLM reflection pass for ambiguous cases.
 pub struct PersistenceHook {
-    memory_manager: Arc<MemoryManager>,
+    brain: Option<Arc<BrainConnection>>,
     knowledge_base: Arc<KnowledgeBase>,
     engine_handle: Arc<EngineHandle>,
     state_store: Arc<StateStore>,
@@ -97,16 +97,17 @@ impl PersistenceHook {
     ///
     /// The reflection model is resolved live from `engine_handle` on each
     /// reflection, so it tracks hot-swaps — same source of truth as interview
-    /// and execute.
+    /// and execute. `brain` is the daemon connection (RFC-047); `None` when
+    /// the daemon is unavailable (memory writes degrade silently).
     pub fn new(
-        memory_manager: Arc<MemoryManager>,
+        brain: Option<Arc<BrainConnection>>,
         knowledge_base: Arc<KnowledgeBase>,
         engine_handle: Arc<EngineHandle>,
         state_store: Arc<StateStore>,
         event_bus: EventBus,
     ) -> Self {
         Self {
-            memory_manager,
+            brain,
             knowledge_base,
             engine_handle,
             state_store,
@@ -187,42 +188,18 @@ impl PersistenceHook {
         session_id: &str,
         message_index: usize,
     ) {
-        // Memory writes
+        // Memory writes — persisted to the brain daemon (RFC-047). The
+        // memory_type field is kept for the plan's serialized shape but the
+        // brain owns classification; content is stored as-is with the session
+        // id embedded in the source label.
         for mw in &plan.memory {
-            let memory_type = match mw.memory_type.as_str() {
-                "episode" => MemoryType::Episode,
-                _ => MemoryType::Fact,
-            };
-            let now = chrono::Utc::now();
-            let entry = MemoryEntry {
-                id: uuid::Uuid::new_v4().to_string(),
-                memory_type,
-                tier: memory_type.initial_tier(),
-                content: mw.content.clone(),
-                content_hash: content_hash(&mw.content),
-                tags: mw.tags.clone(),
-                source: "persistence-hook".to_string(),
-                session_id: Some(session_id.to_string()),
-                importance: mw.importance.clamp(0.0, 1.0),
-                pinned: false,
-                protection: crate::memory::ProtectionLevel::None,
-                auto_classified: true,
-                session_appearances: 0,
-                user_corrected: false,
-                seen_in_sessions: vec![],
-                created_at: now,
-                accessed_at: now,
-                modified_at: now,
-                access_count: 0,
-                decay_score: 1.0,
-                compaction_level: 0,
-                compacted_from: vec![],
-                related_ids: vec![],
-                contradicts: None,
-            };
-            match self.memory_manager.remember(entry).await {
-                Ok(_id) => tracing::debug!(session = session_id, "Hook saved memory entry"),
-                Err(e) => tracing::warn!(error = %e, "Hook failed to save memory"),
+            let source = format!("persistence-hook:{session_id}");
+            match &self.brain {
+                Some(brain) => match brain.remember(&mw.content, &source).await {
+                    Some(_id) => tracing::debug!(session = session_id, "Hook saved memory"),
+                    None => tracing::debug!("brain unavailable — memory write skipped"),
+                },
+                None => tracing::debug!("brain unavailable — memory write skipped"),
             }
         }
 

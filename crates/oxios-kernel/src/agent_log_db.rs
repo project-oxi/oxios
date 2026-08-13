@@ -11,9 +11,9 @@
 //! SQLite DB is rebuildable from filesystem JSON at any time
 //! via [`AgentLogDb::reindex_all`].
 //!
-//! # Feature gate
+//! # Availability
 //!
-//! When `sqlite-memory` feature is disabled, all query operations
+//! When no SQLite agent log DB is attached, all query operations
 //! fall back to filesystem-only scan mode. Degraded but functional.
 
 use std::path::Path;
@@ -329,12 +329,10 @@ pub struct DailyCostRow {
 ///
 /// Interior mutability via `parking_lot::Mutex` so all methods take `&self`,
 /// compatible with `Arc<AgentLogDb>` shared across tokio tasks.
-#[cfg(feature = "sqlite-memory")]
 pub struct AgentLogDb {
     conn: parking_lot::Mutex<rusqlite::Connection>,
 }
 
-#[cfg(feature = "sqlite-memory")]
 impl AgentLogDb {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = rusqlite::Connection::open(path)

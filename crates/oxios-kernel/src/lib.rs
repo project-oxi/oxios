@@ -66,7 +66,6 @@ pub mod mcp;
 // 메모리, 임베딩, 페르소나, 온보딩.
 pub mod brain;
 pub mod embedding;
-pub mod memory;
 pub mod memory_agent;
 pub mod onboarding;
 pub mod persona;
@@ -171,50 +170,6 @@ pub use memory_agent::sona::{
 #[cfg(feature = "embedding-gguf")]
 pub use embedding::gguf::{EmbeddingDimension, GgufEmbeddingProvider, GgufModelLoader};
 
-pub use memory::auto_memory_bridge::{
-    AutoMemoryBridge, ExportResult, GuidancePattern, ImportResult, InsightCategory, MemoryInsight,
-    SyncDirection, SyncResult,
-};
-pub use memory::{
-    DreamCheckpoint, DreamConfig, DreamProcess, DreamReport, HnswIndex, HnswMemoryIndex,
-    MemoryManager, ProactiveRecall, RecallTiming, SemanticHit,
-};
-pub use memory::{MemoryEntry, MemoryTier, MemoryType, ProtectionLevel, TextVector, content_hash};
-pub use oxios_memory::memory::flash_attention::{
-    BenchmarkResult as AttentionBenchmarkResult, FlashAttention, FlashAttentionConfig,
-    MemoryEstimate,
-};
-pub use oxios_memory::memory::{
-    HyperbolicConfig, HyperbolicEmbedding, batch_euclidean_to_poincare, euclidean_to_poincare,
-    hyperbolic_distance, mobius_add, mobius_scalar_mul,
-};
-pub use oxios_memory::{
-    AutoClassifier, AutoProtector, CompactionTree, CurationCandidate, CurationReport, DecayEngine,
-    EmbeddingCache, HistoricalPeriod, MemoryBudget, MemoryGraph, MemoryMapEntry, MemoryNeighbor,
-    RootEntry, RootIndex, SonaEngine, TopicEntry,
-};
-
-// ─── Memory core types (extracted to oxios-memory, RFC-018 b.1) ───
-// Re-exported here for back-compat — existing `use oxios_kernel::chunk_fixed;`
-// and friends continue to work without code changes.
-pub use oxios_memory::{
-    ChunkConfig, TextChunk, chunk_fixed, chunk_paragraphs, cosine_similarity_f32, l2_normalize_f32,
-    l2_normalize_f64,
-};
-
-// ─── SQLite Memory (RFC-012) ────────────────────────────────────────
-#[cfg(feature = "sqlite-memory")]
-pub use oxios_memory::memory::sqlite::SqliteMemoryStore;
-#[cfg(feature = "sqlite-memory")]
-pub use oxios_memory::memory::sqlite::cache::{self as sqlite_cache};
-#[cfg(feature = "sqlite-memory")]
-pub use oxios_memory::memory::sqlite::migration::{self as sqlite_migration, MigrationReport};
-#[cfg(feature = "sqlite-memory")]
-pub use oxios_memory::memory::sqlite::search::{
-    Bm25Hit, RankedMemory, VectorHit, reciprocal_rank_fusion,
-};
-#[cfg(feature = "sqlite-memory")]
-pub use oxios_memory::memory::sqlite::{MemoryDatabase, bytes_to_f32_slice, f32_slice_to_bytes};
 pub use persona::{Persona, PersonaManager, PersonaStore, default_personas};
 
 // ─── Tools & Skills ────────────────────────────────────────────────
@@ -269,13 +224,11 @@ pub use mount::{
     DetectionResult as MountDetectionResult, Mount, MountId, MountMeta, MountSource,
     PromotionConfig, detect_mounts,
 };
-#[cfg(feature = "sqlite-memory")]
 pub use mount::{MountManager, MountManagerError};
 pub use project::{
     ConversationBuffer, ConversationTurn, DetectionResult, Project, ProjectId, ProjectSource,
     detect_project, extract_path, find_by_id, find_by_name,
 };
-#[cfg(feature = "sqlite-memory")]
 pub use project::{ProjectManager, ProjectManagerError};
 pub use resource_monitor::{OverloadThreshold, ResourceMonitor, ResourceSnapshot};
 pub use state_store::{
@@ -298,7 +251,7 @@ pub use host_tools::{CredentialStatus, DetectedTool, ToolSource};
 pub use kernel_handle::KernelHandle;
 pub use kernel_handle::MarketplaceApi;
 pub use kernel_handle::{
-    A2aApi, AgentApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
+    A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
     InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
     MemoApi, MemoryNote, ModelInfo, MountApi, MountInfo, PersonaApi, ProjectApi, ProjectInfo,

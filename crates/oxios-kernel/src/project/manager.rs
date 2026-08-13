@@ -13,7 +13,7 @@ use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use oxios_memory::memory::sqlite::MemoryDatabase;
+use crate::kernel_db::KernelDatabase;
 
 use super::project_db;
 use super::{DetectionResult, Project, ProjectId, ProjectSource, detect_project};
@@ -43,17 +43,17 @@ pub struct ProjectManager {
     /// Name → ID index for fast name lookup.
     name_index: RwLock<HashMap<String, ProjectId>>,
     /// SQLite database for persistence.
-    db: Arc<MemoryDatabase>,
+    db: Arc<KernelDatabase>,
     /// Event bus for publishing project events.
     event_bus: Option<EventBus>,
 }
 
 impl ProjectManager {
     /// Create a new ProjectManager, loading existing projects from SQLite.
-    pub fn new(db: Arc<MemoryDatabase>, event_bus: Option<EventBus>) -> Result<Self> {
+    pub fn new(db: Arc<KernelDatabase>, event_bus: Option<EventBus>) -> Result<Self> {
         // Ensure the schema exists (idempotent).
-        // Mirrors MountManager::new — MemoryDatabase only bootstraps
-        // memory tables, so project tables must be created here.
+        // Mirrors MountManager::new — KernelDatabase only bootstraps
+        // the connection, so project tables must be created here.
         project_db::ensure_project_schema(&db.conn())?;
 
         let mut projects = HashMap::new();
@@ -316,7 +316,7 @@ impl ProjectManager {
 mod tests {
     use super::*;
 
-    // NOTE: Full integration tests require MemoryDatabase.
+    // NOTE: Full integration tests require a SQLite connection.
     // These are unit tests for in-memory operations.
 
     #[test]

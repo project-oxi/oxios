@@ -40,7 +40,6 @@ use std::sync::Arc;
 use crate::access_manager::{AccessGate, AgentContext, TracingAuditSink, TrailAuditSink};
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
-use crate::memory::{MemoryEntry, MemoryManager, MemoryType};
 use crate::persona::PersonaManager;
 use crate::tools::registration::register_tools_from_cspace_gated;
 
@@ -179,7 +178,7 @@ struct ExecuteState {
     reasoning_bytes: usize,
     /// Ordered by insertion — parallel tools get their final position
     /// resolved when they complete, preserving approximate execution order.
-    trajectory_steps: Vec<oxios_memory::memory::sona::TrajectoryStep>,
+    trajectory_steps: Vec<crate::memory_agent::sona::TrajectoryStep>,
     /// Map of tool_call_id → (start instant, index into trajectory_steps).
     /// Used to correlate ToolExecutionEnd with the correct step when
     /// parallel tool calls complete out of order.
@@ -220,6 +219,9 @@ pub struct AgentRuntime {
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     /// Autonomous persistence hook (RFC-016).
     persistence_hook: Option<Arc<crate::persistence_hook::PersistenceHook>>,
+    /// SONA trajectory pattern engine (RFC-020 Phase 2). `None` until attached
+    /// by the kernel assembler.
+    sona: Option<Arc<crate::memory_agent::sona::SonaEngine>>,
     /// Per-session assistant message index counter (RFC-016).
     session_msg_counter: Arc<Mutex<HashMap<String, usize>>>,
 }
@@ -243,8 +245,15 @@ impl AgentRuntime {
             tool_retriever: None,
             routing_stats,
             persistence_hook: None,
+            sona: None,
             session_msg_counter: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Attach the SONA trajectory pattern engine.
+    pub fn with_sona(mut self, sona: Arc<crate::memory_agent::sona::SonaEngine>) -> Self {
+        self.sona = Some(sona);
+        self
     }
 
     /// Attach a PersonaManager for persona system prompt injection.
@@ -347,7 +356,8 @@ impl AgentRuntime {
         cspace_hint: Option<&str>,
         mount_paths: &[std::path::PathBuf],
         workspace_context: Option<&str>,
-        session_ctx: &mut SessionContext,
+        // Retained for API compatibility; recall timing moved to the brain.
+        _session_ctx: &mut SessionContext,
         session_id: Option<String>,
         persistence_directive: Option<&Directive>,
         model_override: Option<&str>,
@@ -436,22 +446,21 @@ impl AgentRuntime {
             );
         }
 
-        // Blend relevant memories into system prompt.
-        let memory_manager = self.kernel_handle.agents.memory_manager();
-        match memory_manager
-            .recall_with_proactive(goal, &mut session_ctx.recall_timing)
-            .await
-        {
-            Ok(memories) if !memories.is_empty() => {
-                tracing::info!(count = memories.len(), "Recalled memories for task");
-                system_prompt = memory_manager.blend_into_prompt(&memories, &system_prompt);
+        // Blend relevant memories into system prompt (RFC-047: brain recall).
+        if let Some(brain) = &self.kernel_handle.brain {
+            match brain.recall(goal, 3000).await {
+                Some(context) => {
+                    tracing::info!("Recalled brain context for task");
+                    system_prompt.push_str(&format!(
+                        "\n\n## Relevant Memory\n{context}\n",
+                    ));
+                }
+                None => tracing::debug!("No brain context recalled"),
             }
-            Ok(_) => tracing::debug!("No memories recalled"),
-            Err(e) => tracing::warn!(error = %e, "Failed to recall memories"),
         }
 
         // Inject learned strategy from SONA (RFC-020 Phase 2).
-        if let Some(sona) = memory_manager.sona_engine() {
+        if let Some(sona) = &self.sona {
             match sona.adapt(goal).await {
                 Ok(Some(pattern)) if pattern.confidence > 0.5 => {
                     tracing::info!(
@@ -551,6 +560,7 @@ impl AgentRuntime {
                 &config,
                 &engine,
                 kernel_handle,
+                self.sona.clone(),
                 system_prompt,
                 prompt,
                 exec_id,
@@ -730,6 +740,7 @@ async fn run_agent(
     config: &AgentRuntimeConfig,
     engine: &OxiosEngine,
     kernel_handle: Arc<KernelHandle>,
+    sona: Option<Arc<crate::memory_agent::sona::SonaEngine>>,
     system_prompt: String,
     prompt: String,
     exec_id: uuid::Uuid,
@@ -745,7 +756,7 @@ async fn run_agent(
     String,
     usize,
     bool,
-    Vec<oxios_memory::memory::sona::TrajectoryStep>,
+    Vec<crate::memory_agent::sona::TrajectoryStep>,
     Arc<Agent>,
     Vec<String>,
     std::collections::HashMap<String, String>,
@@ -1080,7 +1091,10 @@ async fn run_agent(
     // Shared mutable state for the event callback.
     let exec_state = Arc::new(Mutex::new(ExecuteState::default()));
     let exec_state_cb = Arc::clone(&exec_state);
-    let memory_for_callback: Arc<MemoryManager> = (*kernel_handle.agents.memory_manager()).clone();
+    let brain_for_callback: Option<Arc<crate::brain::BrainConnection>> = kernel_handle
+        .brain
+        .as_ref()
+        .map(|b| b.connection());
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();
@@ -1127,7 +1141,7 @@ async fn run_agent(
                         .insert(tool_call_id.clone(), chrono::Utc::now());
                     s.tool_call_ids.push(tool_call_id.clone());
                     s.trajectory_steps
-                        .push(oxios_memory::memory::sona::TrajectoryStep {
+                        .push(crate::memory_agent::sona::TrajectoryStep {
                             input: tool_name.clone(),
                             output: String::new(),
                             duration_ms: 0,
@@ -1295,7 +1309,7 @@ async fn run_agent(
                     handle_compaction(
                         result.summary.clone(),
                         session_id_for_callback.clone(),
-                        memory_for_callback.clone(),
+                        brain_for_callback.clone(),
                     );
                     // RFC-015: compaction is a form of reasoning — expose it.
                     if let Some(ref sid) = transparency_session {
@@ -1495,7 +1509,7 @@ async fn run_agent(
     // Record trajectory to SONA learning engine (RFC-020 Phase 2).
     // Fire-and-forget: don't block the result on learning.
     if !s.trajectory_steps.is_empty()
-        && let Some(sona) = kernel_handle.agents.memory_manager().sona_engine()
+        && let Some(sona) = &sona
     {
         let steps = s.trajectory_steps.clone();
         let success = s.success;
@@ -1503,11 +1517,11 @@ async fn run_agent(
         let domain = infer_domain(&goal);
         tokio::spawn(async move {
             let verdict = if success {
-                oxios_memory::memory::sona::Verdict::Success
+                crate::memory_agent::sona::Verdict::Success
             } else {
-                oxios_memory::memory::sona::Verdict::Failure
+                crate::memory_agent::sona::Verdict::Failure
             };
-            let trajectory = oxios_memory::memory::sona::Trajectory::new(steps, verdict, &domain);
+            let trajectory = crate::memory_agent::sona::Trajectory::new(steps, verdict, &domain);
             if let Err(e) = sona.record(trajectory).await {
                 tracing::debug!(error = %e, "SONA trajectory recording failed (non-fatal)");
             }
@@ -1647,41 +1661,25 @@ fn infer_domain(goal: &str) -> String {
     }
 }
 
-/// Handle compaction completion by storing the summary as a Warm memory.
+/// Handle compaction completion by storing the summary in the brain.
 ///
 /// Extracts the compaction summary from the event and spawns a background
-/// task to persist it via MemoryManager. This replaces the inline 30-line
-/// block that was previously in the event callback.
-fn handle_compaction(summary: String, session_id: String, memory_manager: Arc<MemoryManager>) {
-    let entry = MemoryEntry {
-        id: uuid::Uuid::new_v4().to_string(),
-        memory_type: MemoryType::Conversation,
-        tier: crate::memory::MemoryTier::Warm,
-        content: summary,
-        content_hash: 0,
-        source: "compaction".to_string(),
-        session_id: Some(session_id),
-        tags: vec![],
-        importance: 0.5,
-        pinned: false,
-        protection: crate::memory::ProtectionLevel::None,
-        auto_classified: false,
-        session_appearances: 0,
-        user_corrected: false,
-        seen_in_sessions: vec![],
-        created_at: chrono::Utc::now(),
-        accessed_at: chrono::Utc::now(),
-        modified_at: chrono::Utc::now(),
-        access_count: 0,
-        decay_score: 1.0,
-        compaction_level: 0,
-        compacted_from: vec![],
-        related_ids: vec![],
-        contradicts: None,
+/// task to persist it via the brain daemon (RFC-047).
+fn handle_compaction(
+    summary: String,
+    session_id: String,
+    brain: Option<Arc<crate::brain::BrainConnection>>,
+) {
+    let content = if session_id.is_empty() {
+        summary
+    } else {
+        format!("[session {session_id}]\n{summary}")
     };
     tokio::spawn(async move {
-        if let Err(e) = memory_manager.remember(entry).await {
-            tracing::warn!(error = %e, "Failed to save compaction summary");
+        if let Some(brain) = brain
+            && brain.remember(&content, "compaction").await.is_none()
+        {
+            tracing::debug!("brain unavailable — compaction summary not stored");
         }
     });
 }

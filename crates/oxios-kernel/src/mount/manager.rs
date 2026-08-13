@@ -12,7 +12,7 @@ use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use oxios_memory::memory::sqlite::MemoryDatabase;
+use crate::kernel_db::KernelDatabase;
 
 use super::mount_db;
 use super::path_promotion;
@@ -50,14 +50,14 @@ pub struct MountManager {
     /// so that the comparison is path-stable across symlinks.
     dismissed_roots: RwLock<HashSet<PathBuf>>,
     /// SQLite database for persistence.
-    db: Arc<MemoryDatabase>,
+    db: Arc<KernelDatabase>,
     /// Event bus for publishing Mount events.
     event_bus: Option<EventBus>,
 }
 
 impl MountManager {
     /// Create a new MountManager, loading existing Mounts from SQLite.
-    pub fn new(db: Arc<MemoryDatabase>, event_bus: Option<EventBus>) -> Result<Self> {
+    pub fn new(db: Arc<KernelDatabase>, event_bus: Option<EventBus>) -> Result<Self> {
         // Ensure the schema exists (idempotent).
         mount_db::ensure_mount_schema(&db.conn())?;
 
@@ -664,7 +664,7 @@ mod tests {
     use super::*;
 
     fn open_manager() -> MountManager {
-        let db = Arc::new(MemoryDatabase::open_in_memory(64).expect("db"));
+        let db = Arc::new(KernelDatabase::open_in_memory().expect("db"));
         MountManager::new(db, None).expect("manager")
     }
 

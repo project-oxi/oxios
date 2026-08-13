@@ -983,11 +983,11 @@ mod mount_workspace_tests {
     /// builds the context body, and collects all paths (multi-path access).
     #[test]
     fn test_resolve_mount_workspace_detects_and_collects_paths() {
+        use crate::kernel_db::KernelDatabase;
         use crate::mount::MountManager;
-        use oxios_memory::memory::sqlite::MemoryDatabase;
         use std::sync::Arc;
 
-        let db = Arc::new(MemoryDatabase::open_in_memory(64).unwrap());
+        let db = Arc::new(KernelDatabase::open_in_memory().unwrap());
         let mm = Arc::new(MountManager::new(db, None).unwrap());
 
         // Register two mounts.

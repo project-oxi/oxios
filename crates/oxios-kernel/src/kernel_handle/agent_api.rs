@@ -1,10 +1,7 @@
-//! Agent API — agent lifecycle, budget, memory, history log.
+//! Agent API — agent lifecycle, budget, history log.
 
 use crate::agent_log_db::{AgentListFilter, AgentStats, QueryResult};
 use crate::budget::{BudgetExceeded, BudgetInfo, BudgetLimit, BudgetManager};
-use crate::event_bus::{EventBus, KernelEvent};
-use crate::memory::{HnswMemoryIndex, SemanticHit};
-use crate::memory::{MemoryEntry, MemoryManager, MemoryType};
 use crate::state_store::StateStore;
 use crate::supervisor::Supervisor;
 use crate::types::{AgentId, AgentInfo};
@@ -14,15 +11,9 @@ use std::sync::Arc;
 pub struct AgentApi {
     pub(crate) supervisor: Arc<dyn Supervisor>,
     pub(crate) budget_manager: Arc<BudgetManager>,
-    pub(crate) memory_manager: Arc<MemoryManager>,
-    /// HNSW index for semantic search (optional, initialized on demand).
-    pub(crate) hnsw_index: Option<Arc<HnswMemoryIndex>>,
-    /// Event bus for publishing agent-related events.
-    pub(crate) event_bus: Option<EventBus>,
     /// State store for filesystem agent persistence.
     pub(crate) state_store: Option<Arc<StateStore>>,
     /// SQLite-backed agent history query index.
-    #[cfg(feature = "sqlite-memory")]
     pub(crate) agent_log_db: Option<Arc<crate::agent_log_db::AgentLogDb>>,
 }
 
@@ -31,17 +22,11 @@ impl AgentApi {
     pub fn new(
         supervisor: Arc<dyn Supervisor>,
         budget_manager: Arc<BudgetManager>,
-        memory_manager: Arc<MemoryManager>,
-        event_bus: Option<EventBus>,
     ) -> Self {
         Self {
             supervisor,
             budget_manager,
-            memory_manager,
-            hnsw_index: None,
-            event_bus,
             state_store: None,
-            #[cfg(feature = "sqlite-memory")]
             agent_log_db: None,
         }
     }
@@ -52,26 +37,10 @@ impl AgentApi {
     }
 
     /// Attach an SQLite-backed agent log database.
-    #[cfg(feature = "sqlite-memory")]
     pub fn set_agent_log_db(&mut self, db: Arc<crate::agent_log_db::AgentLogDb>) {
         self.agent_log_db = Some(db);
     }
 
-    /// Attach an HNSW index for semantic search.
-    pub fn set_hnsw_index(&mut self, index: Arc<HnswMemoryIndex>) {
-        self.hnsw_index = Some(index);
-    }
-    /// Check whether an HNSW index is attached for fast semantic search.
-    pub fn has_hnsw_index(&self) -> bool {
-        self.hnsw_index.is_some()
-    }
-
-    /// Publish a kernel event if the event bus is available.
-    fn publish(&self, event: KernelEvent) {
-        if let Some(ref eb) = self.event_bus {
-            let _ = eb.publish(event);
-        }
-    }
     /// List running agents (in-memory only).
     pub async fn list(&self) -> anyhow::Result<Vec<AgentInfo>> {
         self.supervisor
@@ -125,120 +94,6 @@ impl AgentApi {
         self.budget_manager.all_full_info()
     }
 
-    /// Get memory stats.
-    pub async fn memory_stats(&self) -> (usize, usize) {
-        (
-            self.memory_manager.vector_index_size(),
-            self.memory_manager.total_entries().await,
-        )
-    }
-
-    /// Store a memory entry.
-    pub async fn remember(&self, entry: MemoryEntry) -> anyhow::Result<String> {
-        let id = self.memory_manager.remember(entry.clone()).await?;
-
-        // Publish MemoryStored event
-        self.publish(KernelEvent::MemoryStored {
-            id: id.clone(),
-            memory_type: entry.memory_type.label().to_string(),
-            source: entry.source.clone(),
-        });
-
-        Ok(id)
-    }
-
-    /// List memories across all types, most-recent-first, capped at `limit`.
-    pub async fn list_all_memories(&self, limit: usize) -> Vec<MemoryEntry> {
-        let mut all = Vec::new();
-        for mt in MemoryType::all() {
-            if let Ok(entries) = self.memory_manager.list(*mt, limit).await {
-                all.extend(entries);
-            }
-        }
-        all.sort_by_key(|e| std::cmp::Reverse(e.created_at));
-        all.into_iter().take(limit).collect()
-    }
-
-    /// Get a memory entry by ID, searching all types.
-    pub async fn get_memory(&self, id: &str) -> Option<MemoryEntry> {
-        self.memory_manager.get_by_id(id).await.ok().flatten()
-    }
-
-    /// Pin or unpin a memory entry. Returns `false` if no entry has this ID.
-    pub async fn set_memory_pinned(&self, id: &str, pinned: bool) -> bool {
-        if self
-            .memory_manager
-            .get_by_id(id)
-            .await
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return false;
-        }
-        let res = if pinned {
-            self.memory_manager.pin(id).await
-        } else {
-            self.memory_manager.unpin(id).await
-        };
-        res.is_ok()
-    }
-
-    /// Delete a memory entry by ID. Returns `false` if not found.
-    pub async fn forget_memory(&self, id: &str) -> bool {
-        // `forget` is keyed by (id, type); resolve the type via a lookup first.
-        let memory_type = match self.memory_manager.get_by_id(id).await {
-            Ok(Some(entry)) => entry.memory_type,
-            _ => return false,
-        };
-        self.memory_manager
-            .forget(id, memory_type)
-            .await
-            .unwrap_or(false)
-    }
-
-    /// Search memory entries.
-    pub async fn search_memory(
-        &self,
-        query: &str,
-        memory_type: Option<MemoryType>,
-        limit: usize,
-    ) -> anyhow::Result<Vec<MemoryEntry>> {
-        self.memory_manager.search(query, memory_type, limit).await
-    }
-
-    /// Semantic search using HNSW index.
-    ///
-    /// Falls back to regular search if HNSW index is not available.
-    pub async fn semantic_search_memory(
-        &self,
-        query: &str,
-        memory_type: Option<MemoryType>,
-        limit: usize,
-    ) -> anyhow::Result<Vec<SemanticHit>> {
-        if let Some(ref hnsw) = self.hnsw_index {
-            self.memory_manager
-                .semantic_search(query, memory_type, limit, hnsw)
-                .await
-        } else {
-            // Fallback to regular search, wrap results
-            let entries = self.search_memory(query, memory_type, limit).await?;
-            Ok(entries
-                .into_iter()
-                .map(|entry| SemanticHit {
-                    entry,
-                    distance: 0.0,
-                    similarity: 0.0,
-                })
-                .collect())
-        }
-    }
-
-    /// Memory manager reference.
-    pub fn memory_manager(&self) -> &Arc<MemoryManager> {
-        &self.memory_manager
-    }
-
     // ── Agent History Log ─────────────────────────────────────────
 
     /// Query agent history (in-memory + SQLite) with filters.
@@ -250,7 +105,6 @@ impl AgentApi {
         let running = self.supervisor.list().await.unwrap_or_default();
 
         // Query SQLite for historical agents
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             let mut result = db.query(filter).map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -327,7 +181,6 @@ impl AgentApi {
     /// Get an agent by ID (from SQLite or filesystem fallback).
     pub async fn get(&self, id: &str) -> anyhow::Result<Option<AgentInfo>> {
         // Try SQLite first
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db
             && let Ok(Some(agent)) = db.get(id)
         {
@@ -354,7 +207,6 @@ impl AgentApi {
     /// Global agent stats (unfiltered).
     pub async fn stats(&self) -> anyhow::Result<AgentStats> {
         // Try SQLite first
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             return db.stats().map_err(|e| anyhow::anyhow!("{e}"));
         }
@@ -385,7 +237,6 @@ impl AgentApi {
         &self,
         since: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<crate::agent_log_db::CostSummary> {
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             return db.cost_summary(since).map_err(|e| anyhow::anyhow!("{e}"));
         }
@@ -397,7 +248,6 @@ impl AgentApi {
         &self,
         since: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<Vec<crate::agent_log_db::ModelCostRow>> {
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             return db.cost_by_model(since).map_err(|e| anyhow::anyhow!("{e}"));
         }
@@ -409,7 +259,6 @@ impl AgentApi {
         &self,
         since: Option<chrono::DateTime<chrono::Utc>>,
     ) -> anyhow::Result<Vec<crate::agent_log_db::ProjectCostRow>> {
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             return db
                 .cost_by_project(since)
@@ -420,7 +269,6 @@ impl AgentApi {
 
     /// Daily spend time-series for the last `days` days.
     pub fn cost_daily(&self, days: u32) -> anyhow::Result<Vec<crate::agent_log_db::DailyCostRow>> {
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             return db.cost_daily(days).map_err(|e| anyhow::anyhow!("{e}"));
         }
@@ -428,7 +276,6 @@ impl AgentApi {
     }
 
     /// Rebuild SQLite agent log index from filesystem JSON.
-    #[cfg(feature = "sqlite-memory")]
     pub async fn reindex(&self) -> anyhow::Result<crate::agent_log_db::RebuildReport> {
         match (self.agent_log_db.as_ref(), self.state_store.as_ref()) {
             (Some(db), Some(store)) => db
@@ -436,15 +283,6 @@ impl AgentApi {
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}")),
             _ => anyhow::bail!("Agent log DB not initialized"),
-        }
-    }
-
-    /// Rebuild the HNSW index from all stored memories.
-    pub async fn rebuild_hnsw_index(&self) -> anyhow::Result<usize> {
-        if let Some(ref hnsw) = self.hnsw_index {
-            self.memory_manager.rebuild_hnsw_index(hnsw).await
-        } else {
-            Err(anyhow::anyhow!("HNSW index not initialized"))
         }
     }
 }

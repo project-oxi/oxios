@@ -124,8 +124,6 @@ mod tests {
             crate::AgentApi::new(
                 Arc::new(crate::supervisor::NoOpSupervisor),
                 Arc::new(crate::budget::BudgetManager::new()),
-                Arc::new(crate::memory::MemoryManager::new(state_store.clone())),
-                None,
             ),
             crate::SecurityApi::new(
                 Arc::new(parking_lot::Mutex::new(crate::auth::AuthManager::new())),
@@ -178,10 +176,8 @@ mod tests {
             Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
-                    Arc::new(
-                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
-                    ),
-                    Arc::new(crate::memory::MemoryManager::new(state_store.clone())),
+                    Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap()),
+                    None,
                 )
                 .unwrap(),
             ),

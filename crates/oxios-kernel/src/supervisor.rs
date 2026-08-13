@@ -38,7 +38,6 @@ use crate::types::{AgentId, AgentInfo, AgentStatus};
 
 use oxios_ouroboros::ExecutionResult;
 
-#[cfg(feature = "sqlite-memory")]
 use crate::agent_log_db::AgentLogDb;
 
 /// Tracks the runtime handles needed to cancel a running agent.
@@ -165,7 +164,6 @@ pub struct BasicSupervisor {
     /// Filesystem state store for agent persistence (JSON files).
     state_store: Option<Arc<StateStore>>,
     /// SQLite-backed agent history query index.
-    #[cfg(feature = "sqlite-memory")]
     agent_log_db: Option<Arc<AgentLogDb>>,
     /// Agent log retention configuration.
     agent_log_config: AgentLogConfig,
@@ -183,7 +181,6 @@ impl BasicSupervisor {
             resource_monitor: None,
             session_context: Arc::new(tokio::sync::RwLock::new(SessionContext::new())),
             state_store: None,
-            #[cfg(feature = "sqlite-memory")]
             agent_log_db: None,
             agent_log_config: AgentLogConfig::default(),
         }
@@ -195,7 +192,6 @@ impl BasicSupervisor {
     }
 
     /// Attach a SQLite-backed agent history log database.
-    #[cfg(feature = "sqlite-memory")]
     pub fn set_agent_log_db(&mut self, db: Arc<AgentLogDb>) {
         self.agent_log_db = Some(db);
     }
@@ -339,25 +335,19 @@ impl Supervisor for BasicSupervisor {
                     reasoning_segments: Vec::new(),
                 })
             } else {
-                // Snapshot recall_timing under a brief read lock, execute
-                // WITHOUT holding any lock, then write back. SessionContext's
-                // only mutation during execution is recall_with_proactive
-                // (agent_runtime.rs:426); project IDs are read-only. Holding
-                // the write lock for the entire multi-minute execution was
-                // serializing all agents in the same session.
+                // Execute with a lightweight SessionContext copy: project IDs
+                // are read-only during execution (recall timing moved to the
+                // oxibrain daemon — RFC-047), so no write-back is needed.
                 let mut temp_ctx = {
                     let ctx = session_ctx.read().await;
                     let mut c = crate::session_context::SessionContext::new();
-                    c.recall_timing = ctx.recall_timing.clone();
+                    c.primary_project_id = ctx.primary_project_id;
+                    c.secondary_project_ids = ctx.secondary_project_ids.clone();
                     c
                 };
-                let exec_result = runtime
+                runtime
                     .execute_directive(id, &directive, &env, &mut temp_ctx)
-                    .await;
-                // Write back the mutated recall_timing (last-write-wins for
-                // concurrent agents — recall_timing is a heuristic tracker).
-                session_ctx.write().await.recall_timing = temp_ctx.recall_timing;
-                exec_result
+                    .await
             };
             // Receiver gone (run_with_directive returned early) → ignore error.
             let _ = done_tx.send(result);
@@ -598,7 +588,6 @@ impl BasicSupervisor {
         }
 
         // 2. SQLite (query index)
-        #[cfg(feature = "sqlite-memory")]
         if let Some(ref db) = self.agent_log_db {
             let db = db.clone();
             let info = info.clone();
@@ -681,21 +670,12 @@ mod tests {
         let state_store_2 =
             Arc::new(crate::state_store::StateStore::new(tmp.join("state")).expect("state store"));
         let state_store = state_store_2.clone();
-        let memory_manager = Arc::new({
-            let mut mm = crate::memory::MemoryManager::new(state_store.clone());
-            mm.set_git_layer(Arc::new(
-                crate::git_layer::GitLayer::new(tmp.join("git"), false).expect("git layer"),
-            ));
-            mm
-        });
 
         let kernel_handle = Arc::new(crate::KernelHandle::new(
             crate::kernel_handle::StateApi::new(state_store),
             crate::kernel_handle::AgentApi::new(
                 Arc::new(crate::supervisor::NoOpSupervisor),
                 Arc::new(crate::budget::BudgetManager::new()),
-                memory_manager.clone(),
-                Some(event_bus.clone()),
             ),
             crate::kernel_handle::SecurityApi::new(
                 Arc::new(parking_lot::Mutex::new(crate::auth::AuthManager::new())),
@@ -760,7 +740,7 @@ mod tests {
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
                     Arc::new(oxios_markdown::KnowledgeBase::new(tmp.join("knowledge")).unwrap()),
-                    memory_manager.clone(),
+                    None,
                 )
                 .unwrap(),
             ),

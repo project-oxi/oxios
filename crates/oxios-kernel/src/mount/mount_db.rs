@@ -209,10 +209,10 @@ fn deserialize_snapshot(json: &str) -> HashMap<PathBuf, SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MemoryDatabase;
+    use crate::kernel_db::KernelDatabase;
 
-    fn open_db() -> MemoryDatabase {
-        let db = MemoryDatabase::open_in_memory(64).expect("open db");
+    fn open_db() -> KernelDatabase {
+        let db = KernelDatabase::open_in_memory().expect("open db");
         ensure_mount_schema(&db.conn()).expect("schema");
         db
     }

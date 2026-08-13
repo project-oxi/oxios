@@ -2,7 +2,7 @@
 //!
 //! Extracted from `memory/database.rs` — project tables (`projects`,
 //! `project_memory`) are a kernel concern, not a memory concern.
-//! Uses `MemoryDatabase::conn()` for SQL execution.
+//! Uses `KernelDatabase::conn()` for SQL execution.
 
 use anyhow::Result;
 

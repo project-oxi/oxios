@@ -121,22 +121,6 @@ pub enum KernelEvent {
         /// The session ID that triggered this request.
         session_id: Option<String>,
     },
-    /// A memory entry was stored.
-    MemoryStored {
-        /// Memory entry ID.
-        id: String,
-        /// Memory type label.
-        memory_type: String,
-        /// Source of the memory.
-        source: String,
-    },
-    /// Memories were recalled for a new session.
-    MemoryRecalled {
-        /// The recall query.
-        query: String,
-        /// Number of memories returned.
-        count: usize,
-    },
     /// Multi-agent group created.
     AgentGroupCreated {
         /// The group's ID.
@@ -477,14 +461,6 @@ pub fn kernel_event_to_audit_action(event: &KernelEvent) -> AuditAction {
             ..
         } => AuditAction::Other {
             detail: format!("path_access_requested:{id}:{tool_name}:{path}"),
-        },
-        KernelEvent::MemoryStored {
-            id, memory_type, ..
-        } => AuditAction::MemoryWrite {
-            entry_id: format!("{id}:{memory_type}"),
-        },
-        KernelEvent::MemoryRecalled { query, count } => AuditAction::MemoryRead {
-            entry_id: format!("query:{query}:{count}results"),
         },
         KernelEvent::AgentGroupCreated {
             group_id,

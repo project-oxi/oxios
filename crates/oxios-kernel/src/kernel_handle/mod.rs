@@ -2,6 +2,7 @@
 
 pub mod a2a_api;
 pub mod agent_api;
+pub mod brain_api;
 pub mod browser_api;
 pub mod calendar_api;
 pub mod compression_api;
@@ -14,7 +15,6 @@ pub mod knowledge_lens;
 pub mod marketplace_api;
 pub mod mcp_api;
 pub mod memo_api;
-pub mod memory_api;
 pub mod mount_api;
 pub mod persona_api;
 pub mod project_api;
@@ -29,6 +29,7 @@ pub use crate::host_tools::HostToolsApi;
 pub use a2a_api::A2aApi;
 pub use agent_api::AgentApi;
 pub use browser_api::BrowserApi;
+pub use brain_api::BrainApi;
 #[cfg(feature = "browser")]
 pub use screenshot_api::{ScreenshotEngine, ScreenshotViewport};
 pub use calendar_api::CalendarApi;
@@ -49,7 +50,6 @@ pub use knowledge_lens::{
 pub use marketplace_api::MarketplaceApi;
 pub use mcp_api::McpApi;
 pub use memo_api::MemoApi;
-pub use memory_api::MemoryApi;
 pub use mount_api::{MountApi, MountInfo};
 pub use persona_api::PersonaApi;
 pub use project_api::{ProjectApi, ProjectInfo};
@@ -100,6 +100,10 @@ pub struct KernelHandle {
     pub projects: Option<ProjectApi>,
     /// Mount management: path aliases (RFC-025).
     pub mounts: Option<MountApi>,
+    /// Brain daemon (RFC-047): oxibrain connection facade. `None` only on the
+    /// incomplete preliminary handle; the cached handle attaches it via
+    /// [`KernelHandle::with_brain`](Self::with_brain).
+    pub brain: Option<BrainApi>,
     /// Execution: config + access management.
     pub exec: ExecApi,
     /// Headless browser (RFC: browser-migration). `None` unless `[browser].enabled`.
@@ -191,6 +195,7 @@ impl KernelHandle {
             infra,
             projects,
             mounts: None,
+            brain: None,
             exec,
             browser: None,
             a2a,
@@ -220,6 +225,13 @@ impl KernelHandle {
     /// RFC-011 Projects continue to work during the migration.
     pub fn with_mounts(mut self, mounts: MountApi) -> Self {
         self.mounts = Some(mounts);
+        self
+    }
+
+    /// Attach the brain daemon facade (RFC-047). Called by the kernel
+    /// assembler at boot after `BrainConnection::connect`.
+    pub fn with_brain(mut self, brain: BrainApi) -> Self {
+        self.brain = Some(brain);
         self
     }
 
@@ -497,17 +509,5 @@ impl KernelHandle {
     /// Marketplace API — ClawHub search, install, update.
     pub fn marketplace_api(&self) -> &MarketplaceApi {
         &self.marketplace_api
-    }
-
-    /// Get a [`MemoryApi`] facade for memory operations.
-    ///
-    /// Returns a fresh `MemoryApi` each call. It shares the same underlying
-    /// `Arc<MemoryManager>` and `Arc<HnswMemoryIndex>` (when attached) as
-    /// `AgentApi`, so semantic search and index rebuilds route through the
-    /// real index rather than the keyword-only fallback.
-    pub fn memory(&self) -> MemoryApi {
-        let mm = self.agents.memory_manager().clone();
-        let hnsw = self.agents.hnsw_index.clone();
-        MemoryApi::new(mm, hnsw)
     }
 }

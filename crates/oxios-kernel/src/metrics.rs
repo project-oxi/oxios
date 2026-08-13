@@ -669,9 +669,10 @@ pub fn register_builtin_metrics() {
     );
     r.counter("oxios_tool_errors_total", "Tool errors", &[]);
 
-    // Memory metrics
-    r.gauge("oxios_memory_entries_total", "Total memory entries", 0.0);
-    r.counter("oxios_memory_recall_total", "Memory recall operations", &[]);
+    // Brain daemon metrics (RFC-047). oxibrain_available is set from boot;
+    // oxibrain_recall_total is registered for future wiring.
+    r.gauge("oxibrain_available", "Brain daemon reachable (1/0)", 0.0);
+    r.counter("oxibrain_recall_total", "Brain recall operations", &[]);
 
     // Container metrics
     r.counter("oxios_exec_total", "Exec calls", &[]);

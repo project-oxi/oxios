@@ -20,6 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # RFC-047: oxibrain-client is a path dep until v0.1 publishes to crates.io.
+      # Pin to the same commit as Cargo.toml's `oxibrain` field of the workspace
+      # metadata so the daemon client builds reproducibly. Until then the path
+      # dep breaks CI unless the sibling repo is co-located at the expected
+      # relative path.
+      - name: Checkout oxibrain (path-dep dependency for RFC-047)
+        uses: actions/checkout@v5
+        with:
+          repository: project-oxi/oxibrain
+          path: ../oxibrain
+          fetch-depth: 1
+
       - name: Read rust-toolchain channel
         id: rust-channel
         run: |
@@ -90,6 +102,14 @@ jobs:
     needs: [fmt, frontend]
     steps:
       - uses: actions/checkout@v5
+
+      # RFC-047: oxibrain-client path-dep — see fmt job for rationale.
+      - name: Checkout oxibrain (path-dep dependency for RFC-047)
+        uses: actions/checkout@v5
+        with:
+          repository: project-oxi/oxibrain
+          path: ../oxibrain
+          fetch-depth: 1
 
       - name: Read rust-toolchain channel
         id: rust-channel

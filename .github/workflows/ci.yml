@@ -45,9 +45,9 @@ jobs:
         run: |
           cargo clippy \
             --all-targets \
-            -p oxios-kernel --features "sqlite-memory" \
+            -p oxios-kernel \
             -p oxios-ouroboros -p oxios-gateway -p oxios-markdown \
-            -p oxios-mcp -p oxios-memory -p oxios-calendar \
+            -p oxios-mcp -p oxios-calendar \
             -p oxios \
             -- \
             -D warnings

@@ -7,13 +7,12 @@ license = "MIT"
 repository = "https://github.com/project-oxi/oxios"
 
 [features]
-default = ["sqlite-memory"]
+default = []
 wasm-sandbox = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Unified browser feature — browse tools + screenshot, both via oxibrowser-core 0.21.
 # Replaces the former `native-browser` (SDK-dependent) and `screenshot` (standalone)
 # features with a single direct dependency on oxibrowser-core.
 browser = ["dep:oxibrowser-core"]
-sqlite-memory = ["dep:rusqlite", "dep:sqlite-vec", "oxios-memory/sqlite-memory"]
 
 # MLX embedding provider (Apple Silicon only)
 # Provides EmbeddingGemma-300m dense vectors for semantic search.
@@ -27,15 +26,17 @@ embedding-gguf = ["dep:llama-gguf", "dep:hf-hub"]
 # used locally, versions recorded for a future crates.io publish.
 # See docs/designs/2026-08-05-app-module-integration-design.md
 memo = ["dep:oximemo-core"]
-timeline = ["dep:oxiline-core", "dep:rusqlite"]
+timeline = ["dep:oxiline-core"]
 
 [dependencies]
 oxios-ouroboros = { version = "1.39.0", path = "../oxios-ouroboros" }
 oxios-markdown = { version = "1.39.0", path = "../oxios-markdown" }
 oxios-calendar = { version = "1.39.0", path = "../oxios-calendar" }
 oxios-mcp = { version = "1.39.0", path = "../oxios-mcp" }
-oxios-memory = { version = "1.39.0", path = "../oxios-memory" }
 oxicode-sdk = { workspace = true }
+# oxibrain daemon client (RFC-047). Path dep until oxibrain-client 0.1 is
+# published to crates.io — swap to `version = "0.1"` after publish.
+oxibrain-client = { version = "0.1", path = "../../../oxibrain/crates/oxibrain-client" }
 # 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
 # BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser
 # features — products own browsing themselves (RFC-046).
@@ -99,9 +100,9 @@ inquire = { workspace = true }
 console = { workspace = true }
 indicatif = "0.17"
 
-# SQLite-based memory storage (RFC-012)
-rusqlite = { version = "0.40", features = ["bundled"], optional = true }
-sqlite-vec = { version = "0.1", optional = true }
+# SQLite — kernel mount/project tables + agent history log (RFC-012, RFC-025).
+# Non-optional since the sqlite-memory feature was removed (RFC-047).
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # MLX embedding (Apple Silicon, optional)
 [target.'cfg(target_arch = "aarch64")'.dependencies]

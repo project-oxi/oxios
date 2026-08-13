@@ -63,7 +63,6 @@ opt-level = 3
 # Their code lives in src/api/, src/channels/cli/, src/channels/telegram/ as modules.
 members = [
     "crates/oxios-mcp",
-    "crates/oxios-memory",
     "crates/oxios-calendar",
     "crates/oxios-kernel",
     "crates/oxios-markdown",
@@ -176,7 +175,7 @@ local-ip-address = "0.6"
 hostname = "0.4"
 
 [features]
-default = ["web", "cli", "browser", "screenshot", "sqlite-memory"]
+default = ["web", "cli", "browser", "screenshot"]
 # web: HTTP API server (Axum). Source: src/api/ (merged from surface/oxios-web per RFC-026)
 web = ["dep:axum", "dep:tower", "dep:tower-http",
        "dep:mime_guess", "dep:futures-util", "dep:tokio-stream",
@@ -189,7 +188,6 @@ browser = ["oxios-kernel/browser"]
 # screenshot: now part of the unified `browser` feature (RFC-046).
 # Kept as alias for backward compatibility with feature flags.
 screenshot = ["oxios-kernel/browser"]
-sqlite-memory = ["oxios-kernel/sqlite-memory"]
 embedding-gguf = ["oxios-kernel/embedding-gguf"]
 # First-party app modules (opt-in, default-off). See
 # docs/designs/2026-08-05-app-module-integration-design.md

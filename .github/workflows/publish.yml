@@ -75,7 +75,7 @@ jobs:
         # are published (topological order), so it cannot live here.
         run: |
           set -euo pipefail
-          for crate in oxios-markdown oxios-mcp oxios-ouroboros oxios-memory \
+          for crate in oxios-markdown oxios-mcp oxios-ouroboros \
                        oxios-calendar oxios-kernel oxios-gateway \
                        oxios; do
             echo "─── Packaging $crate ───"
@@ -87,9 +87,8 @@ jobs:
   #   ① oxios-markdown   (no oxios deps)
   #      oxios-mcp        (no oxios deps)
   #      oxios-ouroboros  (no oxios deps, depends on oxicode-sdk — external)
-  #      oxios-memory     (no oxios deps)
   #   ② oxios-calendar   → oxios-markdown
-  #   ③ oxios-kernel     → {ouroboros, markdown, calendar, mcp, memory}
+  #   ③ oxios-kernel     → {ouroboros, markdown, calendar, mcp}
   #   ④ oxios-gateway    → oxios-kernel (+ oxios-ouroboros)
   #   ⑤ oxios            → {kernel, gateway, markdown, ouroboros, calendar}
   #
@@ -110,7 +109,6 @@ jobs:
           - oxios-markdown
           - oxios-mcp
           - oxios-ouroboros
-          - oxios-memory
           - oxios-calendar
           - oxios-kernel
           - oxios-gateway
@@ -125,7 +123,7 @@ jobs:
           CRATE="${{ matrix.crate }}"
           # Map each crate to the internal dependency it must wait for
           case "$CRATE" in
-            oxios-markdown|oxios-mcp|oxios-ouroboros|oxios-memory)
+            oxios-markdown|oxios-mcp|oxios-ouroboros)
               WAIT=""; exit 0 ;;
             oxios-calendar)
               WAIT="oxios-markdown" ;;

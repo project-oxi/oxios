@@ -397,7 +397,7 @@ JSON file storage for all kernel state.
   │  Base path: ~/.oxios/workspace/              │
   │  ├── seeds/{id}.json          Seed specs     │
   │  ├── evals/{id}-eval.json     Evaluations    │
-  │  ├── memory/{type}/{id}.json  Memories       │
+  │  ├── kernel.db                # Mount/project tables (KernelDatabase, SQLite WAL)
   │  ├── audit/trail.json         Audit entries  │
   │  ├── agent_groups/{id}.json   Group state    │
   │  └── {category}/{name}.json   Arbitrary data │
@@ -619,7 +619,7 @@ Per-agent budget tracking for LLM API calls.
   └──────────────────────────────────────────────┘
 ```
 
-**Integration:** Called by Orchestrator after saving seeds/evaluations, by MemoryManager after writes, and by the Guardian daemon for periodic verification.
+**Integration:** Called by Orchestrator after saving seeds/evaluations, by the brain connector after writes, and by the Guardian daemon for periodic verification.
 
 **Source:** `crates/oxios-kernel/src/git_layer.rs`
 
@@ -646,51 +646,42 @@ Per-agent budget tracking for LLM API calls.
 
 ---
 
-### 3.14 MemoryManager — Vector Store with Semantic Search
+### 3.14 Brain Connector — External `oxibrain` Daemon (RFC-047)
+
+Agent memory lives in a **standalone daemon** (`oxibrain`, separate repo) reached over a Unix-domain socket. The kernel holds a thin `BrainConnection` client; it owns no index, no embeddings store, and no SQLite memory tables.
 
 ```
   ┌──────────────────────────────────────────────────────────┐
-  │                    MemoryManager                          │
+  │                  BrainConnection                          │
+  │  (crates/oxios-kernel/src/brain/mod.rs)                  │
   │                                                          │
-  │  Storage: StateStore (JSON files per entry)              │
-  │  Index: TF-IDF + cosine similarity (in-memory)           │
-  │  Optional: HNSW index for fast ANN search                │
+  │  Transport:  Unix-domain socket (JSON-RPC over length-    │
+  │              framed lines), lazy reconnect on call fail.  │
+  │  Liveness:   AtomicBool `is_available` — set on connect/  │
+  │              reconnect, cleared on a failed call.         │
   │                                                          │
-  │  Memory Types:                                           │
-  │  ┌────────────┐┌─────────┐┌──────┐┌────────┐┌──────────┐│
-  │  │Conversation││ Session ││ Fact ││Episode ││Knowledge ││
-  │  │(auto-comp) ││(summary)││      ││(event) ││(static)  ││
-  │  └────────────┘└─────────┘└──────┘└────────┘└──────────┘│
+  │  Surface (KernelHandle::brain: BrainApi):                 │
+  │    recall(space, text?, budget) → context string          │
+  │    ingest(space, text)            → episode id            │
+  │    search(space, query, limit)    → Vec<SearchHit>        │
+  │    get_entity(id)                 → entity detail         │
+  │    stats(space)                   → SpaceStats            │
   │                                                          │
-  │  Operations:                                             │
-  │  remember(entry)              → save + index             │
-  │  recall(query)                → Vec<MemoryEntry>         │
-  │  search(query, type, limit)   → Vec<SemanticHit>         │
-  │  forget(id, type)             → remove                   │
-  │  blend_into_prompt(memories)  → enriched system prompt   │
-  │  rebuild_index()              → full re-index            │
-  │  curate(budget)               → prune low-importance     │
-  │                                                          │
-  │  Sub-modules:                                            │
-  │  ┌─────────────────────────────────────────────────────┐ │
-  │  │ hyperbolic/   → Hyperbolic embeddings               │ │
-  │  │ flash_attention/ → Attention-weighted retrieval      │ │
-  │  │ hnsw/         → HNSW approximate nearest neighbor   │ │
-  │  │ graph/        → MemoryGraph (entity relationships)   │ │
-  │  │ chunking/     → Text chunking (fixed + paragraph)   │ │
-  │  │ normalizer/   → L2 normalize, cosine similarity     │ │
-  │  │ store/        → HnswMemoryIndex                     │ │
-  │  │ budget/       → MemoryBudget, CurationReport        │ │
-  │  └─────────────────────────────────────────────────────┘ │
-  │                                                          │
-  │  Space-scoped: MemoryManager::for_space(space_dir)       │
-  │  Each Space gets isolated memory via separate StateStore  │
+  │  Degradation contract:                                   │
+  │    daemon unreachable → every op returns empty/None,      │
+  │    the kernel logs a warning, agent turns complete; the   │
+  │    next call retries the connection. Fail-open, never     │
+  │    blocks a turn.                                        │
   └──────────────────────────────────────────────────────────┘
 ```
 
-**Effective importance:** `base_importance × (1 + ln(1 + access_count))` — frequently accessed memories get a boost.
+**In-kernel survivors:** SONA (trajectory pattern engine, `memory_agent::sona`) and the embedding traits (`embedding` — `TextVector`, `cosine_similarity_f32`) were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite WAL) now owns the mount/project tables in `~/.oxios/workspace/kernel.db`.
 
-**Source:** `crates/oxios-kernel/src/memory/mod.rs`
+**Config:** `[brain]` section — `enabled` / `socket_path` (default `~/.oxi/brain/oxibrain.sock`) / `space` (default `personal`).
+
+**Metrics:** `oxibrain_available` (gauge, set at boot + on reconnect), `oxibrain_recall_total` (counter, incremented on successful recall).
+
+**Source:** `crates/oxios-kernel/src/brain/mod.rs`, `crates/oxios-kernel/src/brain/config.rs`
 
 ---
 
@@ -1027,7 +1018,7 @@ The KernelHandle is the **syscall table** of the Agent OS. It is a facade compos
 | Domain | Typed APIs |
 |--------|-----------|
 | Lifecycle & execution | `AgentApi` · `ExecApi` · `ExtensionApi` |
-| State & persistence | `StateApi` · `MemoryApi` · `MemoApi` · `TimelineApi` · `CompressionApi` |
+| State & persistence | `StateApi` · `BrainApi` · `MemoApi` · `TimelineApi` · `CompressionApi` |
 | Knowledge | `KnowledgeLens` |
 | Security | `SecurityApi` |
 | Identity & persona | `PersonaApi` |
@@ -1264,7 +1255,7 @@ Complete path of a user message through the system:
   │   │       ├── agent_runtime.rs     engine.rs              event_bus.rs
   │   │       ├── state_store.rs       config.rs              types.rs
   │   │       ├── access_manager/      # RBAC + path sandbox + audit trail
-  │   │       ├── memory/              # Tiered memory bridge
+  │   │       ├── brain/              # oxibrain daemon client (BrainConnection) + SONA + embeddings (RFC-047)
   │   │       ├── kernel_handle/       # Facade — 22 typed APIs (see §4)
   │   │       ├── tools/               # builtin/, kernel_bridge.rs, exec_tool.rs
   │   │       ├── skill/               # Unified skill system (RFC-009): clawhub, skills_sh
@@ -1279,7 +1270,7 @@ Complete path of a user message through the system:
   │   ├── oxios-gateway/          # Channel-agnostic message hub
   │   ├── oxios-markdown/         # Knowledge base (VirtualFs, BacklinkIndex)
   │   ├── oxios-mcp/              # MCP client (JSON-RPC 2.0 over stdio)
-  │   ├── oxios-memory/           # Tiered agent memory (Hot/Warm/Cold, Dream, HNSW)
+  │   ├── oxibrain-client/       # Daemon client for the external oxibrain memory daemon (path dep, RFC-047)
   │   └── oxios-calendar/         # .ics-based calendar event management
   ├── web/                        # React frontend (SPA)
   ├── share/                      # Default skills, config
@@ -1498,7 +1489,7 @@ The kernel uses directory-level modules with `pub(crate)` encapsulation:
 
 | Directory | Lines | External deps from kernel | Self-contained? |
 |-----------|-------|---------------------------|----------------|
-| `memory/` | 12,277 | `state_store`, `git_layer` (2) | ✅ Nearly isolated |
+| `brain/` | ~340 | `oxibrain-client` (daemon socket) | ✅ Thin client — store is external (RFC-047) |
 | `tools/` | 7,047 | `KernelHandle` (facade pattern) | ✅ Goes through facade |
 | `access_manager/` | 3,681 | `types`, `capability`, `config` (3) | ✅ Nearly isolated |
 | `kernel_handle/` | 3,063 | All subsystems (by design) | — This IS the facade |
@@ -1511,7 +1502,7 @@ Each directory already has its own `mod.rs` controlling visibility. The `lib.rs`
 - Orchestration: `scheduler`, `budget`, `cron`, `orchestrator`
 - Security: `access_manager`, `audit_trail`, `auth`, `capability`, `credential`
 - Communication: `a2a`, `event_bus`, `mcp`, `coordination`
-- Intelligence: `memory`, `embedding`, `persona`, `onboarding`
+- Intelligence: `brain`, `embedding`, `persona`, `onboarding`
 - Tools & Skills: `tools`, `skill`, `clawhub`, `skills_sh`
 - State & Config: `config`, `state_store`, `git_layer`, `project`, `backup`
 - Infrastructure: `engine`, `error`, `types`, `metrics`, `telemetry`

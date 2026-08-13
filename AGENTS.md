@@ -16,12 +16,12 @@ User → Channel (Web/CLI/Telegram) → Gateway → Kernel
 ```
 oxios/
 ├── crates/
-│   ├── oxios-kernel/      # Supervisor, scheduler, memory, security, tools
+│   ├── oxios-kernel/      # Supervisor, scheduler, brain connector, security, tools
 │   ├── oxios-markdown/    # Knowledge base (VirtualFs, BacklinkIndex)
 │   ├── oxios-ouroboros/   # Unified intent handling (assess → crystallize → execute → review)
 │   ├── oxios-gateway/     # Channel-agnostic message hub
 │   ├── oxios-mcp/         # MCP client (JSON-RPC 2.0 over stdio)
-│   ├── oxios-memory/      # Tiered agent memory (Hot/Warm/Cold, Dream, HNSW)
+│   ├── oxibrain (external daemon, RFC-047)  # agent memory (Unix-socket JSON-RPC) — separate repo
 │   └── oxios-calendar/    # .ics-based calendar event management
 ├── src/                   # Binary: HTTP API server, CLI/Telegram channels, main()
 │   ├── api/               # REST/WebSocket/SSE (was surface/oxios-web)
@@ -31,7 +31,7 @@ oxios/
 └── docs/                  # Architecture, RFCs, design documents
 ```
 
-**Dependencies:** `oxios → oxios-kernel → {oxios-memory, oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`. `oxicode-sdk` is a crates.io dependency — never reimplement what it provides.
+**Dependencies:** `oxios → oxios-kernel → {oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`, plus `oxibrain-client` (path dep → crates.io post-publish). `oxicode-sdk` is a crates.io dependency — never reimplement what it provides. Agent memory is served by the external `oxibrain` daemon over a Unix socket; the kernel holds a `BrainConnection` (`KernelHandle::brain`).
 
 ## Quick Facts
 
@@ -95,7 +95,7 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 - **Orchestrator** — Ouroboros protocol end-to-end. The "brain".
 - **AgentRuntime** — Wraps oxicode-sdk tool-calling loop.
 - **OxiosEngine** — Wraps oxicode-sdk's `Oxicode`. Provider/model resolution goes through `OxicodeBuilder`. The **catalog port** (`oxicode-sdk` `ModelCatalog`) is initialized once at boot (`OxiosEngine::init_file_catalog`, self-hosted under `~/.oxios/cache/`) and attached to every engine — including across hot-swaps — so `resolve_model` and Web UI introspection (`EngineApi`) consult dynamic models.dev metadata (live price/limit refresh, user overrides) before falling back to the static registry. Static free-fns (`get_provider_models`, etc.) remain as fallbacks (the static `model_db` is itself backed by the embedded models.dev snapshot, so it carries real prices).
-- **Memory** — Tiered (Hot/Warm/Cold), Dream consolidation, HNSW, hyperbolic embeddings.
+- **Memory** — externalized to the standalone `oxibrain` daemon (RFC-047). The kernel connects via `BrainConnection` (`KernelHandle::brain: BrainApi`); SONA (trajectory pattern engine) and embedding traits remain in-kernel. Degradation contract: unreachable daemon → empty results, turns still complete.
 - **AccessManager** — OWASP RBAC + path sandboxing + Merkle audit trail.
 - **Skill** — Unified system (RFC-009). Each skill = `SKILL.md` with YAML frontmatter.
 
@@ -137,19 +137,20 @@ git tag v1.2.0 && git push --tags   # → CI builds native binary
 
 ### crates.io — CI (automatic)
 
-GitHub Actions `publish.yml` publishes all 8 crates in topological order.
+GitHub Actions `publish.yml` publishes all 7 crates in topological order.
 `publish.yml` is dispatched by `release.yml` after a GitHub Release is created
 (a Release made with GITHUB_TOKEN doesn't emit `release: published`, so
 `release.yml` triggers it via `gh workflow run`).
 
 Topological order:
 
-① oxios-markdown, oxios-mcp, oxios-ouroboros, oxios-memory   (no oxios deps)
+① oxios-markdown, oxios-mcp, oxios-ouroboros   (no oxios deps)
 ② oxios-calendar    → oxios-markdown
-③ oxios-kernel      → {ouroboros, markdown, calendar, mcp, memory}
+③ oxios-kernel      → {ouroboros, markdown, calendar, mcp}
 ④ oxios-gateway     → oxios-kernel
 ⑤ oxios (binary)    → {kernel, gateway, markdown, ouroboros, calendar}
 ```
+`oxios-memory` was retired in RFC-047 (agent memory now lives in the `oxibrain` daemon, a separate repo). The crates.io entry is deprecated, not yanked.
 
 `oxios-web`/`oxios-cli`/`oxios-telegram` were merged into the binary as
 in-process modules per RFC-026 — no separate crates to publish.
@@ -158,7 +159,7 @@ in-process modules per RFC-026 — no separate crates to publish.
 - **Kernel binary vs library.** `src/kernel.rs` (assembler) is in the binary crate, not `oxios-kernel`.
 - **Agent lifecycle split.** `Supervisor` = low-level process. `AgentLifecycleManager` = full lifecycle (A2A, scheduling, permissions). Don't add lifecycle logic to Orchestrator.
 - **Tool registration.** All kernel tools → `tools/kernel_bridge.rs::register_all_kernel_tools()`. Not `registration.rs`.
-- **Two knowledge systems.** Agent memory = MemoryManager (JSON per Space). User notes = KnowledgeBase (`.md` files, `~/.oxios/knowledge/`). See `docs/rfc-003-knowledge-separation.md`.
+- **Two knowledge systems.** Agent memory = `oxibrain` daemon (Unix-socket JSON-RPC, RFC-047). User notes = KnowledgeBase (`.md` files, `~/.oxios/knowledge/`). See `docs/rfc-003-knowledge-separation.md`.
 - **Unified skill model.** No separate `program/` module or `program.toml`. `SkillManager` handles everything. Each skill = `SKILL.md` + YAML frontmatter.
 - **Feature gates.** Web, CLI, Telegram, browser, telemetry are feature-gated. Check `cargo build -p oxios --features <feature>`.
 - **`--all-features` works.** oxicode-sdk 0.66.0 + wasmtime 24 migration — `cargo build/clippy --workspace --all-features` compiles. As of oxicode-sdk 0.45.x, `AgentConfig` gained `ttsr_engine`/`memory`/`todo`/`agent_pool` fields (all `#[serde(skip, default)]`); fill with `..Default::default()` to keep sites working. CI still uses per-crate features (`.github/workflows/ci.yml`) for precision. The prior wasm-sandbox `ResourceLimiter` regression (missing `table_growing` on wasmtime 24) is fixed in `crates/oxios-kernel/src/wasm_sandbox.rs`. As of oxicode-sdk 0.66.0, the project was renamed from `oxi` to `oxicode` (CHANGELOG §0.65.0 Breaking) — `oxi-sdk`/`oxi-ai`/`oxi-agent` → `oxicode-sdk`/`oxicode-ai`/`oxicode-agent`; `Oxi`/`OxiBuilder`/`OxiBrowserEngine` → `Oxicode`/`OxicodeBuilder`/`OxicodeBrowserEngine`; `OXI_*` → `OXICODE_*`; `~/.oxi/` → `~/.oxicode/`. oxibrowser-core bumped to 0.17. CI pulls oxicode-sdk from crates.io (no path dep, no separate `a7garden/oxicode` checkout — `Cargo.toml` `[patch.crates-io]` is intentionally uncommented).

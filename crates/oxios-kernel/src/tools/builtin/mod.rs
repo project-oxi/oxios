@@ -73,7 +73,7 @@ pub fn register_all_kernel_tools(registry: &ToolRegistry, kernel: &KernelHandle,
     // ExecTool (stores Arc<KernelHandle>)
     registry.register(crate::tools::ExecTool::from_kernel(kernel));
 
-    // Memory tools — MemoryManager-backed, registered unconditionally.
+    // Memory tools — brain-backed (BrainConnection), registered unconditionally.
     // Oxios is a personal agent OS: every agent gets memory read + write.
     // The CSpace-gated path in registration.rs is removed (redundant).
     // See docs/designs/2026-07-11-memory-system-overhaul-design.md Phase 1.

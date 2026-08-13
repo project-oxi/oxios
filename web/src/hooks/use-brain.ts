@@ -59,7 +59,12 @@ export function useBrainRecall() {
     mutationFn: ({ query, budget }: { query: string; budget?: number }) =>
       api.post<BrainRecallResponse>('/api/brain/recall', { query, budget }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['brain'] })
+      // Recall writes new traces — refresh counters and search-indexed
+      // queries, but leave entity/timeline/why detail pages alone (those
+      // are content-stable per entity_id).
+      qc.invalidateQueries({ queryKey: ['brain', 'status'] })
+      qc.invalidateQueries({ queryKey: ['brain', 'stats'] })
+      qc.invalidateQueries({ queryKey: ['brain', 'search'] })
     },
   })
 }
@@ -84,7 +89,11 @@ export function useBrainTimeline(
   if (to != null) params.to = String(to)
   return useQuery({
     queryKey: ['brain', 'timeline', entityId, from, to],
-    queryFn: () => api.get<TimelineEntry[]>(`/api/brain/timeline?entity=${entityId}`, params),
+    queryFn: () =>
+      api.get<TimelineEntry[]>(
+        `/api/brain/timeline?entity=${encodeURIComponent(entityId ?? '')}`,
+        params,
+      ),
     enabled: !!entityId,
   })
 }

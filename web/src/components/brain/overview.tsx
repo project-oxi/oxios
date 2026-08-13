@@ -4,7 +4,6 @@ import { ErrorState } from '@/components/shared/error-state'
 import { LoadingCards } from '@/components/shared/loading'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useBrainStats, useBrainStatus } from '@/hooks/use-brain'
-import type { BrainStats } from '@/types/brain'
 
 function StatCard({
   icon,
@@ -37,12 +36,14 @@ export function BrainOverview() {
   if (isLoading) return <LoadingCards count={4} />
   if (isError) return <ErrorState onRetry={() => refetch()} />
 
-  const s: BrainStats = stats ?? {
-    episodes: 0,
-    entities: 0,
-    statements: 0,
-    contradictions: 0,
+  const s = {
+    episodes: stats?.episodes ?? null,
+    entities: stats?.entities ?? null,
+    statements: stats?.statements ?? null,
+    contradictions: stats?.contradictions ?? null,
   }
+
+  const fmt = (n: number | null) => (n == null ? '—' : n.toLocaleString())
 
   return (
     <div className="space-y-6">
@@ -55,17 +56,17 @@ export function BrainOverview() {
         <StatCard
           icon={<Layers className="h-4 w-4 text-muted-foreground" />}
           label={t('brain.episodes')}
-          value={s.episodes}
+          value={fmt(s.episodes)}
         />
         <StatCard
           icon={<Database className="h-4 w-4 text-muted-foreground" />}
           label={t('brain.entities')}
-          value={s.entities}
+          value={fmt(s.entities)}
         />
         <StatCard
           icon={<GitCompareArrows className="h-4 w-4 text-muted-foreground" />}
           label={t('brain.contradictions')}
-          value={s.contradictions}
+          value={fmt(s.contradictions)}
         />
       </div>
       <Card>
@@ -74,7 +75,7 @@ export function BrainOverview() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            {status?.space ?? t('brain.unknown')} · {t('brain.statements')}: {s.statements}
+            {status?.space ?? t('brain.unknown')} · {t('brain.statements')}: {fmt(s.statements)}
           </p>
         </CardContent>
       </Card>

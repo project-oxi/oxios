@@ -15,12 +15,12 @@ export interface BrainStatus {
   episodes: number | null
 }
 
-/** GET /api/brain/stats */
+/** GET /api/brain/stats — fields can be null when the daemon is degraded. */
 export interface BrainStats {
-  episodes: number
-  entities: number
-  statements: number
-  contradictions: number
+  episodes: number | null
+  entities: number | null
+  statements: number | null
+  contradictions: number | null
 }
 
 /** GET /api/brain/recall — assembled context text. */

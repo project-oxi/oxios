@@ -5,8 +5,8 @@
 
 pub mod a2a_tools;
 pub mod ask_user_tool;
-pub mod builtin;
 pub mod browse;
+pub mod builtin;
 pub mod exec_tool;
 pub mod gated_tool;
 pub mod kernel_bridge;

@@ -89,16 +89,22 @@ impl ScreenshotEngine {
     /// # Errors
     /// Returns an error if the URL scheme is invalid, the browser cannot
     /// initialize, navigation times out (30s), or the render pipeline errors.
-    pub async fn capture(&self, url: &str, viewport: ScreenshotViewport) -> anyhow::Result<Vec<u8>> {
+    pub async fn capture(
+        &self,
+        url: &str,
+        viewport: ScreenshotViewport,
+    ) -> anyhow::Result<Vec<u8>> {
         // Defense-in-depth: reject non-http(s) schemes. oxibrowser-core's
         // own SSRF filter (CIDR blocking, scheme-aware) handles the rest.
-        let parsed = url::Url::parse(url)
-            .map_err(|e| anyhow::anyhow!("invalid URL '{url}': {e}"))?;
+        let parsed =
+            url::Url::parse(url).map_err(|e| anyhow::anyhow!("invalid URL '{url}': {e}"))?;
         match parsed.scheme() {
             "http" | "https" => {}
-            other => return Err(anyhow::anyhow!(
-                "screenshot URL must be http or https, got '{other}'"
-            )),
+            other => {
+                return Err(anyhow::anyhow!(
+                    "screenshot URL must be http or https, got '{other}'"
+                ));
+            }
         }
 
         let browser = self.browser().await?;
@@ -110,16 +116,14 @@ impl ScreenshotEngine {
 
         // Navigate + screenshot with a 30s timeout. The tab is closed in
         // ALL paths (success, error, timeout) to prevent session leaks.
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            async {
-                tab.goto(url).await
-                    .map_err(|e| anyhow::anyhow!("navigation to {url} failed: {e}"))?;
-                tab.screenshot(viewport.width)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("screenshot capture failed: {e}"))
-            },
-        )
+        let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tab.goto(url)
+                .await
+                .map_err(|e| anyhow::anyhow!("navigation to {url} failed: {e}"))?;
+            tab.screenshot(viewport.width)
+                .await
+                .map_err(|e| anyhow::anyhow!("screenshot capture failed: {e}"))
+        })
         .await
         .map_err(|_| anyhow::anyhow!("screenshot timed out after 30s for {url}"));
 
@@ -151,15 +155,20 @@ mod tests {
     async fn capture_example_dot_com_produces_valid_png() {
         let engine = ScreenshotEngine::new();
         let png = engine
-            .capture(
-                "https://example.com",
-                ScreenshotViewport::default(),
-            )
+            .capture("https://example.com", ScreenshotViewport::default())
             .await
             .expect("screenshot capture should succeed");
 
         // PNG magic header: 137 80 78 71 13 10 26 10
-        assert!(png.len() > 100, "PNG should be non-trivial: {} bytes", png.len());
-        assert_eq!(&png[..8], &[137, 80, 78, 71, 13, 10, 26, 10], "valid PNG header");
+        assert!(
+            png.len() > 100,
+            "PNG should be non-trivial: {} bytes",
+            png.len()
+        );
+        assert_eq!(
+            &png[..8],
+            &[137, 80, 78, 71, 13, 10, 26, 10],
+            "valid PNG header"
+        );
     }
 }

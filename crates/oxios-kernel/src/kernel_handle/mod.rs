@@ -18,20 +18,18 @@ pub mod memo_api;
 pub mod mount_api;
 pub mod persona_api;
 pub mod project_api;
+#[cfg(feature = "browser")]
+pub mod screenshot_api;
 pub mod security_api;
 pub mod state_api;
 pub mod timeline_api;
-#[cfg(feature = "browser")]
-pub mod screenshot_api;
 pub mod token_maxing_api;
 
 pub use crate::host_tools::HostToolsApi;
 pub use a2a_api::A2aApi;
 pub use agent_api::AgentApi;
-pub use browser_api::BrowserApi;
 pub use brain_api::BrainApi;
-#[cfg(feature = "browser")]
-pub use screenshot_api::{ScreenshotEngine, ScreenshotViewport};
+pub use browser_api::BrowserApi;
 pub use calendar_api::CalendarApi;
 pub use compression_api::CompressionApi;
 pub use email_api::EmailApi;
@@ -53,6 +51,8 @@ pub use memo_api::MemoApi;
 pub use mount_api::{MountApi, MountInfo};
 pub use persona_api::PersonaApi;
 pub use project_api::{ProjectApi, ProjectInfo};
+#[cfg(feature = "browser")]
+pub use screenshot_api::{ScreenshotEngine, ScreenshotViewport};
 pub use timeline_api::TimelineApi;
 
 pub use security_api::SecurityApi;

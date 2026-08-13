@@ -19,10 +19,7 @@ pub struct AgentApi {
 
 impl AgentApi {
     /// Create a new AgentApi.
-    pub fn new(
-        supervisor: Arc<dyn Supervisor>,
-        budget_manager: Arc<BudgetManager>,
-    ) -> Self {
+    pub fn new(supervisor: Arc<dyn Supervisor>, budget_manager: Arc<BudgetManager>) -> Self {
         Self {
             supervisor,
             budget_manager,

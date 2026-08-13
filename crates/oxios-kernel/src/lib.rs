@@ -211,7 +211,6 @@ pub use token_maxing::{
 
 // ─── State & Config ─────────────────────────────────────────────────
 pub use backup::{BackupManifest, BackupSection};
-pub use kernel_db::KernelDatabase;
 pub use config::{
     BrowserConfig, ChannelsConfig, CronConfig, DaemonConfig, EmailConfig, EmbeddingConfig,
     EngineConfig, ExecConfig, ExecMode, GitConfig, InlineCronJob, LoggingConfig, MarketplaceConfig,
@@ -221,6 +220,7 @@ pub use config::{
 pub use git_layer::{
     CommitContext, CommitDiff, CommitInfo, DiffKind, DiffStats, FileDiff, GitLayer, LogEntry,
 };
+pub use kernel_db::KernelDatabase;
 pub use mount::{
     DetectionResult as MountDetectionResult, Mount, MountId, MountMeta, MountSource,
     PromotionConfig, detect_mounts,

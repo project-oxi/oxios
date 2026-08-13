@@ -176,7 +176,9 @@ mod tests {
             Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
-                    Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap()),
+                    Arc::new(
+                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
+                    ),
                     None,
                 )
                 .unwrap(),

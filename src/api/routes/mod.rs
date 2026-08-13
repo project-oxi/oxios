@@ -37,9 +37,9 @@ pub(crate) use integrations_routes::{
 mod knowledge_routes;
 mod marketplace;
 mod search;
-use search::{handle_browse, handle_search};
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
+use search::{handle_browse, handle_search};
 mod mount_routes;
 mod project_routes;
 mod resource_routes;
@@ -789,14 +789,13 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // Search & Browse (Search Panel)
         .route("/api/search", post(handle_search))
-        .route("/api/browse", post(handle_browse))
-        ;
+        .route("/api/browse", post(handle_browse));
 
-        // Screenshot (CSS-rendered, Blitz-backed — `screenshot` feature)
-        #[cfg(feature = "screenshot")]
-        let api = api.route("/api/screenshot", get(handle_screenshot));
+    // Screenshot (CSS-rendered, Blitz-backed — `screenshot` feature)
+    #[cfg(feature = "screenshot")]
+    let api = api.route("/api/screenshot", get(handle_screenshot));
 
-        let api = api
+    let api = api
         // Unified asset store — protected CRUD
         .route(
             "/api/assets",

@@ -108,9 +108,7 @@ impl BrainConnection {
         let query = query.to_string();
         let space = self.config.space.clone();
         let value = self
-            .call(move |c| {
-                Box::pin(async move { c.recall(&query, &space, budget).await })
-            })
+            .call(move |c| Box::pin(async move { c.recall(&query, &space, budget).await }))
             .await?;
         let text = assemble_context_text(&value);
         if text.is_some() {
@@ -124,10 +122,8 @@ impl BrainConnection {
         let content = content.to_string();
         let source = source.to_string();
         let space = self.config.space.clone();
-        self.call(move |c| {
-            Box::pin(async move { c.ingest(&content, &space, &source).await })
-        })
-        .await
+        self.call(move |c| Box::pin(async move { c.ingest(&content, &space, &source).await }))
+            .await
     }
 
     // ── Web API methods (JSON passthrough) ───────────────────────────
@@ -137,20 +133,16 @@ impl BrainConnection {
         let query = query.to_string();
         let mode = mode.to_string();
         let space = self.config.space.clone();
-        self.call(move |c| {
-            Box::pin(async move { c.search(&query, &space, &mode, limit).await })
-        })
-        .await
+        self.call(move |c| Box::pin(async move { c.search(&query, &space, &mode, limit).await }))
+            .await
     }
 
     /// An entity's current beliefs.
     pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
         let entity_id = entity_id.to_string();
         let space = self.config.space.clone();
-        self.call(move |c| {
-            Box::pin(async move { c.get_entity(&entity_id, &space).await })
-        })
-        .await
+        self.call(move |c| Box::pin(async move { c.get_entity(&entity_id, &space).await }))
+            .await
     }
 
     /// Belief intervals for an entity over a time range.
@@ -162,20 +154,16 @@ impl BrainConnection {
     ) -> Option<Value> {
         let entity_id = entity_id.to_string();
         let space = self.config.space.clone();
-        self.call(move |c| {
-            Box::pin(async move { c.timeline(&entity_id, &space, from, to).await })
-        })
-        .await
+        self.call(move |c| Box::pin(async move { c.timeline(&entity_id, &space, from, to).await }))
+            .await
     }
 
     /// Provenance and confidence breakdown for a statement.
     pub async fn why(&self, statement_id: &str) -> Option<Value> {
         let statement_id = statement_id.to_string();
         let space = self.config.space.clone();
-        self.call(move |c| {
-            Box::pin(async move { c.why(&statement_id, &space).await })
-        })
-        .await
+        self.call(move |c| Box::pin(async move { c.why(&statement_id, &space).await }))
+            .await
     }
 
     /// List contradicted statements in the space.

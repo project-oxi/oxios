@@ -64,7 +64,9 @@ pub fn register_always_on(registry: &ToolRegistry, search_cache: Arc<SearchCache
 /// Only compiled with the `browser` feature; without it this is a no-op stub.
 #[cfg(feature = "browser")]
 fn register_browser_tools(kernel: &KernelHandle, registry: &ToolRegistry) {
-    use crate::tools::browse::{BrowseTool, BrowseExtractTool, BrowseSessionTool, BrowseScriptTool};
+    use crate::tools::browse::{
+        BrowseExtractTool, BrowseScriptTool, BrowseSessionTool, BrowseTool,
+    };
     if let Some(browser) = &kernel.browser
         && let Some(engine) = browser.try_engine()
     {

@@ -5,9 +5,9 @@
 //! Uses `TabGuard` for RAII cleanup on drop.
 
 use super::config::BrowseConfig;
-use super::{BrowserError, BrowseWaitCondition, OxiosBrowser, OxiosTab};
 use super::helpers;
 use super::tab_guard::TabGuard;
+use super::{BrowseWaitCondition, BrowserError, OxiosBrowser, OxiosTab};
 use async_trait::async_trait;
 use oxicode_sdk::{
     AgentTool, AgentToolResult, BrowseProgressCallback, ProgressCallback, ToolContext, ToolError,

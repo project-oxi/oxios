@@ -125,11 +125,8 @@ impl Kernel {
                     .expect("KnowledgeBase init failed"),
                 );
                 let knowledge_lens = Arc::new(
-                    oxios_kernel::KnowledgeLens::new(
-                        knowledge.clone(),
-                        Some(self.brain.clone()),
-                    )
-                    .expect("KnowledgeLens init failed"),
+                    oxios_kernel::KnowledgeLens::new(knowledge.clone(), Some(self.brain.clone()))
+                        .expect("KnowledgeLens init failed"),
                 );
 
                 // Git auto-commit for knowledge files (async channel pattern)
@@ -1225,11 +1222,9 @@ impl KernelBuilder {
             .await
         });
         // Publish the initial daemon availability to the metrics gauge.
-        oxios_kernel::metrics::get_metrics().oxibrain_available.set(if brain.is_available() {
-            1.0
-        } else {
-            0.0
-        });
+        oxios_kernel::metrics::get_metrics()
+            .oxibrain_available
+            .set(if brain.is_available() { 1.0 } else { 0.0 });
 
         // KernelDatabase — shared SQLite connection for mount/project tables.
         // Forward-only migration: the legacy `memory.db` is preserved untouched
@@ -1249,40 +1244,36 @@ impl KernelBuilder {
         }
 
         // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
-        let project_manager = match oxios_kernel::ProjectManager::new(
-            kernel_db.clone(),
-            Some(event_bus.clone()),
-        ) {
-            Ok(pm) => {
-                tracing::info!("ProjectManager initialized");
-                Some(Arc::new(pm))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "ProjectManager init failed (non-fatal)");
-                None
-            }
-        };
+        let project_manager =
+            match oxios_kernel::ProjectManager::new(kernel_db.clone(), Some(event_bus.clone())) {
+                Ok(pm) => {
+                    tracing::info!("ProjectManager initialized");
+                    Some(Arc::new(pm))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "ProjectManager init failed (non-fatal)");
+                    None
+                }
+            };
 
         // MountManager (RFC-025) using the same SQLite database.
-        let mount_manager = match oxios_kernel::MountManager::new(
-            kernel_db.clone(),
-            Some(event_bus.clone()),
-        ) {
-            Ok(mm) => {
-                // RFC-025: one-time migration — promote legacy
-                // Project paths into Mounts. Idempotent: Projects
-                // that already reference Mounts are skipped.
-                if let Some(ref pm) = project_manager {
-                    migrate_projects_to_mounts(&mm, pm);
+        let mount_manager =
+            match oxios_kernel::MountManager::new(kernel_db.clone(), Some(event_bus.clone())) {
+                Ok(mm) => {
+                    // RFC-025: one-time migration — promote legacy
+                    // Project paths into Mounts. Idempotent: Projects
+                    // that already reference Mounts are skipped.
+                    if let Some(ref pm) = project_manager {
+                        migrate_projects_to_mounts(&mm, pm);
+                    }
+                    tracing::info!("MountManager initialized");
+                    Some(Arc::new(mm))
                 }
-                tracing::info!("MountManager initialized");
-                Some(Arc::new(mm))
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
-                None
-            }
-        };
+                Err(e) => {
+                    tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
+                    None
+                }
+            };
 
         // ── RFC-025 Phase 5: Mount auto-promotion background scanner ──
         // Scans session history on a cadence and promotes paths that cross
@@ -1522,11 +1513,8 @@ impl KernelBuilder {
                 knowledge_base.clone(),
                 // KnowledgeLens — semantic overlay, shares same KnowledgeBase
                 Arc::new(
-                    oxios_kernel::KnowledgeLens::new(
-                        knowledge_base.clone(),
-                        Some(brain.clone()),
-                    )
-                    .expect("KnowledgeLens init failed"),
+                    oxios_kernel::KnowledgeLens::new(knowledge_base.clone(), Some(brain.clone()))
+                        .expect("KnowledgeLens init failed"),
                 ),
                 build_marketplace_api_value(&config),
                 None,                                     // calendar (initialized later)

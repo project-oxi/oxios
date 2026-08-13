@@ -4,9 +4,9 @@
 //! no engine-level methods that would open additional tabs.
 
 use super::config::BrowseConfig;
-use super::{BrowserError, OxiosBrowser, OxiosTab};
 use super::helpers;
 use super::tab_guard::TabGuard;
+use super::{BrowserError, OxiosBrowser, OxiosTab};
 use async_trait::async_trait;
 use oxicode_sdk::{AgentTool, AgentToolResult, BrowseProgressCallback, ToolContext, ToolError};
 use parking_lot::Mutex;

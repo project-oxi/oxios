@@ -20,9 +20,7 @@ use tokio::task::JoinHandle;
 use super::callback::TabCallbackRegistry;
 use super::config::BrowseConfig;
 use super::helpers;
-use super::types::{
-    BrowserError, BrowseWaitCondition, Observation, browse_result_to_page_content,
-};
+use super::types::{BrowseWaitCondition, BrowserError, Observation, browse_result_to_page_content};
 
 // ── Event conversion helpers ────────────────────────────────────────────
 

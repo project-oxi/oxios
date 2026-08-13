@@ -616,12 +616,12 @@ pub fn get_metrics() -> &'static MetricsHandles {
                 "0 = warming up, 1 = ready (RFC-024 SP4)",
                 0.0,
             ),
-            oxibrain_available: r.gauge(
-                "oxibrain_available",
-                "Brain daemon reachable (1/0)",
-                0.0,
+            oxibrain_available: r.gauge("oxibrain_available", "Brain daemon reachable (1/0)", 0.0),
+            oxibrain_recall_total: r.counter(
+                "oxibrain_recall_total",
+                "Brain recall operations",
+                &[],
             ),
-            oxibrain_recall_total: r.counter("oxibrain_recall_total", "Brain recall operations", &[]),
         }
     })
 }

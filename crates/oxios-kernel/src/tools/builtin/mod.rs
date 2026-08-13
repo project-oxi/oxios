@@ -30,10 +30,10 @@ pub mod mount_tool;
 pub mod persona_tool;
 pub mod project_tool;
 pub mod resource_tool;
-pub mod security_tool;
-pub mod skill_forge_tool;
 #[cfg(feature = "browser")]
 pub mod screenshot_tool;
+pub mod security_tool;
+pub mod skill_forge_tool;
 #[cfg(feature = "timeline")]
 pub mod timeline_tool;
 
@@ -51,12 +51,12 @@ pub use mount_tool::MountTool;
 pub use persona_tool::PersonaTool;
 pub use project_tool::ProjectTool;
 pub use resource_tool::ResourceTool;
+#[cfg(feature = "browser")]
+pub use screenshot_tool::ScreenshotTool;
 pub use security_tool::SecurityTool;
 pub use skill_forge_tool::SkillForgeTool;
 #[cfg(feature = "timeline")]
 pub use timeline_tool::TimelineTool;
-#[cfg(feature = "browser")]
-pub use screenshot_tool::ScreenshotTool;
 
 use crate::KernelHandle;
 use crate::tools::{AskUserTool, MemoryReadTool, MemorySearchTool, MemoryWriteTool};

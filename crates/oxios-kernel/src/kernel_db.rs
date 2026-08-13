@@ -72,10 +72,7 @@ impl KernelDatabase {
     /// Idempotent: only copies a table when the legacy DB has it AND the
     /// kernel table is empty (so re-runs and concurrent writes are safe).
     /// Forward-only: `memory.db` is never modified.
-    pub fn migrate_legacy_mount_project(
-        &self,
-        legacy_path: &Path,
-    ) -> anyhow::Result<()> {
+    pub fn migrate_legacy_mount_project(&self, legacy_path: &Path) -> anyhow::Result<()> {
         if !legacy_path.exists() {
             return Ok(());
         }
@@ -100,11 +97,8 @@ impl KernelDatabase {
                 if legacy_has == 0 {
                     continue;
                 }
-                let kernel_count: i64 = conn.query_row(
-                    &format!("SELECT COUNT(*) FROM {table}"),
-                    [],
-                    |r| r.get(0),
-                )?;
+                let kernel_count: i64 =
+                    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
                 if kernel_count > 0 {
                     continue; // already populated — leave it.
                 }

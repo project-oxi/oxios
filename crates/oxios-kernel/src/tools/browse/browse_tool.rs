@@ -7,9 +7,9 @@ use super::config::BrowseConfig;
 use super::engine::OxiosBrowser;
 use super::helpers;
 use super::tab_guard::TabGuard;
-use oxicode_sdk::{AgentTool, AgentToolResult, ToolContext, ToolError};
-use oxicode_agent::tools::ToolExecutionMode;
 use async_trait::async_trait;
+use oxicode_agent::tools::ToolExecutionMode;
+use oxicode_sdk::{AgentTool, AgentToolResult, ToolContext, ToolError};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -256,4 +256,3 @@ impl AgentTool for BrowseTool {
         Ok(result)
     }
 }
-

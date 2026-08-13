@@ -8,7 +8,9 @@ use super::engine::{OxiosBrowser, OxiosTab};
 use super::helpers;
 use super::tab_guard::TabGuard;
 use async_trait::async_trait;
-use oxicode_sdk::{AgentTool, AgentToolResult, BrowseProgressCallback, ProgressCallback, ToolContext, ToolError};
+use oxicode_sdk::{
+    AgentTool, AgentToolResult, BrowseProgressCallback, ProgressCallback, ToolContext, ToolError,
+};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -265,7 +267,11 @@ async fn execute_steps(
 
     for (i, step) in steps.iter().enumerate() {
         if tokio::time::Instant::now() > deadline {
-            return Err(format!("Script timed out at step {} of {}", i + 1, steps.len()));
+            return Err(format!(
+                "Script timed out at step {} of {}",
+                i + 1,
+                steps.len()
+            ));
         }
 
         if i >= config.max_script_steps {
@@ -579,7 +585,8 @@ impl AgentTool for BrowseScriptTool {
         // Attach screenshot if captured
         if let Some(png) = script_result.screenshot {
             let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
-            let img = oxicode_ai::ContentBlock::Image(oxicode_ai::ImageContent::new(b64, "image/png"));
+            let img =
+                oxicode_ai::ContentBlock::Image(oxicode_ai::ImageContent::new(b64, "image/png"));
             result = result.with_content_blocks(vec![img]);
         }
 

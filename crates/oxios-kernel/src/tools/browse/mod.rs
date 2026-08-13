@@ -32,7 +32,7 @@ pub mod tab_guard;
 // ── Always-available re-exports ─────────────────────────────────────────
 pub use config::BrowseConfig;
 pub use types::{
-    BrowserError, BrowseWaitCondition, ElementInfo, LinkInfo, Observation, ObservedElement,
+    BrowseWaitCondition, BrowserError, ElementInfo, LinkInfo, Observation, ObservedElement,
     PageContent,
 };
 

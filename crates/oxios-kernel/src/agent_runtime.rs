@@ -451,9 +451,7 @@ impl AgentRuntime {
             match brain.recall(goal, 3000).await {
                 Some(context) => {
                     tracing::info!("Recalled brain context for task");
-                    system_prompt.push_str(&format!(
-                        "\n\n## Relevant Memory\n{context}\n",
-                    ));
+                    system_prompt.push_str(&format!("\n\n## Relevant Memory\n{context}\n",));
                 }
                 None => tracing::debug!("No brain context recalled"),
             }
@@ -1091,10 +1089,8 @@ async fn run_agent(
     // Shared mutable state for the event callback.
     let exec_state = Arc::new(Mutex::new(ExecuteState::default()));
     let exec_state_cb = Arc::clone(&exec_state);
-    let brain_for_callback: Option<Arc<crate::brain::BrainConnection>> = kernel_handle
-        .brain
-        .as_ref()
-        .map(|b| b.connection());
+    let brain_for_callback: Option<Arc<crate::brain::BrainConnection>> =
+        kernel_handle.brain.as_ref().map(|b| b.connection());
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();

@@ -170,8 +170,8 @@ impl AgentTool for MemoryReadTool {
         if let Some(id) = params["id"].as_str() {
             return match self.brain.get_entity(id).await {
                 Some(value) => {
-                    let text = serde_json::to_string_pretty(&value)
-                        .unwrap_or_else(|_| value.to_string());
+                    let text =
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
                     Ok(AgentToolResult::success(&text))
                 }
                 None => Ok(AgentToolResult::error(
@@ -180,7 +180,11 @@ impl AgentTool for MemoryReadTool {
             };
         }
 
-        match self.brain.recall("recent activities and relevant facts", budget).await {
+        match self
+            .brain
+            .recall("recent activities and relevant facts", budget)
+            .await
+        {
             Some(context) => Ok(AgentToolResult::success(&context)),
             None => Ok(AgentToolResult::error(
                 "brain daemon unavailable — no memory to recall",
@@ -321,15 +325,22 @@ mod tests {
         assert_eq!(tool.name(), "memory_write");
         let schema = tool.parameters_schema();
         assert!(schema["required"].is_array());
-        assert!(schema["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "content"));
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "content")
+        );
 
         // Degraded daemon → clear error, no panic.
         let result = tool
-            .execute("t1", json!({"content": "hello"}), None, &ToolContext::default())
+            .execute(
+                "t1",
+                json!({"content": "hello"}),
+                None,
+                &ToolContext::default(),
+            )
             .await
             .unwrap();
         assert!(!result.success, "degraded write must error");
@@ -353,7 +364,12 @@ mod tests {
         let schema = tool.parameters_schema();
         assert!(schema["required"].is_array());
         let result = tool
-            .execute("t1", json!({"query": "rust"}), None, &ToolContext::default())
+            .execute(
+                "t1",
+                json!({"query": "rust"}),
+                None,
+                &ToolContext::default(),
+            )
             .await
             .unwrap();
         assert!(!result.success, "degraded search must error");

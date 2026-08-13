@@ -58,7 +58,9 @@ impl BrowserApi {
     /// The underlying `OxiosBrowser` (wrapping `oxibrowser-core`) is created
     /// exactly once; subsequent calls return the cached handle.
     #[cfg(feature = "browser")]
-    pub async fn engine(&self) -> anyhow::Result<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
+    pub async fn engine(
+        &self,
+    ) -> anyhow::Result<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
         self.engine
             .get_or_try_init(|| async {
                 let backend = crate::tools::browse::OxiosBrowser::with_config(self.config.clone())
@@ -75,9 +77,7 @@ impl BrowserApi {
     /// Used by the (synchronous) tool registration path, which relies on the
     /// agent runtime having awaited [`engine`](Self::engine) first.
     #[cfg(feature = "browser")]
-    pub fn try_engine(
-        &self,
-    ) -> Option<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
+    pub fn try_engine(&self) -> Option<std::sync::Arc<crate::tools::browse::OxiosBrowser>> {
         self.engine.get().cloned()
     }
 }

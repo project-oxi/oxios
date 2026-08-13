@@ -34,9 +34,7 @@ impl TabGuard {
     /// Panics if the guard has already been consumed.
     #[allow(clippy::expect_used)]
     pub fn tab(&self) -> &OxiosTab {
-        self.tab
-            .as_ref()
-            .expect("TabGuard: tab already consumed")
+        self.tab.as_ref().expect("TabGuard: tab already consumed")
     }
 
     /// Explicitly close the tab and consume the guard.

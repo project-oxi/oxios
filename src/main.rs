@@ -1513,10 +1513,7 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let mut client = match BrainClient::connect(&socket).await {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "brain daemon unavailable at {} ({e})",
-                        socket.display()
-                    );
+                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
                     std::process::exit(1);
                 }
             };
@@ -1535,10 +1532,7 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let mut client = match BrainClient::connect(&socket).await {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "brain daemon unavailable at {} ({e})",
-                        socket.display()
-                    );
+                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
                     std::process::exit(1);
                 }
             };
@@ -1567,10 +1561,7 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let mut client = match BrainClient::connect(&socket).await {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!(
-                        "brain daemon unavailable at {} ({e})",
-                        socket.display()
-                    );
+                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
                     std::process::exit(1);
                 }
             };

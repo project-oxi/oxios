@@ -1090,4 +1090,5 @@ mod tests {
         const MAX_MEMORY_ENTRY: usize = 32 * 1024;
         let big_memory = "m".repeat(MAX_MEMORY_ENTRY + 1);
         assert!(big_memory.len() > MAX_MEMORY_ENTRY);
-    }}
+    }
+}

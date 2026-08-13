@@ -132,11 +132,7 @@ impl BrowseCallbacks {
     }
 
     /// Register browse callback on registry only, if pending.
-    pub fn register_browse_on_registry(
-        &self,
-        tab_id: uuid::Uuid,
-        registry: &TabCallbackRegistry,
-    ) {
+    pub fn register_browse_on_registry(&self, tab_id: uuid::Uuid, registry: &TabCallbackRegistry) {
         if let Some(bcb) = self.browse.lock().take() {
             registry.set_browse(tab_id, bcb);
         }

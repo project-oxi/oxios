@@ -232,22 +232,14 @@ pub fn parse_observed_elements(value: Value) -> Vec<ObservedElement> {
     arr.iter()
         .filter_map(|e| {
             let ref_id = e.get("ref_id")?.as_str()?.to_string();
-            let s = |k: &str| {
-                e.get(k)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
+            let s = |k: &str| e.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
             Some(ObservedElement {
                 ref_id,
                 role: s("role"),
                 name: s("name"),
                 tag: s("tag"),
                 selector: s("selector"),
-                visible: e
-                    .get("visible")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true),
+                visible: e.get("visible").and_then(|v| v.as_bool()).unwrap_or(true),
                 interactive: e
                     .get("interactive")
                     .and_then(|v| v.as_bool())

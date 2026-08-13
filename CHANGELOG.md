@@ -44,9 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `oxibrain-client` is used as a path dependency until oxibrain v0.1 is
   published to crates.io; swap the two path deps to `version = "0.1"` after
   publish.
-- Data migration (one-time, optional): `oxibrain import-oxios --source
-  ~/.oxios/workspace/memory.db --space personal` then
-  `oxibrain reextract --space personal`. `memory.db` is never touched.
+- Data migration (one-time, optional):
+  1. Stop the oxibrain daemon so the CLI can take the write lock.
+  2. `oxibrain import-oxios --source ~/.oxios/workspace/memory.db --space personal`
+  3. `oxibrain reproject` — rebuilds `fts_word`/`fts_ngram` projections from
+     the episode ledger. Without this step search misses any episodes
+     imported in step 2 (the projection is a derived index, not part of
+     the ledger).
+  4. `oxibrain reextract --space personal` — runs the LLM extractor.
+  5. Restart the daemon. `memory.db` is never touched.
 - `crates/oxios-memory` is removed from the workspace; the crates.io entry
   will be deprecated (not yanked) by the release engineer.
 

@@ -934,6 +934,13 @@ pub(crate) async fn handle_brain_timeline(
     state: State<Arc<AppState>>,
     Query(query): Query<BrainTimelineQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    // `entity` is required. Validate before touching the brain so callers
+    // get a clean 400 instead of axum's default 500 (QueryRejection).
+    if query.entity.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "`entity` query parameter is required".into(),
+        ));
+    }
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };

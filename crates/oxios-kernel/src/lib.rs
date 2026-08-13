@@ -64,8 +64,10 @@ pub mod mcp;
 
 // ─── Intelligence ───────────────────────────────────────────────────
 // 메모리, 임베딩, 페르소나, 온보딩.
+pub mod brain;
 pub mod embedding;
 pub mod memory;
+pub mod memory_agent;
 pub mod onboarding;
 pub mod persona;
 
@@ -85,6 +87,7 @@ pub mod backup;
 pub mod compression;
 pub mod config;
 pub mod git_layer;
+pub mod kernel_db;
 pub mod mount;
 pub mod project;
 pub mod resource_monitor;
@@ -158,7 +161,11 @@ pub use mcp::{
 };
 
 // ─── Intelligence ───────────────────────────────────────────────────
+pub use brain::{BrainConfig, BrainConnection};
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
+pub use memory_agent::sona::{
+    LearnedPattern, SonaEngine, SonaMode, Trajectory, TrajectoryStep, Verdict,
+};
 
 // ─── GGUF Embedding (RFC-012) ──────────────────────────────────────
 #[cfg(feature = "embedding-gguf")]

@@ -798,8 +798,10 @@ mod tests {
     /// `BrowserConfig`), but most tests here never open a tab.
     async fn make_tool_with_idle_timeout(secs: u64) -> BrowseSessionTool {
         let engine = OxiosBrowser::new().await.expect("engine construct");
-        let mut config = BrowseConfig::default();
-        config.session_idle_timeout_secs = secs;
+        let config = BrowseConfig {
+            session_idle_timeout_secs: secs,
+            ..Default::default()
+        };
         BrowseSessionTool::with_config(Arc::new(engine), config)
     }
 
@@ -905,7 +907,6 @@ mod tests {
     #[tokio::test]
     async fn test_idle_timeout_disabled() {
         let tool = make_tool_with_idle_timeout(0).await;
-        let ctx = ToolContext::default();
 
         // With idle timeout disabled, check_idle_timeout should always
         // succeed even with no last-action timestamp.
@@ -918,7 +919,6 @@ mod tests {
     #[tokio::test]
     async fn test_idle_timeout_fresh_session() {
         let tool = make_tool_with_idle_timeout(3600).await;
-        let ctx = ToolContext::default();
 
         // No prior action — check_idle_timeout returns Ok without complaint.
         assert!(

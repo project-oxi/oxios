@@ -211,6 +211,7 @@ pub use token_maxing::{
 
 // ─── State & Config ─────────────────────────────────────────────────
 pub use backup::{BackupManifest, BackupSection};
+pub use kernel_db::KernelDatabase;
 pub use config::{
     BrowserConfig, ChannelsConfig, CronConfig, DaemonConfig, EmailConfig, EmbeddingConfig,
     EngineConfig, ExecConfig, ExecMode, GitConfig, InlineCronJob, LoggingConfig, MarketplaceConfig,

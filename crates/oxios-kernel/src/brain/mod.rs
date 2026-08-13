@@ -9,6 +9,7 @@ use futures::future::BoxFuture;
 use oxibrain_client::BrainClient;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 pub mod config;
@@ -19,23 +20,28 @@ pub use config::BrainConfig;
 /// The inner client is `Option` so a failed call can drop the dead client and
 /// record the degraded state. A later operation that finds `None` attempts a
 /// reconnect once (single retry) before giving up.
+///
+/// `available` mirrors the client state as an atomic so
+/// [`BrainConnection::is_available`] is a lock-free read — a lock-contended
+/// `try_lock` would otherwise report "unavailable" during in-flight calls.
 #[derive(Debug)]
 pub struct BrainConnection {
     client: Mutex<Option<BrainClient>>,
     config: BrainConfig,
+    available: AtomicBool,
 }
 
 impl BrainConnection {
     /// Try to connect; on failure log a warning and start degraded.
     pub async fn connect(config: BrainConfig) -> Self {
-        let client = match BrainClient::connect(&config.socket_path).await {
+        let (client, available) = match BrainClient::connect(&config.socket_path).await {
             Ok(c) => {
                 tracing::info!(
                     path = %config.socket_path.display(),
                     space = %config.space,
                     "connected to oxibrain daemon"
                 );
-                Some(c)
+                (Some(c), true)
             }
             Err(e) => {
                 tracing::warn!(
@@ -43,18 +49,19 @@ impl BrainConnection {
                     error = %e,
                     "brain daemon unavailable — memory operations degraded"
                 );
-                None
+                (None, false)
             }
         };
         Self {
             client: Mutex::new(client),
             config,
+            available: AtomicBool::new(available),
         }
     }
 
-    /// Whether a client is currently connected. Cheap check (no IO).
+    /// Whether a client is currently connected. Cheap lock-free read.
     pub fn is_available(&self) -> bool {
-        self.client.try_lock().map(|c| c.is_some()).unwrap_or(false)
+        self.available.load(Ordering::Relaxed)
     }
 
     /// Drop any dead client and reconnect. Returns `true` on success.
@@ -67,6 +74,7 @@ impl BrainConnection {
                     "reconnected to oxibrain daemon"
                 );
                 *guard = Some(c);
+                self.available.store(true, Ordering::Relaxed);
                 true
             }
             Err(e) => {
@@ -76,6 +84,7 @@ impl BrainConnection {
                     "brain daemon still unavailable"
                 );
                 *guard = None;
+                self.available.store(false, Ordering::Relaxed);
                 false
             }
         }
@@ -198,6 +207,7 @@ impl BrainConnection {
             Err(e) => {
                 tracing::warn!(error = %e, "brain daemon call failed — dropping connection");
                 *guard = None;
+                self.available.store(false, Ordering::Relaxed);
                 None
             }
         }
@@ -215,6 +225,7 @@ impl BrainConnection {
                     "reconnected to oxibrain daemon"
                 );
                 *guard = Some(c);
+                self.available.store(true, Ordering::Relaxed);
                 true
             }
             Err(e) => {

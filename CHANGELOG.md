@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (Breaking — RFC-047)
+- **`oxios-memory` removed; agent memory now lives in the standalone
+  `oxibrain` daemon** (~13,600 LOC retired, big-bang cutover).
+  - `oxios-kernel` connects to the daemon over a Unix-domain socket
+    (`[brain]` config: `enabled` / `socket_path` / `space`; default socket
+    `~/.oxi/brain/oxibrain.sock`, default space `personal`).
+  - Degradation contract: when the daemon is unreachable every memory
+    operation returns empty and agent turns complete normally; the kernel
+    logs a warning and reconnects on the next call.
+  - Agent memory tools (`memory_write` / `memory_read` / `memory_search`),
+    the persistence hook, compaction summaries, and knowledge-lens indexing
+    all route through the brain (`recall` / `ingest` / `search` / `get_entity`).
+  - SONA (trajectory pattern engine) and the embedding traits were rehomed
+    into `oxios-kernel` (`memory_agent::sona`, `embedding`).
+  - `KernelDatabase` (SQLite WAL) replaces `MemoryDatabase` for the mount /
+    project tables — data moves to `~/.oxios/workspace/kernel.db`
+    (forward-only; `memory.db` is preserved untouched).
+  - `sqlite-memory` feature removed; `rusqlite` is now non-optional.
+- **API surface** — `/api/memory/*` replaced by `/api/brain/*`
+  (`status`, `recall`, `search`, `entity/{id}`, `timeline`, `why/{id}`,
+  `contradictions`, `stats`). `MemoryApi` facade and AgentApi memory methods
+  deleted; `KernelHandle::brain: BrainApi` is the new surface.
+- **Web UI** — the Memory panel is replaced by the Brain panel (`/brain`):
+  overview (availability + episode/entity/statement/contradiction counts),
+  hybrid search, entity drill-down (beliefs/timeline/provenance), and the
+  contradiction inbox. Dashboard, chat `@memory` mentions, and settings
+  (`[brain]` section) updated.
+- **CLI** — `oxios brain status|ingest|ask` talks to the daemon directly
+  (no kernel needed). `oxios brain export` is unsupported — use the
+  `oxibrain` CLI.
+- **Metrics** — `oxibrain_available` gauge + `oxibrain_recall_total` counter
+  replace the old memory metrics.
+
+### Prerequisites / notes
+- `oxibrain-client` is used as a path dependency until oxibrain v0.1 is
+  published to crates.io; swap the two path deps to `version = "0.1"` after
+  publish.
+- Data migration (one-time, optional): `oxibrain import-oxios --source
+  ~/.oxios/workspace/memory.db --space personal` then
+  `oxibrain reextract --space personal`. `memory.db` is never touched.
+- `crates/oxios-memory` is removed from the workspace; the crates.io entry
+  will be deprecated (not yanked) by the release engineer.
+
 ## [1.39.0] - 2026-08-11
 
 ### Changed

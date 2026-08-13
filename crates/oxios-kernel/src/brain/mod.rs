@@ -112,7 +112,11 @@ impl BrainConnection {
                 Box::pin(async move { c.recall(&query, &space, budget).await })
             })
             .await?;
-        assemble_context_text(&value)
+        let text = assemble_context_text(&value);
+        if text.is_some() {
+            crate::metrics::get_metrics().oxibrain_recall_total.inc();
+        }
+        text
     }
 
     /// Remember content as an episode. Returns the episode id.

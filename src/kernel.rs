@@ -1026,7 +1026,7 @@ impl KernelBuilder {
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
 
-        let mut config = if config_path.exists() {
+        let config = if config_path.exists() {
             tracing::info!(path = %config_path.display(), "Loading config");
             load_config(&config_path)?
         } else {
@@ -1036,7 +1036,9 @@ impl KernelBuilder {
 
         // RFC-018: Apply consolidation preset if not "custom".
         // This overwrites individual consolidation fields with preset values.
-        config.memory.consolidation.apply_preset();
+        // NOTE: `config.memory.consolidation` is no longer read by the kernel
+        // after the RFC-047 brain migration (memory owned by the daemon);
+        // this preset application is intentionally removed with it.
 
         let event_bus = EventBus::new(config.kernel.event_bus_capacity);
 
@@ -1222,13 +1224,29 @@ impl KernelBuilder {
             ))
             .await
         });
+        // Publish the initial daemon availability to the metrics gauge.
+        oxios_kernel::metrics::get_metrics().oxibrain_available.set(if brain.is_available() {
+            1.0
+        } else {
+            0.0
+        });
 
         // KernelDatabase — shared SQLite connection for mount/project tables.
         // Forward-only migration: the legacy `memory.db` is preserved untouched
-        // (spec §9); the kernel's own tables move to `kernel.db`.
+        // (spec §9); the kernel's own tables move to `kernel.db`. One-time copy
+        // of existing mount/project rows from the old shared `memory.db`.
         let kernel_db = Arc::new(KernelDatabase::open(
             PathBuf::from(&config.kernel.workspace).join("kernel.db"),
         )?);
+        {
+            let legacy = PathBuf::from(&config.kernel.workspace).join("memory.db");
+            if let Err(e) = kernel_db.migrate_legacy_mount_project(&legacy) {
+                tracing::warn!(
+                    error = %e,
+                    "mount/project migration from memory.db failed (non-fatal)"
+                );
+            }
+        }
 
         // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
         let project_manager = match oxios_kernel::ProjectManager::new(

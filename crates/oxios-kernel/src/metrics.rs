@@ -424,6 +424,14 @@ pub struct MetricsHandles {
     /// 0 = warming up, 1 = ready (RFC-024 SP4). Updated from
     /// `ReadinessGate` when a subsystem changes state.
     pub readiness_state: GaugeHandle,
+
+    /// Brain daemon reachable (1/0, RFC-047). Set from boot after the
+    /// initial `BrainConnection::connect`.
+    pub oxibrain_available: GaugeHandle,
+
+    /// Brain recall operations (RFC-047). Incremented on each successful
+    /// `BrainConnection::recall`.
+    pub oxibrain_recall_total: CounterHandle,
 }
 
 impl MetricsHandles {
@@ -608,6 +616,12 @@ pub fn get_metrics() -> &'static MetricsHandles {
                 "0 = warming up, 1 = ready (RFC-024 SP4)",
                 0.0,
             ),
+            oxibrain_available: r.gauge(
+                "oxibrain_available",
+                "Brain daemon reachable (1/0)",
+                0.0,
+            ),
+            oxibrain_recall_total: r.counter("oxibrain_recall_total", "Brain recall operations", &[]),
         }
     })
 }
@@ -669,10 +683,8 @@ pub fn register_builtin_metrics() {
     );
     r.counter("oxios_tool_errors_total", "Tool errors", &[]);
 
-    // Brain daemon metrics (RFC-047). oxibrain_available is set from boot;
-    // oxibrain_recall_total is registered for future wiring.
-    r.gauge("oxibrain_available", "Brain daemon reachable (1/0)", 0.0);
-    r.counter("oxibrain_recall_total", "Brain recall operations", &[]);
+    // Brain daemon metrics (RFC-047). Both are typed handles in
+    // get_metrics() — set from boot (availability) and incremented on recall.
 
     // Container metrics
     r.counter("oxios_exec_total", "Exec calls", &[]);

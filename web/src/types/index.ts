@@ -610,7 +610,8 @@ export interface SystemStatus {
   components?: {
     state_store?: { healthy: boolean; detail?: string }
     event_bus?: { healthy: boolean; detail?: string }
-    memory?: { enabled: boolean; index_size: number; total_entries: number }
+    git?: { healthy: boolean }
+    brain?: { healthy: boolean }
     agents?: {
       active_count: number
       total_forked: number

@@ -54,11 +54,15 @@ export function SystemHealthCard({ status, className }: SystemHealthCardProps) {
               detail={status.components.event_bus.detail}
             />
           )}
-          {status.components?.memory && (
+          {status.components?.brain && (
             <HealthRow
-              label={t('dashboard.memory')}
-              healthy={status.components.memory.enabled}
-              detail={t('dashboard.entriesIndexed', { count: status.components.memory.index_size })}
+              label={t('dashboard.brain')}
+              healthy={status.components.brain.healthy}
+              detail={
+                status.components.brain.healthy
+                  ? t('dashboard.brainHealthy')
+                  : t('dashboard.brainDegraded')
+              }
             />
           )}
           <div className="flex items-center gap-2 text-muted-foreground">

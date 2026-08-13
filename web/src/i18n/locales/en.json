@@ -904,7 +904,9 @@
     "allTime": "all time",
     "totalLabel": "total",
     "agentsCount": "{{count}} agents",
-    "brain": "Memory"
+    "brain": "Memory",
+    "brainHealthy": "Brain daemon online",
+    "brainDegraded": "Brain daemon offline — degraded"
   },
   "dataTable": {
     "clearFilters": "Clear filters",
@@ -2288,7 +2290,7 @@
     "description": "Agent memory lives in the shared oxibrain daemon (RFC-047).",
     "noMemories": "No memories stored",
     "noSearchResults": "No results for this search.",
-    "searchPlaceholder": "Search memories...",
+    "searchPlaceholder": "Search the brain...",
     "overview": "Overview",
     "browse": "Browse",
     "dream": "Dream",

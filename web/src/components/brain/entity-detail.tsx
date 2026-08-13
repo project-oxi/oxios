@@ -23,10 +23,13 @@ export function BrainEntityDetail() {
   const [entityId, setEntityId] = useState('')
   const [submitted, setSubmitted] = useState('')
   const [statementId, setStatementId] = useState('')
+  // Why lookup is gated by an explicit submit — `useBrainWhy` would refetch
+  // on every keystroke otherwise.
+  const [submittedStatement, setSubmittedStatement] = useState('')
 
   const { data: entity, isLoading: entityLoading } = useBrainEntity(submitted || null)
   const { data: timeline, isLoading: timelineLoading } = useBrainTimeline(submitted || null)
-  const { data: why, isLoading: whyLoading } = useBrainWhy(statementId || null)
+  const { data: why, isLoading: whyLoading } = useBrainWhy(submittedStatement || null)
 
   return (
     <div className="space-y-4">
@@ -38,6 +41,7 @@ export function BrainEntityDetail() {
             if (e.key === 'Enter') setSubmitted(entityId)
           }}
           placeholder={t('brain.entityPlaceholder')}
+          aria-label={t('brain.entityPlaceholder')}
           className="flex-1"
         />
         <Button onClick={() => setSubmitted(entityId)}>{t('brain.inspect')}</Button>
@@ -72,21 +76,31 @@ export function BrainEntityDetail() {
             <Input
               value={statementId}
               onChange={(e) => setStatementId(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && statementId.trim().length > 0) {
+                  setSubmittedStatement(statementId.trim())
+                }
+              }}
               placeholder={t('brain.whyPlaceholder')}
+              aria-label={t('brain.whyPlaceholder')}
               className="flex-1"
             />
-            <Button variant="outline" onClick={() => setStatementId(statementId)}>
+            <Button
+              variant="outline"
+              onClick={() => setSubmittedStatement(statementId.trim())}
+              disabled={statementId.trim().length === 0}
+            >
               {t('brain.why')}
             </Button>
           </div>
           {whyLoading && <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>}
-          {statementId && !whyLoading && (
+          {submittedStatement && !whyLoading && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">{t('brain.provenance')}</CardTitle>
               </CardHeader>
               <CardContent>
-                <JsonBlock label={statementId} value={why ?? null} />
+                <JsonBlock label={submittedStatement} value={why ?? null} />
               </CardContent>
             </Card>
           )}

@@ -7,7 +7,9 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useBrainSearch } from '@/hooks/use-brain'
 
-const MODES = ['hybrid', 'lexical', 'semantic', 'graph', 'community'] as const
+// Match the oxibrain daemon's RetrievalMode enum
+// (oxibrain-mcp/server.rs: enum values hybrid|lexical|lexical-vector|graph|community).
+const MODES = ['hybrid', 'lexical', 'lexical-vector', 'graph', 'community'] as const
 const MODE_OPTIONS = MODES.map((m) => ({ label: m, value: m }))
 
 /** Hybrid (and mode-specific) search over the brain. */
@@ -30,6 +32,7 @@ export function BrainSearch() {
             if (e.key === 'Enter') setSubmitted(q)
           }}
           placeholder={t('brain.searchPlaceholder')}
+          aria-label={t('brain.searchPlaceholder')}
           className="flex-1"
         />
         <Select
@@ -37,6 +40,7 @@ export function BrainSearch() {
           onValueChange={setMode}
           options={MODE_OPTIONS}
           placeholder={t('brain.mode')}
+          aria-label={t('brain.mode')}
           className="w-40"
         />
         <Button onClick={() => setSubmitted(q)}>
@@ -45,30 +49,34 @@ export function BrainSearch() {
         </Button>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">{t('brain.searching')}</p>}
+      <div role="status" aria-live="polite">
+        {isLoading && <p className="text-sm text-muted-foreground">{t('brain.searching')}</p>}
 
-      {!isLoading && submitted && items.length === 0 && (
-        <p className="text-sm text-muted-foreground">{t('brain.noSearchResults')}</p>
-      )}
+        {!isLoading && submitted && items.length === 0 && (
+          <p className="text-sm text-muted-foreground">{t('brain.noSearchResults')}</p>
+        )}
+      </div>
 
       {items.length > 0 && (
-        <div className="space-y-2">
+        <ul className="space-y-2">
           {items.map((hit, i) => (
-            <Card key={`${hit.target?.id}-${i}`}>
-              <CardContent className="py-3">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">
-                    {hit.target?.kind}: {hit.target?.id}
-                  </span>
-                  <span className="text-muted-foreground">
-                    {hit.fused_score != null && `score ${hit.fused_score.toFixed(3)}`}
-                    {hit.salience != null && ` · salience ${hit.salience.toFixed(2)}`}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
+            <li key={`${hit.target?.id}-${i}`}>
+              <Card>
+                <CardContent className="py-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">
+                      {hit.target?.kind}: {hit.target?.id}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {hit.fused_score != null && `score ${hit.fused_score.toFixed(3)}`}
+                      {hit.salience != null && ` · salience ${hit.salience.toFixed(2)}`}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   )

@@ -17,9 +17,9 @@ import {
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { useBrainSearchMutation } from '@/hooks/use-brain'
 import { useIsTouch } from '@/hooks/use-is-touch'
 import { useKnowledgeSearch } from '@/hooks/use-knowledge'
-import { useMemorySemanticSearch } from '@/hooks/use-memory'
 import { useMounts } from '@/hooks/use-mounts'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { api } from '@/lib/api-client'
@@ -209,7 +209,7 @@ export function ChatInput({
 
   // Search hooks
   const knowledgeSearch = useKnowledgeSearch()
-  const memorySearch = useMemorySemanticSearch()
+  const memorySearch = useBrainSearchMutation()
   const { data: mountsData } = useMounts()
   // RFC-044 Phase 3: persona capabilities drive composer affordances.
   const { capabilities } = usePersonaCapabilities()
@@ -247,14 +247,16 @@ export function ChatInput({
     }
     try {
       const mRes = await mem.mutateAsync({ query, limit: 5 })
-      for (const entry of mRes.entries)
+      for (const hit of mRes.items ?? []) {
+        const id = hit.target?.id ?? ''
         results.push({
           type: 'memory',
-          id: entry.id,
-          label: entry.key || entry.id.slice(0, 12),
-          snippet: (entry.summary || entry.content).slice(0, 80),
-          score: entry.score,
+          id,
+          label: id.slice(0, 12),
+          snippet: `${hit.target?.kind ?? 'memory'} · score ${hit.fused_score?.toFixed(3) ?? '—'}`,
+          score: hit.fused_score,
         })
+      }
     } catch {
       /* offline */
     }

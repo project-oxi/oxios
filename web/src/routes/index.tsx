@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { AgentStatusCard } from '@/components/dashboard/agent-status-card'
 import { AgentsActivityCard } from '@/components/dashboard/agents-activity-card'
 import { ApprovalsQueue } from '@/components/dashboard/approvals-queue'
+import { BrainDashboardCard } from '@/components/dashboard/brain-dashboard-card'
 import { BudgetCard } from '@/components/dashboard/budget-card'
-import { DreamCard } from '@/components/dashboard/dream-card'
 import { McpStatusCard } from '@/components/dashboard/mcp-status-card'
 import { SkillsCronCard } from '@/components/dashboard/skills-cron-card'
 import { StatCard } from '@/components/dashboard/stat-card'
@@ -16,7 +16,7 @@ import { LoadingStatCards } from '@/components/shared/loading'
 import { PageHeader } from '@/components/shared/page-header'
 import { useAgentCountHistory } from '@/hooks/use-agent-count-history'
 import { useApprovals } from '@/hooks/use-approvals'
-import { useMemoryStats } from '@/hooks/use-memory'
+import { useBrainStatus } from '@/hooks/use-brain'
 import { computeDelta, seriesFromSnapshots, useResourceHistory } from '@/hooks/use-resource-history'
 import { useTokenRate } from '@/hooks/use-token-rate'
 import { api } from '@/lib/api-client'
@@ -50,8 +50,8 @@ function DashboardPage() {
     refetchInterval: 5_000,
   })
 
-  // Memory stats
-  const { data: memoryStats } = useMemoryStats()
+  // Brain daemon status (RFC-047)
+  const { data: brainStatus } = useBrainStatus()
 
   // Resource history (last 30 samples) → sparklines
   const { data: snapshots } = useResourceHistory(30, 10_000)
@@ -94,8 +94,8 @@ function DashboardPage() {
     trackTotal: false,
   })
 
-  // Memory entries count
-  const memoryTotal = memoryStats?.total ?? 0
+  // Brain episode count (null when the daemon is offline)
+  const brainTotal = brainStatus?.episodes ?? '—'
 
   if (statusLoading) return <LoadingStatCards count={6} />
   if (statusError) return <ErrorState onRetry={() => refetchStatus()} />
@@ -165,12 +165,12 @@ function DashboardPage() {
           href="/resources"
         />
         <StatCard
-          label={t('dashboard.memory')}
-          value={memoryTotal}
+          label={t('dashboard.brain')}
+          value={brainTotal}
           icon={<Brain className="h-4 w-4" />}
           iconClassName="text-info"
           sparkColor="accent"
-          href="/memory"
+          href="/brain"
         />
         <StatCard
           label={t('dashboard.pendingApprovals')}
@@ -198,11 +198,11 @@ function DashboardPage() {
         </div>
       </div>
 
-      {/* Row 3: MCP (1/4) + Budget (1/4) + Dream (1/4) + Skills/Seeds/Cron (1/4) */}
+      {/* Row 3: MCP (1/4) + Budget (1/4) + Brain (1/4) + Skills/Seeds/Cron (1/4) */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4 animate-stagger">
         <McpStatusCard />
         <BudgetCard />
-        <DreamCard />
+        <BrainDashboardCard />
         <SkillsCronCard />
       </div>
 

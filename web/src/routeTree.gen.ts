@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
+import { Route as BrainRouteImport } from './routes/brain'
 import { Route as BudgetRouteImport } from './routes/budget'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CronJobsRouteImport } from './routes/cron-jobs'
@@ -18,7 +19,6 @@ import { Route as EmailRouteImport } from './routes/email'
 import { Route as GitRouteImport } from './routes/git'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as McpRouteImport } from './routes/mcp'
-import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as PersonasRouteImport } from './routes/personas'
 import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SecurityRouteImport } from './routes/security'
@@ -46,6 +46,11 @@ const IndexRoute = IndexRouteImport.update({
 const AssetsRoute = AssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrainRoute = BrainRouteImport.update({
+  id: '/brain',
+  path: '/brain',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BudgetRoute = BudgetRouteImport.update({
@@ -81,11 +86,6 @@ const MarketplaceRoute = MarketplaceRouteImport.update({
 const McpRoute = McpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoryRoute = MemoryRouteImport.update({
-  id: '/memory',
-  path: '/memory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PersonasRoute = PersonasRouteImport.update({
@@ -182,6 +182,7 @@ const AgentsAgentIdTraceRoute = AgentsAgentIdTraceRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
+  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -189,7 +190,6 @@ export interface FileRoutesByFullPath {
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
-  '/memory': typeof MemoryRoute
   '/personas': typeof PersonasRoute
   '/resources': typeof ResourcesRoute
   '/security': typeof SecurityRoute
@@ -212,6 +212,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
+  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -219,7 +220,6 @@ export interface FileRoutesByTo {
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
-  '/memory': typeof MemoryRoute
   '/personas': typeof PersonasRoute
   '/resources': typeof ResourcesRoute
   '/security': typeof SecurityRoute
@@ -243,6 +243,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
+  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -250,7 +251,6 @@ export interface FileRoutesById {
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
-  '/memory': typeof MemoryRoute
   '/personas': typeof PersonasRoute
   '/resources': typeof ResourcesRoute
   '/security': typeof SecurityRoute
@@ -275,6 +275,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/assets'
+    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -282,7 +283,6 @@ export interface FileRouteTypes {
     | '/git'
     | '/marketplace'
     | '/mcp'
-    | '/memory'
     | '/personas'
     | '/resources'
     | '/security'
@@ -305,6 +305,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/assets'
+    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -312,7 +313,6 @@ export interface FileRouteTypes {
     | '/git'
     | '/marketplace'
     | '/mcp'
-    | '/memory'
     | '/personas'
     | '/resources'
     | '/security'
@@ -335,6 +335,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/assets'
+    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -342,7 +343,6 @@ export interface FileRouteTypes {
     | '/git'
     | '/marketplace'
     | '/mcp'
-    | '/memory'
     | '/personas'
     | '/resources'
     | '/security'
@@ -366,6 +366,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssetsRoute: typeof AssetsRoute
+  BrainRoute: typeof BrainRoute
   BudgetRoute: typeof BudgetRoute
   ChatRoute: typeof ChatRoute
   CronJobsRoute: typeof CronJobsRoute
@@ -373,7 +374,6 @@ export interface RootRouteChildren {
   GitRoute: typeof GitRoute
   MarketplaceRoute: typeof MarketplaceRoute
   McpRoute: typeof McpRoute
-  MemoryRoute: typeof MemoryRoute
   PersonasRoute: typeof PersonasRoute
   ResourcesRoute: typeof ResourcesRoute
   SecurityRoute: typeof SecurityRoute
@@ -407,6 +407,13 @@ declare module '@tanstack/react-router' {
       path: '/assets'
       fullPath: '/assets'
       preLoaderRoute: typeof AssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brain': {
+      id: '/brain'
+      path: '/brain'
+      fullPath: '/brain'
+      preLoaderRoute: typeof BrainRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/budget': {
@@ -456,13 +463,6 @@ declare module '@tanstack/react-router' {
       path: '/mcp'
       fullPath: '/mcp'
       preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/memory': {
-      id: '/memory'
-      path: '/memory'
-      fullPath: '/memory'
-      preLoaderRoute: typeof MemoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/personas': {
@@ -609,6 +609,7 @@ const AgentsAgentIdRouteWithChildren = AgentsAgentIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssetsRoute: AssetsRoute,
+  BrainRoute: BrainRoute,
   BudgetRoute: BudgetRoute,
   ChatRoute: ChatRoute,
   CronJobsRoute: CronJobsRoute,
@@ -616,7 +617,6 @@ const rootRouteChildren: RootRouteChildren = {
   GitRoute: GitRoute,
   MarketplaceRoute: MarketplaceRoute,
   McpRoute: McpRoute,
-  MemoryRoute: MemoryRoute,
   PersonasRoute: PersonasRoute,
   ResourcesRoute: ResourcesRoute,
   SecurityRoute: SecurityRoute,

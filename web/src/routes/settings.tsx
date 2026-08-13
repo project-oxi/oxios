@@ -27,7 +27,6 @@ import {
 import { FieldRow } from '@/components/settings/field-row'
 import { IntegrationsSectionCard } from '@/components/settings/integrations-section'
 import { MemoSectionCard } from '@/components/settings/memo-section'
-import { MemorySection } from '@/components/settings/memory-section'
 import { NotificationSectionCard } from '@/components/settings/notification-section'
 import { SaveDock } from '@/components/settings/save-dock'
 import { SecretsSectionCard } from '@/components/settings/secrets-section'
@@ -549,7 +548,7 @@ function SettingsPage() {
         const dottedKey = field.key
         if (section.key === 'memory') {
           const [sub, ...rest] = dottedKey.split('.')
-          let container: Record<string, unknown> | undefined = config.memory as
+          let container: Record<string, unknown> | undefined = config.brain as
             | Record<string, unknown>
             | undefined
           if (container && sub && rest.length > 0) {
@@ -925,25 +924,8 @@ function renderActiveSection(
 
   if (!meta) return null
 
-  // Memory: render sub-cards for storage / embedding / learning / dream.
-  if (sectionId === 'memory') {
-    const memorySection = NEW_SECTIONS.find((s) => s.key === 'memory')!
-    const fieldsBySubsection: Record<string, SettingsFieldDef[]> = {
-      storage: memorySection.fields.filter(
-        (f) => f.key === 'enabled' || f.key.startsWith('sqlite.'),
-      ),
-      embedding: memorySection.fields.filter((f) => f.key.startsWith('embedding.')),
-      learning: memorySection.fields.filter((f) => f.key.startsWith('learning.')),
-      dream: memorySection.fields.filter((f) => f.key.startsWith('consolidation.')),
-    }
-    return (
-      <MemorySection
-        fieldsBySubsection={fieldsBySubsection}
-        formValues={formValues as Record<string, Record<string, string | boolean | string[]>>}
-        onFieldChange={(sk, fk, v) => setField(sk, fk, v)}
-      />
-    )
-  }
+  // Memory → brain daemon connection (RFC-047): rendered by the generic
+  // SectionCard below (flat brain.* fields).
 
   // Telegram (channel): dedicated channels section card.
   if (sectionId === 'channels.telegram') {

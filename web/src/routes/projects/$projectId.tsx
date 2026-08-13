@@ -163,9 +163,9 @@ function ProjectMemoriesCard({ project }: { project: Project }) {
             {memories.map((mem: any) => (
               <div key={mem.id} className="flex items-center gap-2 p-2 rounded bg-muted/50">
                 <Badge variant="outline" className="text-2xs shrink-0">
-                  {mem.memory_type ?? mem.tier ?? 'memory'}
+                  episode
                 </Badge>
-                <p className="text-xs truncate flex-1">{mem.content?.slice(0, 80)}...</p>
+                <p className="text-xs truncate flex-1 font-mono">{mem.id}</p>
               </div>
             ))}
           </div>

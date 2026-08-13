@@ -256,7 +256,7 @@ const securitySection: SettingsSectionDef = {
 }
 
 // ---------------------------------------------------------------------------
-// 3. memory — Memory (storage + embedding + learning + dream)
+// 3. brain — oxibrain daemon connection (RFC-047)
 // ---------------------------------------------------------------------------
 
 const memorySection: SettingsSectionDef = {
@@ -266,10 +266,8 @@ const memorySection: SettingsSectionDef = {
   iconKey: 'memory',
   groupId: 'memory',
   fields: [
-    // The memory subsystem is constructed at boot (SQLite handle,
-    // embedding model, SONA state). Toggling `enabled` via PATCH
-    // persists the new value but does not construct/teardown the
-    // subsystem at runtime. Restart is required to apply.
+    // The brain connection is made at boot. Toggling `enabled` persists the
+    // new value but does not reconnect at runtime — restart required.
     {
       key: 'enabled',
       labelKey: 'settings.memoryEnabled',
@@ -278,68 +276,22 @@ const memorySection: SettingsSectionDef = {
       restartScope: 'memory',
     },
     {
-      key: 'sqlite.path',
-      labelKey: 'settings.memoryStoragePath',
-      descriptionKey: 'settings.memoryStoragePathDescription',
+      key: 'socket_path',
+      labelKey: 'settings.brainSocketPath',
+      descriptionKey: 'settings.brainSocketPathDescription',
       type: 'text',
-      placeholder: '~/.oxios/workspace/memory.db',
+      placeholder: '~/.oxi/brain/oxibrain.sock',
       restartScope: 'memory',
       dependsOn: { field: 'enabled', value: true },
     },
     {
-      key: 'embedding.provider',
-      labelKey: 'settings.embeddingProvider',
-      descriptionKey: 'settings.embeddingProviderDescription',
-      type: 'select',
-      options: [
-        { value: 'gguf', labelKey: 'settings.embeddingProviderGguf' },
-        { value: 'mlx', labelKey: 'settings.embeddingProviderMlx' },
-        { value: 'tfidf', labelKey: 'settings.embeddingProviderTfidf' },
-      ],
+      key: 'space',
+      labelKey: 'settings.brainSpace',
+      descriptionKey: 'settings.brainSpaceDescription',
+      type: 'text',
+      placeholder: 'personal',
       restartScope: 'memory',
       dependsOn: { field: 'enabled', value: true },
-    },
-    {
-      key: 'learning.enabled',
-      labelKey: 'settings.sonaEnabled',
-      descriptionKey: 'settings.sonaEnabledDescription',
-      type: 'toggle',
-      restartScope: 'memory',
-      dependsOn: { field: 'enabled', value: true },
-    },
-    {
-      key: 'consolidation.preset',
-      labelKey: 'settings.consolidationPreset',
-      descriptionKey: 'settings.consolidationPresetDescription',
-      type: 'select',
-      options: [
-        { value: 'conservative', labelKey: 'settings.presetConservative' },
-        { value: 'balanced', labelKey: 'settings.presetBalanced' },
-        { value: 'aggressive', labelKey: 'settings.presetAggressive' },
-        { value: 'custom', labelKey: 'settings.presetCustom' },
-      ],
-      restartScope: 'memory',
-      dependsOn: { field: 'enabled', value: true },
-    },
-    {
-      key: 'consolidation.dream_enabled',
-      labelKey: 'settings.dreamEnabled',
-      descriptionKey: 'settings.dreamEnabledDescription',
-      type: 'toggle',
-      restartScope: 'memory',
-      dependsOn: { field: 'enabled', value: true },
-    },
-    {
-      key: 'consolidation.dream_interval_hours',
-      labelKey: 'settings.dreamIntervalHours',
-      descriptionKey: 'settings.dreamIntervalHoursDescription',
-      type: 'range',
-      min: 1,
-      max: 72,
-      placeholder: '24',
-      restartScope: 'memory',
-      dependsOn: { field: 'consolidation.dream_enabled', value: true },
-      tier: 'advanced',
     },
   ],
 }

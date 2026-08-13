@@ -27,15 +27,20 @@ export const handlers = [
   // ── Skills ──────────────────────────────────────────────────────────────
   http.get('/api/skills', () => HttpResponse.json({ skills: [] })),
 
-  // ── Memory map (RFC-T1-B) — default empty response. Tests that need
-  //    a populated map should override this handler in their setup.
-  http.get('/api/memory/map', () =>
-    HttpResponse.json({
-      count: 0,
-      epoch: 0,
-      entries: [],
-    }),
+  // ── Brain daemon (RFC-047) — default responses. Tests that need a
+  //    populated surface should override with `server.use(...)`.
+  http.get('/api/brain/status', () =>
+    HttpResponse.json({ available: true, space: 'personal', episodes: 0 }),
   ),
+  http.get('/api/brain/stats', () =>
+    HttpResponse.json({ episodes: 0, entities: 0, statements: 0, contradictions: 0 }),
+  ),
+  http.get('/api/brain/search', () => HttpResponse.json({ items: [], total_found: 0 })),
+  http.get('/api/brain/contradictions', () => HttpResponse.json([])),
+  http.get('/api/brain/entity/:id', () => HttpResponse.json(null)),
+  http.get('/api/brain/timeline', () => HttpResponse.json([])),
+  http.get('/api/brain/why/:statement_id', () => HttpResponse.json(null)),
+  http.post('/api/brain/recall', () => HttpResponse.json({ context: null })),
 
   // ── Auth ────────────────────────────────────────────────────────────────
   // The dev token endpoint mirrors the daemon's `POST /api/auth/token`.

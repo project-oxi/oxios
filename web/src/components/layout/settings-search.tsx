@@ -115,7 +115,7 @@ function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
       label: 'Memory Browser',
       keywords: ['memory', 'browser', 'dreams'],
       section: 'Navigation',
-      action: () => navigate('/memory'),
+      action: () => navigate('/brain'),
     },
     {
       id: 'nav-mcp',

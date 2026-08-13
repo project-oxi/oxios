@@ -546,7 +546,7 @@ function SettingsPage() {
       const bucket: Record<string, unknown> = {}
       for (const field of section.fields) {
         const dottedKey = field.key
-        if (section.key === 'memory') {
+        if (section.key === 'brain') {
           const [sub, ...rest] = dottedKey.split('.')
           let container: Record<string, unknown> | undefined = config.brain as
             | Record<string, unknown>

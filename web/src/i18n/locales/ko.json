@@ -1952,7 +1952,11 @@
     "brainSocketPath": "소켓 경로",
     "brainSocketPathDescription": "oxibrain 데몬의 Unix 도메인 소켓 경로 (비우면 ~/.oxi/brain/oxibrain.sock).",
     "brainSpace": "스페이스",
-    "brainSpaceDescription": "이 oxios 인스턴스가 사용하는 브레인 스페이스."
+    "brainSpaceDescription": "이 oxios 인스턴스가 사용하는 브레인 스페이스.",
+    "brain": "브레인",
+    "brainDescription": "oxibrain 데몬 연결 — 에이전트의 장기 기억.",
+    "brainEnabled": "브레인 활성화",
+    "brainEnabledDescription": "oxibrain 연결의 마스터 토글. 적용하려면 재시작 필요."
   },
   "sidebar": {
     "console": "콘솔",

@@ -1955,7 +1955,11 @@
     "brainSocketPath": "Socket path",
     "brainSocketPathDescription": "Unix-domain socket of the oxibrain daemon (empty = ~/.oxi/brain/oxibrain.sock).",
     "brainSpace": "Space",
-    "brainSpaceDescription": "Brain space this oxios instance operates in."
+    "brainSpaceDescription": "Brain space this oxios instance operates in.",
+    "brain": "Brain",
+    "brainDescription": "Connection to the oxibrain daemon — your agent's long-term memory.",
+    "brainEnabled": "Brain enabled",
+    "brainEnabledDescription": "Master toggle for the oxibrain connection. Restart required to apply."
   },
   "sidebar": {
     "console": "Console",

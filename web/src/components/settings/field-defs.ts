@@ -259,10 +259,10 @@ const securitySection: SettingsSectionDef = {
 // 3. brain — oxibrain daemon connection (RFC-047)
 // ---------------------------------------------------------------------------
 
-const memorySection: SettingsSectionDef = {
-  key: 'memory',
-  labelKey: 'settings.memory',
-  descriptionKey: 'settings.memoryDescription',
+const brainSection: SettingsSectionDef = {
+  key: 'brain',
+  labelKey: 'settings.brain',
+  descriptionKey: 'settings.brainDescription',
   iconKey: 'memory',
   groupId: 'memory',
   fields: [
@@ -270,8 +270,8 @@ const memorySection: SettingsSectionDef = {
     // new value but does not reconnect at runtime — restart required.
     {
       key: 'enabled',
-      labelKey: 'settings.memoryEnabled',
-      descriptionKey: 'settings.memoryEnabledDescription',
+      labelKey: 'settings.brainEnabled',
+      descriptionKey: 'settings.brainEnabledDescription',
       type: 'toggle',
       restartScope: 'memory',
     },
@@ -631,7 +631,7 @@ const budgetSection: SettingsSectionDef = {
 export const NEW_SECTIONS: SettingsSectionDef[] = [
   execSection,
   securitySection,
-  memorySection,
+  brainSection,
   telegramSection,
   auditSection,
   calendarSection,

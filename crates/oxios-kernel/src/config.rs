@@ -79,6 +79,33 @@ fn default_true_inline() -> bool {
     true
 }
 
+/// Brain daemon connection configuration (RFC-047).
+///
+/// oxios connects to the standalone oxibrain daemon over a Unix-domain socket.
+/// When the daemon is unavailable the kernel degrades (memory ops return empty)
+/// and agent turns complete normally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrainSection {
+    /// Connect to the daemon at boot. `false` skips the connection attempt
+    /// entirely (fully degraded).
+    pub enabled: bool,
+    /// Unix-domain socket path. Empty → `~/.oxi/brain/oxibrain.sock`.
+    pub socket_path: String,
+    /// Space to operate in.
+    pub space: String,
+}
+
+impl Default for BrainSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            socket_path: String::new(),
+            space: "personal".to_string(),
+        }
+    }
+}
+
 /// Memory system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
@@ -1212,6 +1239,9 @@ pub struct OxiosConfig {
     /// Memory system settings.
     #[serde(default)]
     pub memory: MemoryConfig,
+    /// Brain daemon connection settings (RFC-047).
+    #[serde(default)]
+    pub brain: BrainSection,
     /// Cron scheduler settings.
     #[serde(default)]
     pub cron: CronConfig,

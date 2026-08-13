@@ -252,6 +252,9 @@ include_dir = "0.7"
 # in oxios-kernel's `browser` feature via the direct oxibrowser-core 0.21 dep.
 # 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa_engine bridge).
 oxibrowser = "0.21"
+# Brain daemon client (RFC-047) — the `oxios brain` CLI talks to the daemon
+# directly without booting the kernel. Path dep until published to crates.io.
+oxibrain-client = { version = "0.1", path = "../oxibrain/crates/oxibrain-client" }
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }

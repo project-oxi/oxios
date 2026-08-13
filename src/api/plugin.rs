@@ -432,7 +432,6 @@ impl Surface for WebSurface {
             config_path: ctx.config_path.clone(),
             start_time: ctx.kernel.start_time(),
             rate_limiter: RateLimiter::new(rate_limit),
-            memory_map_cache: routes::MemoryMapCache::default(),
             web_dist,
             readiness: ctx.kernel.readiness.clone(),
             task_store,

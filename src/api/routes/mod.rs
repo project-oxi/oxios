@@ -184,9 +184,8 @@ pub(crate) use token_maxing_routes::{
 };
 pub(crate) use tools::handle_tools_registry;
 pub(crate) use workspace::{
-    MemoryMapCache, handle_dream_reports, handle_dream_status, handle_memory_create,
-    handle_memory_delete, handle_memory_get, handle_memory_list, handle_memory_map,
-    handle_memory_pin, handle_memory_search, handle_memory_semantic_search, handle_memory_stats,
+    handle_brain_contradictions, handle_brain_entity, handle_brain_recall, handle_brain_search,
+    handle_brain_stats, handle_brain_status, handle_brain_timeline, handle_brain_why,
     handle_skill_content, handle_skill_content_update, handle_skill_create, handle_skill_delete,
     handle_skill_disable, handle_skill_enable, handle_skill_get, handle_skill_import_file,
     handle_skill_import_text, handle_skill_import_url, handle_skills_list,
@@ -419,20 +418,18 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Import — file upload (multipart). Relies on the raised global
         // API_BODY_LIMIT (32 MB); a per-route layer could not exceed it.
         .route("/api/skills/import", post(handle_skill_import_file))
-        // Memory
-        .route("/api/memory", get(handle_memory_list))
-        .route("/api/memory", post(handle_memory_create))
-        .route("/api/memory/search", post(handle_memory_search))
-        .route("/api/memory/semantic", post(handle_memory_semantic_search))
-        .route("/api/memory/map", get(handle_memory_map))
-        .route("/api/memory/stats", get(handle_memory_stats))
-        .route("/api/memory/dream/status", get(handle_dream_status))
-        .route("/api/memory/dream/reports", get(handle_dream_reports))
-        .route("/api/memory/{id}/pin", put(handle_memory_pin))
+        // Brain daemon (RFC-047) — replaces the retired /api/memory/* surface
+        .route("/api/brain/status", get(handle_brain_status))
+        .route("/api/brain/recall", post(handle_brain_recall))
+        .route("/api/brain/search", get(handle_brain_search))
+        .route("/api/brain/entity/{id}", get(handle_brain_entity))
+        .route("/api/brain/timeline", get(handle_brain_timeline))
+        .route("/api/brain/why/{statement_id}", get(handle_brain_why))
         .route(
-            "/api/memory/{name}",
-            get(handle_memory_get).delete(handle_memory_delete),
+            "/api/brain/contradictions",
+            get(handle_brain_contradictions),
         )
+        .route("/api/brain/stats", get(handle_brain_stats))
         // Audit log
         .route("/api/audit/entries", get(handle_audit_entries))
         .route("/api/audit/verify", get(handle_audit_verify))

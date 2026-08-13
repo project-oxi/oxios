@@ -229,53 +229,14 @@ auto_promote_window_days = 14
 # Seconds between promotion scans (background cadence).
 auto_promote_interval_secs = 3600
 
-# ── Memory (RFC-012) ────────────────────────────────────────────────────────
-# All memory settings have sensible defaults — no configuration needed.
-# Override only if you want to change behavior.
-
-[memory]
+# ── Brain daemon (RFC-047) ────────────────────────────────────────────────
+# oxios delegates all agent memory to the standalone oxibrain daemon over a
+# Unix-domain socket. When the daemon is unreachable, memory operations
+# degrade gracefully (return empty) and agent turns complete normally.
+[brain]
 enabled = true
-max_recall = 10
-
-# SQLite-backed storage (replaces JSON files, single memory.db file).
-[memory.sqlite]
-enabled = true
-# path = ""  # Empty = ~/.oxios/workspace/memory.db
-# embedding_dim = 256  # Matryoshka: 128 (fast) | 256 (balanced) | 512 | 768 (full)
-wal_mode = true
-
-# Embedding provider for semantic search.
-# "api"  = OpenAI-compatible /v1/embeddings (cross-platform, no download)
-# "gguf" = local EmbeddingGemma-300m (Apple Silicon, ~329MB download)
-# "tfidf" = TF-IDF fallback (no download, keyword-only, no vector search)
-[memory.embedding]
-provider = "tfidf"
-# dimension = 256  # GGUF: 128|256|512|768. API: auto-detected per model.
-# model_ttl_secs = 300  # GGUF only: unload after 5 min of inactivity.
-
-# API embedding provider (when provider = "api"):
-# api_endpoint = "https://api.openai.com/v1/embeddings"
-# api_key = ""  # Empty = inherit from [engine].api_key
-# api_model = "text-embedding-3-small"  # 1536-dim
-
-# Learning engine (SONA + ReasoningBank).
-[memory.learning]
-enabled = true
-# sona_mode = "balanced"  # realtime | balanced | research | edge
-# distill_interval_hours = 6
-# auto_promote_quality = 0.8
-# auto_promote_min_usage = 3
-
-# AutoMemoryBridge (SQLite ↔ MEMORY.md sync).
-[memory.bridge]
-sync_enabled = false
-# interval_secs = 3600
-
-# Memory consolidation (RFC-008 Dream process).
-# 프리셋: "conservative" | "balanced" | "aggressive" | "custom"
-# 프리셋을 변경하면 아래 개별 필드가 무시되고 프리셋 값으로 덮어씌워집니다.
-# 개별 필드를 직접 제어하려면 preset = "custom" 으로 설정하세요.
-# Calendar system (enabled by default).
+# socket_path = ""  # Empty = ~/.oxi/brain/oxibrain.sock
+space = "personal"
 # Uncomment to customize settings; when the section is omitted, defaults below apply.
 # Events are stored as .ics files in ~/.oxios/workspace/calendar/events/
 # [calendar]
@@ -322,15 +283,6 @@ prune_batch_size = 100
 # provider = "gmail"  # gmail | icloud | fastmail | custom
 # Set password via: export OXIOS_EMAIL_PASSWORD="your-app-password"
 # rate_limit_per_hour = 10
-
-[memory.consolidation]
-preset = "balanced"
-# dream_enabled = true
-# dream_interval_hours = 24
-# decay_enabled = true
-# auto_protection = true
-# auto_classification = true
-# proactive_recall = true
 
 # ── Token Maxing (RFC-031) ───────────────────────────────────────────────
 # Autonomous burn of SUBSCRIPTION-quota providers during a configured time

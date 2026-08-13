@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use oxios_kernel::{ProjectInfo, memory::MemoryEntry};
+use oxios_kernel::ProjectInfo;
 
 use crate::api::error::AppError;
 use crate::api::routes::PageParams;
@@ -211,7 +211,11 @@ pub(crate) async fn handle_project_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// GET /api/projects/:id/memories — Get memories linked to a project.
+/// GET /api/projects/:id/memories — Get memory links for a project.
+///
+/// Returns the stored memory/episode IDs. Content enrichment is gone with the
+/// retired in-process memory store (RFC-047) — the brain owns memory now; the
+/// web panel renders the IDs.
 pub(crate) async fn handle_project_memories(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -219,34 +223,15 @@ pub(crate) async fn handle_project_memories(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let api = project_api!(state);
 
-    // 1. Get memory IDs for this project
+    // Get memory IDs for this project
     let memory_ids = api
         .get_project_memory_ids(&id)
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // 2. Load MemoryEntry for each ID from StateApi (same pattern as workspace.rs)
-    let mut memories = Vec::new();
-    for mid in &memory_ids {
-        for category in [
-            "memory/facts",
-            "memory/episodes",
-            "memory/knowledge",
-            "memory/sessions",
-        ] {
-            if let Ok(Some(entry)) = state.kernel.state.load::<MemoryEntry>(category, mid).await {
-                memories.push(serde_json::json!({
-                    "id": entry.id,
-                    "content": entry.content,
-                    "memory_type": entry.memory_type.label(),
-                    "importance": entry.importance,
-                    "tier": format!("{:?}", entry.tier).to_lowercase(),
-                    "tags": entry.tags,
-                    "created_at": entry.created_at.to_rfc3339(),
-                }));
-                break; // Found in this category, move to next memory_id
-            }
-        }
-    }
+    let memories: Vec<serde_json::Value> = memory_ids
+        .into_iter()
+        .map(|mid| serde_json::json!({ "id": mid }))
+        .collect();
 
     Ok(Json(paginate(&memories, &params)))
 }

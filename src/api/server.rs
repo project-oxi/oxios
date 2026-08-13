@@ -34,8 +34,6 @@ pub struct AppState {
     /// Rate limiter for API endpoints.
     #[allow(dead_code)]
     pub rate_limiter: RateLimiter,
-    /// In-process cache for `/api/memory/map` 2D projections.
-    pub memory_map_cache: crate::api::routes::MemoryMapCache,
     /// Atomic handle to the active web-dist directory (RFC-024 SP3).
     /// Serves from `web_dist.path()` on every request; updates swap the
     /// pointer atomically so no request ever sees a half-populated dist.

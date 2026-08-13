@@ -55,8 +55,8 @@ use oxios_gateway::plugin::{ChannelContext, ChannelPlugin};
 
 mod cli;
 use cli::{
-    AgentAction, CalendarAction, Cli, Command, ConfigAction, DaemonAction, EmailAction, GitAction,
-    MarketplaceAction, PkgAction, ProjectAction,
+    AgentAction, BrainCmd, CalendarAction, Cli, Command, ConfigAction, DaemonAction, EmailAction,
+    GitAction, MarketplaceAction, PkgAction, ProjectAction,
 };
 
 // ─── Constants & helpers ───────────────────────────────────────────────────
@@ -1491,6 +1491,122 @@ fn main() {
     }
 }
 
+/// Resolve the brain daemon socket path from config (empty → default).
+fn brain_socket_path(config: &OxiosConfig) -> PathBuf {
+    if config.brain.socket_path.is_empty() {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".oxi").join("brain").join("oxibrain.sock")
+    } else {
+        oxios_kernel::config::expand_home(&config.brain.socket_path)
+    }
+}
+
+/// `oxios brain` — talk to the oxibrain daemon directly (RFC-047).
+async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
+    use oxibrain_client::BrainClient;
+
+    let socket = brain_socket_path(config);
+    let space = config.brain.space.clone();
+
+    match cmd {
+        BrainCmd::Status => {
+            let mut client = match BrainClient::connect(&socket).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "brain daemon unavailable at {} ({e})",
+                        socket.display()
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let episodes = client
+                .stats(&space)
+                .await
+                .ok()
+                .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()))
+                .unwrap_or(0);
+            println!("brain: online");
+            println!("space: {space}");
+            println!("episodes: {episodes}");
+            Ok(())
+        }
+        BrainCmd::Ingest { path } => {
+            let mut client = match BrainClient::connect(&socket).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "brain daemon unavailable at {} ({e})",
+                        socket.display()
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let content = if path.to_string_lossy() == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin().read_to_string(&mut buf)?;
+                buf
+            } else {
+                std::fs::read_to_string(path)
+                    .with_context(|| format!("reading {}", path.display()))?
+            };
+            let source = if path.to_string_lossy() == "-" {
+                "stdin".to_string()
+            } else {
+                path.display().to_string()
+            };
+            let id = client
+                .ingest(&content, &space, &source)
+                .await
+                .context("brain ingest failed")?;
+            println!("ingested episode {id}");
+            Ok(())
+        }
+        BrainCmd::Ask { query } => {
+            let mut client = match BrainClient::connect(&socket).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "brain daemon unavailable at {} ({e})",
+                        socket.display()
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let value = client
+                .recall(query, &space, 3000)
+                .await
+                .context("brain recall failed")?;
+            let layers = value
+                .get("layers")
+                .and_then(|l| l.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if layers.is_empty() {
+                println!("no context found");
+                return Ok(());
+            }
+            for layer in layers {
+                let kind = layer
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("context");
+                let text = layer.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                if !text.is_empty() {
+                    println!("## {kind}\n{text}\n");
+                }
+            }
+            Ok(())
+        }
+        BrainCmd::Export { .. } => {
+            anyhow::bail!(
+                "oxios brain export is unsupported in this release — use the oxibrain CLI: oxibrain export"
+            );
+        }
+    }
+}
+
 async fn run(cli: Cli) -> Result<()> {
     let config_path = oxios_kernel::config::expand_home(&cli.config);
     let oxios_home = oxios_home_from_config(&config_path);
@@ -1558,6 +1674,9 @@ async fn run(cli: Cli) -> Result<()> {
 
     // ── Fast-path: commands that never need the kernel ──
     match &cli.command {
+        Some(Command::Brain { command }) => {
+            return cmd_brain(&config, command).await;
+        }
         Some(Command::Stop) => {
             let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
                 .with_probe_port(config.gateway.port);
@@ -1729,6 +1848,8 @@ async fn run(cli: Cli) -> Result<()> {
             )
             .await
         }
+        // `brain` handled in the fast-path above (never reaches the kernel).
+        Some(Command::Brain { .. }) => unreachable!("brain handled in fast-path"),
         Some(Command::Start {
             remote,
             pairing_address,

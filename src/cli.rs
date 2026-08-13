@@ -236,6 +236,38 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: EmailAction,
     },
+
+    /// Interact with the oxibrain daemon (RFC-047) — status, ingest, ask.
+    /// Talks to the daemon directly over its Unix socket; the kernel is not
+    /// required. `export` is unsupported in this release (use `oxibrain export`).
+    Brain {
+        #[command(subcommand)]
+        command: BrainCmd,
+    },
+}
+
+/// `oxios brain` subcommands.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum BrainCmd {
+    /// Show daemon status: online/offline, space, episode count.
+    Status,
+    /// Ingest a file (or `-` for stdin) as a brain episode.
+    Ingest {
+        /// File path, or `-` to read stdin.
+        path: std::path::PathBuf,
+    },
+    /// Assemble recall context for a query (3000-token budget) and print it.
+    Ask {
+        /// Query to recall context for.
+        query: String,
+    },
+    /// (Unsupported) — use the oxibrain CLI: `oxibrain export`.
+    Export {
+        #[arg(long)]
+        format: String,
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]

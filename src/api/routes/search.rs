@@ -201,5 +201,5 @@ pub(crate) async fn handle_screenshot(
         .header("content-type", "image/png")
         .header("cache-control", "public, max-age=86400")
         .body(axum::body::Body::from(png))
-        .unwrap())
+        .expect("valid static response builder"))
 }

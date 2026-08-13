@@ -397,21 +397,6 @@ pub(crate) fn sanitize_event(event: &oxios_kernel::event_bus::KernelEvent) -> se
             "id": id.to_string(),
             "approved": approved,
         }),
-        KernelEvent::MemoryStored {
-            id,
-            memory_type,
-            source,
-        } => serde_json::json!({
-            "type": "memory_stored",
-            "id": id,
-            "memory_type": memory_type,
-            "source": source,
-        }),
-        KernelEvent::MemoryRecalled { query, count } => serde_json::json!({
-            "type": "memory_recalled",
-            "query": query,
-            "count": count,
-        }),
         KernelEvent::AgentGroupCreated {
             group_id,
             agent_count,

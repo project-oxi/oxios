@@ -8,9 +8,9 @@ use anyhow::{Context, Result};
 use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
-    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BudgetManager,
-    ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle, EventBus, GitLayer,
-    HnswMemoryIndex, MarketplaceApi, McpBridge, McpServer, MemoryManager, Orchestrator,
+    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
+    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
+    EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
     OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
     SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
     auth::AuthManager, config::load_config, mcp::validate_mcp_command,
@@ -40,8 +40,8 @@ pub struct Kernel {
     access_manager: Arc<parking_lot::Mutex<AccessManager>>,
     persona_manager: Arc<PersonaManager>,
     mcp_bridge: Arc<McpBridge>,
-    #[allow(dead_code)]
-    memory_manager: Arc<MemoryManager>,
+    /// Brain daemon connection (RFC-047). Degrades when the daemon is down.
+    brain: Arc<BrainConnection>,
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
     cron_scheduler: Arc<CronScheduler>,
     git_layer: Arc<GitLayer>,
@@ -89,7 +89,6 @@ pub struct Kernel {
     /// Hot-swappable engine reference — shared between EngineApi and AgentRuntime.
     engine_handle: Arc<EngineHandle>,
     /// SQLite-backed agent history query index.
-    #[cfg(feature = "sqlite-memory")]
     agent_log_db: Option<Arc<oxios_kernel::agent_log_db::AgentLogDb>>,
     /// RFC-025 Phase 5: cancellation sender for the Mount auto-promotion
     /// scanner (Promo-6). Sending `true` breaks the scan loop's `select!`.
@@ -128,7 +127,7 @@ impl Kernel {
                 let knowledge_lens = Arc::new(
                     oxios_kernel::KnowledgeLens::new(
                         knowledge.clone(),
-                        self.memory_manager.clone(),
+                        Some(self.brain.clone()),
                     )
                     .expect("KnowledgeLens init failed"),
                 );
@@ -223,12 +222,9 @@ impl Kernel {
                 let mut agent_api = oxios_kernel::AgentApi::new(
                     self.supervisor.clone(),
                     self.budget_manager.clone(),
-                    self.memory_manager.clone(),
-                    Some(self.event_bus.clone()),
                 );
                 agent_api.set_state_store(self.state_store.clone());
 
-                #[cfg(feature = "sqlite-memory")]
                 if let Some(ref db) = self.agent_log_db {
                     agent_api.set_agent_log_db(db.clone());
                 }
@@ -294,6 +290,8 @@ impl Kernel {
                     self.quota_tracker.clone(),
                     self.token_maxer.clone(),
                 ));
+                // RFC-047: brain daemon facade — the /api/brain/* surface.
+                let kh = kh.with_brain(oxios_kernel::BrainApi::new(self.brain.clone()));
                 let kh = kh.with_browser(oxios_kernel::BrowserApi::from_config(&self.config));
                 // oximemo (optional first-party app module; `memo` feature + [memo].enabled).
                 #[cfg(feature = "memo")]
@@ -1024,100 +1022,6 @@ impl KernelBuilder {
         self
     }
 
-    /// Create the appropriate embedding provider based on config.
-    ///
-    /// - `"api"`   → ApiEmbeddingProvider (OpenAI-compatible /v1/embeddings)
-    /// - `"gguf"`  → GgufEmbeddingProvider (requires `embedding-gguf` feature, aarch64)
-    /// - `"tfidf"` → TfIdfEmbeddingProvider (default, sparse vectors, no sqlite-vec KNN)
-    #[cfg(feature = "sqlite-memory")]
-    fn create_embedding_provider(config: &OxiosConfig) -> Arc<dyn oxios_kernel::EmbeddingProvider> {
-        use oxios_kernel::TfIdfEmbeddingProvider;
-        let emb_config = &config.memory.embedding;
-
-        match emb_config.provider.as_str() {
-            "api" => {
-                use oxios_kernel::embedding::api::ApiEmbeddingProvider;
-                // Inherit API key from active provider if not explicitly set.
-                let api_key = if emb_config.api_key.is_empty() {
-                    config.engine.api_key.clone().unwrap_or_default()
-                } else {
-                    emb_config.api_key.clone()
-                };
-                let api_model = if emb_config.api_model.is_empty() {
-                    "text-embedding-3-small".to_string()
-                } else {
-                    emb_config.api_model.clone()
-                };
-                let endpoint = if emb_config.api_endpoint.is_empty() {
-                    "https://api.openai.com/v1/embeddings".to_string()
-                } else {
-                    emb_config.api_endpoint.clone()
-                };
-                let dim = emb_config.dimension;
-                match ApiEmbeddingProvider::new(
-                    endpoint.clone(),
-                    api_key,
-                    api_model.clone(),
-                    if dim > 0 { Some(dim) } else { None },
-                ) {
-                    Ok(p) => {
-                        tracing::info!(
-                            endpoint = %endpoint,
-                            model = %api_model,
-                            dim = dim,
-                            "Using API embedding provider"
-                        );
-                        Arc::new(p)
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "API embedding provider init failed; falling back to TF-IDF");
-                        Arc::new(TfIdfEmbeddingProvider)
-                    }
-                }
-            }
-            "gguf" => {
-                #[cfg(feature = "embedding-gguf")]
-                {
-                    use oxios_kernel::{EmbeddingDimension, GgufEmbeddingProvider};
-
-                    let model_dir =
-                        oxios_kernel::embedding::gguf::GgufModelLoader::model_dir_for_workspace(
-                            Path::new(&config.kernel.workspace),
-                        );
-                    let dim = match emb_config.dimension {
-                        128 => EmbeddingDimension::Dim128,
-                        512 => EmbeddingDimension::Dim512,
-                        768 => EmbeddingDimension::Dim768,
-                        _ => EmbeddingDimension::Dim256,
-                    };
-                    tracing::info!(
-                        dir = %model_dir.display(),
-                        dim = emb_config.dimension,
-                        "Using GGUF EmbeddingGemma provider"
-                    );
-                    Arc::new(GgufEmbeddingProvider::new(
-                        model_dir,
-                        dim,
-                        emb_config.model_ttl_secs,
-                    ))
-                }
-
-                #[cfg(not(feature = "embedding-gguf"))]
-                {
-                    tracing::warn!(
-                        "GGUF embedding requested but embedding-gguf feature not enabled. \
-                         Falling back to TF-IDF."
-                    );
-                    Arc::new(TfIdfEmbeddingProvider)
-                }
-            }
-            _ => {
-                tracing::debug!("Using TF-IDF embedding provider");
-                Arc::new(TfIdfEmbeddingProvider)
-            }
-        }
-    }
-
     /// Assemble all kernel components and wire them together.
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
@@ -1300,135 +1204,67 @@ impl KernelBuilder {
         // These are needed before KernelHandle creation (for AgentRuntime).
         // Order doesn't matter — they're independent.
 
-        let mut memory_manager = MemoryManager::new(state_store.clone());
-        memory_manager.set_git_layer(git_layer.clone());
-
-        // ProjectManager — initialized after SQLite (RFC-011)
-        let mut project_manager: Option<Arc<oxios_kernel::ProjectManager>> = None;
-        // MountManager — initialized after SQLite (RFC-025)
-        let mut mount_manager: Option<Arc<oxios_kernel::MountManager>> = None;
-
-        // ── RFC-012: SQLite memory backend ──
-        // When enabled, initialize the SQLite database and attach it to the memory manager.
-        #[cfg(feature = "sqlite-memory")]
-        if config.memory.sqlite.enabled {
-            use oxios_kernel::{MemoryDatabase, SqliteMemoryStore};
-
-            let sqlite_config = &config.memory.sqlite;
-            let db_path = if sqlite_config.path.is_empty() {
-                PathBuf::from(&config.kernel.workspace).join("memory.db")
+        // Brain daemon connection (RFC-047) — degraded when unavailable.
+        let brain = Arc::new(if config.brain.enabled {
+            let socket_path = if config.brain.socket_path.is_empty() {
+                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+                home.join(".oxi").join("brain").join("oxibrain.sock")
             } else {
-                oxios_kernel::config::expand_home(&sqlite_config.path)
+                oxios_kernel::config::expand_home(&config.brain.socket_path)
             };
+            BrainConnection::connect(BrainConfig::new(socket_path, config.brain.space.clone()))
+                .await
+        } else {
+            // Fully degraded: connect against a socket that will never exist.
+            BrainConnection::connect(BrainConfig::new(
+                PathBuf::from("/nonexistent/oxibrain.sock"),
+                config.brain.space.clone(),
+            ))
+            .await
+        });
 
-            match MemoryDatabase::open(&db_path, sqlite_config.embedding_dim) {
-                Ok(db) => {
-                    let db = Arc::new(db);
+        // KernelDatabase — shared SQLite connection for mount/project tables.
+        // Forward-only migration: the legacy `memory.db` is preserved untouched
+        // (spec §9); the kernel's own tables move to `kernel.db`.
+        let kernel_db = Arc::new(KernelDatabase::open(
+            PathBuf::from(&config.kernel.workspace).join("kernel.db"),
+        )?);
 
-                    // Select embedding provider based on config
-                    let embedding: Arc<dyn oxios_kernel::EmbeddingProvider> =
-                        Self::create_embedding_provider(&config);
-
-                    let db_clone = db.clone();
-                    let sqlite_store = SqliteMemoryStore::new(db, embedding);
-
-                    // Run JSON → SQLite migration (one-time, best effort)
-                    let workspace_dir = PathBuf::from(&config.kernel.workspace);
-                    if let Err(e) = sqlite_store.migrate_if_needed(&workspace_dir) {
-                        tracing::warn!(error = %e, "Memory migration failed (non-fatal)");
-                    }
-
-                    // Reconcile vector dimensions (detect embedding model change)
-                    let _ = sqlite_store.reconcile_vector_dimension(sqlite_config.embedding_dim);
-
-                    // Wrap in Arc for sharing between MemoryManager and background tasks
-                    let sqlite_store = Arc::new(sqlite_store);
-
-                    // Background backfill: populate vectors for existing entries
-                    // that lack them (e.g., after switching from TF-IDF to API).
-                    let store_for_backfill = Arc::clone(&sqlite_store);
-                    tokio::spawn(async move {
-                        if let Err(e) = store_for_backfill.backfill_vectors().await {
-                            tracing::warn!(error = %e, "Vector backfill failed (non-fatal)");
-                        }
-                    });
-
-                    memory_manager.set_sqlite_store(sqlite_store);
-                    tracing::info!(
-                        path = %db_path.display(),
-                        dim = sqlite_config.embedding_dim,
-                        "SQLite memory backend initialized"
-                    );
-
-                    // Initialize ProjectManager using the same SQLite database
-                    match oxios_kernel::ProjectManager::new(
-                        db_clone.clone(),
-                        Some(event_bus.clone()),
-                    ) {
-                        Ok(pm) => {
-                            project_manager = Some(Arc::new(pm));
-                            tracing::info!("ProjectManager initialized");
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "ProjectManager init failed (non-fatal)");
-                        }
-                    }
-
-                    // Initialize MountManager (RFC-025) using the same SQLite database.
-                    // Coexists with ProjectManager during the migration window.
-                    match oxios_kernel::MountManager::new(db_clone, Some(event_bus.clone())) {
-                        Ok(mm) => {
-                            // RFC-025: one-time migration — promote legacy
-                            // Project paths into Mounts. Idempotent: Projects
-                            // that already reference Mounts are skipped.
-                            if let Some(ref pm) = project_manager {
-                                migrate_projects_to_mounts(&mm, pm);
-                            }
-                            mount_manager = Some(Arc::new(mm));
-                            tracing::info!("MountManager initialized");
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
-                        }
-                    }
-
-                    // Prefetch the embedding model in the background so it's ready
-                    // before the first search. Non-blocking — errors are logged.
-                    if config.memory.embedding.provider == "gguf" {
-                        #[cfg(feature = "embedding-gguf")]
-                        oxios_kernel::embedding::gguf::GgufModelLoader::spawn_prefetch(
-                            oxios_kernel::embedding::gguf::GgufModelLoader::model_dir_for_workspace(
-                                Path::new(&config.kernel.workspace),
-                            ),
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to open SQLite memory database, falling back to JSON"
-                    );
-                }
+        // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
+        let project_manager = match oxios_kernel::ProjectManager::new(
+            kernel_db.clone(),
+            Some(event_bus.clone()),
+        ) {
+            Ok(pm) => {
+                tracing::info!("ProjectManager initialized");
+                Some(Arc::new(pm))
             }
-        }
-
-        let memory_manager = Arc::new(memory_manager);
-
-        // ── RFC-008: Dream process for background memory consolidation ──
-        {
-            let consolidation = &config.memory.consolidation;
-            if consolidation.dream_enabled {
-                let dream_config = oxios_kernel::DreamConfig::from(consolidation);
-                let space_dir = PathBuf::from(&config.kernel.workspace);
-                let dream = Arc::new(oxios_kernel::DreamProcess::new(
-                    memory_manager.clone(),
-                    dream_config,
-                    space_dir,
-                ));
-                dream.spawn_dream_task();
-                tracing::info!("Dream process spawned for background memory consolidation");
+            Err(e) => {
+                tracing::warn!(error = %e, "ProjectManager init failed (non-fatal)");
+                None
             }
-        }
+        };
+
+        // MountManager (RFC-025) using the same SQLite database.
+        let mount_manager = match oxios_kernel::MountManager::new(
+            kernel_db.clone(),
+            Some(event_bus.clone()),
+        ) {
+            Ok(mm) => {
+                // RFC-025: one-time migration — promote legacy
+                // Project paths into Mounts. Idempotent: Projects
+                // that already reference Mounts are skipped.
+                if let Some(ref pm) = project_manager {
+                    migrate_projects_to_mounts(&mm, pm);
+                }
+                tracing::info!("MountManager initialized");
+                Some(Arc::new(mm))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
+                None
+            }
+        };
 
         // ── RFC-025 Phase 5: Mount auto-promotion background scanner ──
         // Scans session history on a cadence and promotes paths that cross
@@ -1604,16 +1440,6 @@ impl KernelBuilder {
                 .expect("KnowledgeBase init failed"),
         );
 
-        // HNSW index for fast semantic search
-        let hnsw_index = Arc::new(
-            HnswMemoryIndex::new(
-                config.memory.sqlite.embedding_dim,
-                10000,
-                Some(PathBuf::from(&config.kernel.workspace).join("memory")),
-            )
-            .expect("HNSW index init failed"),
-        );
-
         // Shared HitL registries — created ONCE so the preliminary handle
         // (used by AgentRuntime to register tool approvals) and the cached
         // handle (used by the HTTP API to resolve them) see the same map.
@@ -1625,16 +1451,13 @@ impl KernelBuilder {
         let approval_config = Arc::new(parking_lot::RwLock::new(config.security.approval.clone()));
         let pending_path_access = Arc::new(oxios_kernel::tools::PendingPathAccess::new());
 
-        // Build AgentApi with HNSW index attached
-        let mut agent_api = oxios_kernel::AgentApi::new(
-            // Placeholder supervisor — the real one needs AgentRuntime which needs this handle.
-            // AgentApi.supervisor is only used for list/kill, not during tool registration.
+        // Build AgentApi (placeholder supervisor — the real one needs
+        // AgentRuntime which needs this handle. AgentApi.supervisor is only
+        // used for list/kill, not during tool registration.)
+        let agent_api = oxios_kernel::AgentApi::new(
             Arc::new(oxios_kernel::supervisor::NoOpSupervisor),
             budget_manager.clone(),
-            memory_manager.clone(),
-            None,
         );
-        agent_api.set_hnsw_index(hnsw_index.clone());
 
         // ── KernelHandle — the syscall table for agent OS control ──
         // Created inline here because AgentRuntime needs it.
@@ -1683,7 +1506,7 @@ impl KernelBuilder {
                 Arc::new(
                     oxios_kernel::KnowledgeLens::new(
                         knowledge_base.clone(),
-                        memory_manager.clone(),
+                        Some(brain.clone()),
                     )
                     .expect("KnowledgeLens init failed"),
                 ),
@@ -1766,6 +1589,10 @@ impl KernelBuilder {
         )
         .with_persona_manager(Arc::clone(&persona_manager))
         .with_tool_retriever(Arc::new(tool_retriever))
+        .with_sona(Arc::new(oxios_kernel::SonaEngine::new(
+            oxios_kernel::SonaMode::Balanced,
+            Arc::new(oxios_kernel::TfIdfEmbeddingProvider),
+        )))
         .with_config({
             // Resolve API key from CredentialStore based on the model's provider.
             let provider_name = model.provider.as_str();
@@ -1780,7 +1607,7 @@ impl KernelBuilder {
             }
         })
         .with_persistence_hook(Arc::new(oxios_kernel::PersistenceHook::new(
-            memory_manager.clone(),
+            Some(brain.clone()),
             knowledge_base.clone(),
             Arc::clone(&engine_handle),
             state_store.clone(),
@@ -1794,7 +1621,6 @@ impl KernelBuilder {
         basic_supervisor.set_agent_log_config(config.agent_log.clone());
 
         // Wire SQLite agent log index if available
-        #[cfg(feature = "sqlite-memory")]
         let (agent_log_db,) = {
             let db_path = if config.agent_log.db_path.is_empty() {
                 dirs::home_dir()
@@ -1831,8 +1657,6 @@ impl KernelBuilder {
                 }
             }
         };
-        #[cfg(not(feature = "sqlite-memory"))]
-        let agent_log_db: Option<Arc<oxios_kernel::agent_log_db::AgentLogDb>> = None;
 
         let supervisor: Arc<dyn Supervisor> = Arc::new(basic_supervisor);
 
@@ -1944,7 +1768,7 @@ impl KernelBuilder {
             access_manager,
             persona_manager,
             mcp_bridge,
-            memory_manager,
+            brain,
             auth_manager,
             cron_scheduler,
             git_layer,
@@ -1971,7 +1795,6 @@ impl KernelBuilder {
             handle_cache: std::sync::OnceLock::new(),
             a2a_protocol,
             engine_handle,
-            #[cfg(feature = "sqlite-memory")]
             agent_log_db,
             promo_shutdown_tx,
         };

@@ -46,11 +46,16 @@ pub(crate) async fn handle_readiness(
     components.insert("git".into(), serde_json::json!({"healthy": git_ok}));
     // Git failure is degraded, not fatal
 
-    // Memory: always healthy (optional subsystem)
-    let (index_size, total) = state.kernel.agents.memory_stats().await;
+    // Brain daemon (RFC-047): degraded when unavailable, not fatal.
+    let brain_available = state
+        .kernel
+        .brain
+        .as_ref()
+        .map(|b| b.is_available())
+        .unwrap_or(false);
     components.insert(
-        "memory".into(),
-        serde_json::json!({"healthy": true, "index_size": index_size, "total_entries": total}),
+        "brain".into(),
+        serde_json::json!({"healthy": brain_available}),
     );
 
     let status = if all_healthy { "healthy" } else { "degraded" };
@@ -85,15 +90,13 @@ pub(crate) struct ComponentStatus {
     pub detail: Option<String>,
 }
 
-/// Memory subsystem health.
+/// Brain daemon health (RFC-047).
 #[derive(Debug, Serialize, Clone)]
-pub(crate) struct MemoryHealth {
-    /// Whether memory is enabled.
-    pub enabled: bool,
-    /// Number of entries in the vector index.
-    pub index_size: usize,
-    /// Total entries across all memory types.
-    pub total_entries: usize,
+pub(crate) struct BrainHealth {
+    /// Whether the daemon is reachable.
+    pub available: bool,
+    /// Episode count in the space (None when unreachable).
+    pub episodes: Option<i64>,
 }
 
 /// Agent subsystem health.
@@ -116,8 +119,8 @@ pub(crate) struct ComponentHealth {
     pub state_store: ComponentStatus,
     /// Event bus health.
     pub event_bus: ComponentStatus,
-    /// Memory subsystem health.
-    pub memory: MemoryHealth,
+    /// Brain daemon health.
+    pub brain: BrainHealth,
     /// Agent subsystem health.
     pub agents: AgentHealth,
     /// Active spaces count.
@@ -185,12 +188,23 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
     // Event bus — always healthy if we got this far
     let event_bus_healthy = true;
 
-    // Memory health
-    let (mem_index_size, mem_total) = state.kernel.agents.memory_stats().await;
-    let memory_health = MemoryHealth {
-        enabled: true,
-        index_size: mem_index_size,
-        total_entries: mem_total,
+    // Brain daemon health (RFC-047)
+    let brain_available = state
+        .kernel
+        .brain
+        .as_ref()
+        .map(|b| b.is_available())
+        .unwrap_or(false);
+    let episodes = match state.kernel.brain.as_ref() {
+        Some(brain) => brain
+            .stats()
+            .await
+            .and_then(|s| s.get("episodes").and_then(|e| e.as_i64())),
+        None => None,
+    };
+    let brain_health = BrainHealth {
+        available: brain_available,
+        episodes,
     };
 
     // Agent health — count active from supervisor, metrics from export
@@ -236,7 +250,7 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
             healthy: event_bus_healthy,
             detail: None,
         },
-        memory: memory_health,
+        brain: brain_health,
         agents: agent_health,
         spaces_active: state
             .kernel
@@ -2076,12 +2090,28 @@ pub(crate) async fn handle_doctor(state: State<Arc<AppState>>) -> Json<DoctorRes
         });
     }
 
-    // 8. Memory subsystem
-    let (index_size, total) = state.kernel.agents.memory_stats().await;
+    // 8. Brain daemon (RFC-047)
+    let brain_available = state
+        .kernel
+        .brain
+        .as_ref()
+        .map(|b| b.is_available())
+        .unwrap_or(false);
+    let brain_episodes = match state.kernel.brain.as_ref() {
+        Some(brain) => brain
+            .stats()
+            .await
+            .and_then(|s| s.get("episodes").and_then(|e| e.as_i64())),
+        None => None,
+    };
     results.push(DoctorCheck {
-        name: "memory".into(),
-        status: "pass".into(),
-        message: format!("Memory: {index_size} indexed, {total} total entries"),
+        name: "brain".into(),
+        status: if brain_available { "pass" } else { "warn" }.into(),
+        message: match (brain_available, brain_episodes) {
+            (true, Some(n)) => format!("Brain daemon: online, {n} episodes"),
+            (true, None) => "Brain daemon: online (episode count unavailable)".into(),
+            (false, _) => "Brain daemon: offline — memory operations degraded".into(),
+        },
     });
 
     // 9. Web dist directory

@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.40.0] - 2026-08-15
 
 ### Changed (Breaking — RFC-047)
 - **`oxios-memory` removed; agent memory now lives in the standalone

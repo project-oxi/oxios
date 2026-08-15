@@ -1,6 +1,6 @@
 [package]
 name = "oxios"
-version = "1.39.0"
+version = "1.40.0"
 edition = "2024"
 description = "Oxios Agent OS — Agent Operating System powered by oxicode-sdk"
 license = "MIT"
@@ -200,11 +200,11 @@ timeline = ["oxios-kernel/timeline"]
 remote = ["dep:snow", "dep:tokio-tungstenite", "dep:base64", "dep:qrcode", "dep:local-ip-address", "dep:hostname"]
 
 [dependencies]
-oxios-kernel = { version = "1.39.0", path = "crates/oxios-kernel", default-features = false }
-oxios-calendar = { version = "1.39.0", path = "crates/oxios-calendar" }
-oxios-markdown = { version = "1.39.0", path = "crates/oxios-markdown" }
-oxios-ouroboros = { version = "1.39.0", path = "crates/oxios-ouroboros" }
-oxios-gateway = { version = "1.39.0", path = "crates/oxios-gateway" }
+oxios-kernel = { version = "1.40.0", path = "crates/oxios-kernel", default-features = false }
+oxios-calendar = { version = "1.40.0", path = "crates/oxios-calendar" }
+oxios-markdown = { version = "1.40.0", path = "crates/oxios-markdown" }
+oxios-ouroboros = { version = "1.40.0", path = "crates/oxios-ouroboros" }
+oxios-gateway = { version = "1.40.0", path = "crates/oxios-gateway" }
 oxicode-sdk = { workspace = true }
 
 # RFC-026: optional deps gated by features (were separate crates)
@@ -264,7 +264,7 @@ local-ip-address = { workspace = true, optional = true }
 hostname = { workspace = true, optional = true }
 
 [dev-dependencies]
-oxios-ouroboros = { version = "1.39.0", path = "crates/oxios-ouroboros" }
+oxios-ouroboros = { version = "1.40.0", path = "crates/oxios-ouroboros" }
 chrono = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

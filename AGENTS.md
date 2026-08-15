@@ -31,7 +31,7 @@ oxios/
 └── docs/                  # Architecture, RFCs, design documents
 ```
 
-**Dependencies:** `oxios → oxios-kernel → {oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`, plus `oxibrain-client` (path dep → crates.io post-publish). `oxicode-sdk` is a crates.io dependency — never reimplement what it provides. Agent memory is served by the external `oxibrain` daemon over a Unix socket; the kernel holds a `BrainConnection` (`KernelHandle::brain`).
+**Dependencies:** `oxios → oxios-kernel → {oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`, plus `oxibrain-client` (crates.io). `oxicode-sdk` is a crates.io dependency — never reimplement what it provides. Agent memory is served by the external `oxibrain` daemon over a Unix socket; the kernel holds a `BrainConnection` (`KernelHandle::brain`).
 
 ## Quick Facts
 

@@ -1270,7 +1270,6 @@ Complete path of a user message through the system:
   │   ├── oxios-gateway/          # Channel-agnostic message hub
   │   ├── oxios-markdown/         # Knowledge base (VirtualFs, BacklinkIndex)
   │   ├── oxios-mcp/              # MCP client (JSON-RPC 2.0 over stdio)
-  │   ├── oxibrain-client/       # Daemon client for the external oxibrain memory daemon (path dep, RFC-047)
   │   └── oxios-calendar/         # .ics-based calendar event management
   ├── web/                        # React frontend (SPA)
   ├── share/                      # Default skills, config

@@ -120,7 +120,9 @@ regex = "1"
 parking_lot = "0.12"
 arc-swap = "1.7"
 
-# oxicode engine — single dependency for everything (oxicode-ai re-exported via oxicode-sdk).
+
+# Brain daemon client (RFC-047)
+oxibrain-client = "0.1"
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
@@ -252,9 +254,7 @@ include_dir = "0.7"
 # in oxios-kernel's `browser` feature via the direct oxibrowser-core 0.21 dep.
 # 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa_engine bridge).
 oxibrowser = "0.21"
-# Brain daemon client (RFC-047) — the `oxios brain` CLI talks to the daemon
-# directly without booting the kernel. Path dep until published to crates.io.
-oxibrain-client = { version = "0.1", path = "../oxibrain/crates/oxibrain-client" }
+oxibrain-client = { workspace = true }
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }

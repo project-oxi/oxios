@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replace the old memory metrics.
 
 ### Prerequisites / notes
-- `oxibrain-client` is used as a path dependency until oxibrain v0.1 is
-  published to crates.io; swap the two path deps to `version = "0.1"` after
-  publish.
+- `oxibrain-client` v0.1.0 (published to crates.io on 2026-08-15) is now a
+  normal registry dependency — the former path deps and the CI sibling-repo
+  checkout are gone.
 - Data migration (one-time, optional):
   1. Stop the oxibrain daemon so the CLI can take the write lock.
   2. `oxibrain import-oxios --source ~/.oxios/workspace/memory.db --space personal`

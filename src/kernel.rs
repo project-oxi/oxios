@@ -18,8 +18,6 @@ use oxios_kernel::{
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
 
-#[cfg(feature = "embedding-gguf")]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;

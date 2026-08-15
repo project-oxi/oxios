@@ -34,9 +34,8 @@ oxios-markdown = { version = "1.39.0", path = "../oxios-markdown" }
 oxios-calendar = { version = "1.39.0", path = "../oxios-calendar" }
 oxios-mcp = { version = "1.39.0", path = "../oxios-mcp" }
 oxicode-sdk = { workspace = true }
-# oxibrain daemon client (RFC-047). Path dep until oxibrain-client 0.1 is
-# published to crates.io — swap to `version = "0.1"` after publish.
-oxibrain-client = { version = "0.1", path = "../../../oxibrain/crates/oxibrain-client" }
+# oxibrain daemon client (RFC-047).
+oxibrain-client = { workspace = true }
 # 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
 # BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser
 # features — products own browsing themselves (RFC-046).

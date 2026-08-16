@@ -945,7 +945,10 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 // RFC-025: surface detected mount info to the frontend.
                                 "mount_tag": msg.metadata.get("mount_tag"),
                                 "mount_ids": msg.metadata.get("mount_ids"),
-                                // TODO: populate tool_calls from trajectory_steps once kernel provides it
+                                // Source: gateway.rs serializes the terminal
+                                // orchestration's tool_calls into channel
+                                // metadata (same key the non-streaming path
+                                // parses at the RFC-015 block above).
                                 "tool_calls": msg.metadata.get("tool_calls")
                                     .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
                                     .unwrap_or(serde_json::json!([])),

@@ -595,6 +595,9 @@ impl Kernel {
     /// for the outer timeout to function (same rationale as Guardian's
     /// spawn_blocking — RFC-040 A2).
     pub async fn cleanup(&self, timeout: std::time::Duration) {
+        // Promo-6: stop the Mount auto-promotion scanner first so it does
+        // not race the state teardown below.
+        self.shutdown_promotion_scanner();
         let handle = self.handle();
 
         let _ = tokio::time::timeout(timeout, async {
@@ -636,7 +639,6 @@ impl Kernel {
     /// (Promo-6). No-op when the scanner is disabled. Safe to call during
     /// graceful shutdown; the spawned task breaks its `select!` loop on the
     /// next iteration.
-    #[allow(dead_code)] // part of graceful-shutdown wiring (Promo-6); call site TODO
     pub fn shutdown_promotion_scanner(&self) {
         if let Some(tx) = &self.promo_shutdown_tx {
             let _ = tx.send(true);

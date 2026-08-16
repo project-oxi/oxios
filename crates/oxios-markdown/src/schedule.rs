@@ -85,7 +85,8 @@ impl<'a> ScheduleManager<'a> {
     /// Currently always returns `true` (matches the Go original).
     /// The `checklist` parameter is kept for future per-list overrides.
     pub fn should_split_checklist(&self, _checklist: &str) -> bool {
-        // TODO: disallow split for read/watch
+        // Upstream Go parity; intentionally always true (kept public for
+        // API stability — removing it would need a major bump).
         true
     }
 

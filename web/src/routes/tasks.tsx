@@ -1,7 +1,16 @@
 // Task page — list + create + schedule + run + detail (RFC-043)
 
 import { createFileRoute } from '@tanstack/react-router'
-import { CalendarClock, Clock, History, Play, Plus, Trash2 } from 'lucide-react'
+import {
+  CalendarClock,
+  Clock,
+  History,
+  Pencil,
+  Play,
+  Plus,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -10,6 +19,10 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { ErrorState } from '@/components/shared/error-state'
 import { LoadingCards } from '@/components/shared/loading'
 import { PageHeader } from '@/components/shared/page-header'
+import { TaskComments } from '@/components/task/task-comments'
+import { TaskDependencies } from '@/components/task/task-dependencies'
+import { TaskEditDialog } from '@/components/task/task-edit-dialog'
+import { TaskVerifyConfig } from '@/components/task/task-verify-config'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,6 +40,7 @@ import {
   useDeleteTask,
   useRunTask,
   useSetTaskSchedule,
+  useSetTaskVerify,
   useTaskRuns,
   useTasks,
   useUpdateTaskStatus,
@@ -64,6 +78,7 @@ function TasksPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [statusFilter, setStatusFilter] = useState<TaskStatus | 'all'>('all')
   const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const [editTask, setEditTask] = useState<Task | null>(null)
 
   if (isLoading) return <LoadingCards count={4} />
   if (isError) return <ErrorState onRetry={() => refetch()} />
@@ -130,13 +145,20 @@ function TasksPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} onShowDetail={() => setDetailTask(task)} />
+            <TaskCard
+              key={task.id}
+              task={task}
+              onShowDetail={() => setDetailTask(task)}
+              onEdit={() => setEditTask(task)}
+            />
           ))}
         </div>
       )}
 
       {/* Detail dialog */}
       <TaskDetailDialog task={detailTask} onClose={() => setDetailTask(null)} />
+      {/* Edit dialog */}
+      <TaskEditDialog task={editTask} onClose={() => setEditTask(null)} />
     </div>
   )
 }
@@ -182,7 +204,15 @@ function StatusChip({
 
 // ── Task card ──
 
-function TaskCard({ task, onShowDetail }: { task: Task; onShowDetail: () => void }) {
+function TaskCard({
+  task,
+  onShowDetail,
+  onEdit,
+}: {
+  task: Task
+  onShowDetail: () => void
+  onEdit: () => void
+}) {
   const { t } = useTranslation()
   const deleteMutation = useDeleteTask()
   const statusMutation = useUpdateTaskStatus()
@@ -269,15 +299,19 @@ function TaskCard({ task, onShowDetail }: { task: Task; onShowDetail: () => void
             {runMutation.isPending ? t('tasks.statusRunning') : t('tasks.run')}
           </Button>
         )}
+        <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={onShowDetail}>
+          <History className="h-3 w-3" />
+          {t('tasks.details')}
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={onEdit}>
+          <Pencil className="h-3 w-3" />
+          {t('common.edit')}
+        </Button>
         {task.status === 'running' && (
           <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={handleComplete}>
             {t('tasks.complete')}
           </Button>
         )}
-        <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={onShowDetail}>
-          <History className="h-3 w-3" />
-          {t('tasks.details')}
-        </Button>
         <Button
           size="sm"
           variant="ghost"
@@ -472,6 +506,7 @@ function CreateTaskDialog({ onClose }: { onClose: () => void }) {
 function TaskDetailDialog({ task, onClose }: { task: Task | null; onClose: () => void }) {
   const { t } = useTranslation()
   const scheduleMutation = useSetTaskSchedule()
+  const verifyMutation = useSetTaskVerify()
   const runMutation = useRunTask()
   const [mode, setMode] = useState<TaskAutomationMode | 'none'>('none')
   const [schedule, setSchedule] = useState(DEFAULT_CRON)
@@ -479,7 +514,7 @@ function TaskDetailDialog({ task, onClose }: { task: Task | null; onClose: () =>
 
   return (
     <Dialog open={!!task} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
         {task && (
           <>
             <DialogHeader>
@@ -554,6 +589,29 @@ function TaskDetailDialog({ task, onClose }: { task: Task | null; onClose: () =>
                 </Button>
               </div>
 
+              {/* Verify gate */}
+              <TaskVerifyConfig
+                enabled={task.verifyEnabled}
+                requirement={task.verifyRequirement}
+                maxIterations={task.verifyMaxIterations}
+                isPending={verifyMutation.isPending}
+                onSave={(params) =>
+                  verifyMutation.mutate(
+                    { id: task.id, ...params },
+                    {
+                      onSuccess: () => toast.success(t('tasks.verifySaved')),
+                      onError: () => toast.error(t('tasks.verifySaveFailed')),
+                    },
+                  )
+                }
+              />
+
+              {/* Comments */}
+              <TaskComments taskId={task.id} />
+
+              {/* Dependencies */}
+              <TaskDependencies task={task} />
+
               {/* Run history */}
               <RunHistory taskId={task.id} />
             </div>
@@ -584,7 +642,8 @@ function RunHistory({ taskId }: { taskId: string }) {
       ) : (
         <div className="space-y-1.5 max-h-48 overflow-y-auto">
           {runs.map((run) => {
-            const ok = run.status === 'completed'
+            const verified = run.status === 'verified'
+            const ok = verified || run.status === 'completed'
             return (
               <div key={run.id} className="flex items-start gap-2 rounded-lg border p-2 text-xs">
                 <span
@@ -600,6 +659,12 @@ function RunHistory({ taskId }: { taskId: string }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className="font-medium capitalize">{run.trigger}</span>
+                    {verified && (
+                      <Badge variant="success" className="gap-1 px-1.5 py-0 text-2xs">
+                        <ShieldCheck className="h-2.5 w-2.5" />
+                        {t('tasks.runVerified')}
+                      </Badge>
+                    )}
                     <span className="text-muted-foreground/60">{relativeTime(run.startedAt)}</span>
                   </div>
                   {(run.summary || run.error) && (

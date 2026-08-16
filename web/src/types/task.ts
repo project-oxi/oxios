@@ -47,6 +47,44 @@ export interface Task {
   consecutiveFailures: number
   dependencies: string[]
 }
+// ── Update (partial edit) ──
+
+export interface UpdateTaskParams {
+  name?: string
+  description?: string
+  instruction?: string
+  priority?: number
+  sortOrder?: number
+  parentTaskId?: string
+  assigneeAgentId?: string
+}
+
+// ── Migration report ──
+
+export interface CronMigrationSkipped {
+  name: string
+  reason: string
+}
+
+export interface CronMigrationReport {
+  created: Task[]
+  skipped: CronMigrationSkipped[]
+}
+
+// ── Comment author + mutations ──
+
+export interface AddCommentParams {
+  content: string
+  authorAgentId?: string
+}
+
+export interface AddDependencyParams {
+  dependsOnTaskId: string
+}
+
+export interface MigrateCronParams {
+  dryRun?: boolean
+}
 
 export interface TaskComment {
   id: string

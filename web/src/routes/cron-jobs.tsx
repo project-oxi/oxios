@@ -1,8 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { CalendarClock, List, Pencil, Plus, Power, PowerOff, Timer, Trash2 } from 'lucide-react'
+import {
+  CalendarClock,
+  List,
+  Pencil,
+  Plus,
+  Power,
+  PowerOff,
+  Sparkles,
+  Timer,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { CronScheduleEditor } from '@/components/cron/cron-schedule-editor'
 import { CronTimelineView } from '@/components/cron/cron-timeline-view'
 import { EditCronDialog } from '@/components/cron/edit-cron-dialog'
@@ -15,11 +26,14 @@ import { RefreshButton } from '@/components/shared/refresh-button'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Input } from '@/components/ui/input'
+import { useMigrateCronTasks } from '@/hooks/use-tasks'
 import { api } from '@/lib/api-client'
 import { DEFAULT_CRON } from '@/lib/cron-utils'
 import { cn } from '@/lib/utils'
 import type { CronJob } from '@/types'
+import type { CronMigrationReport } from '@/types/task'
 import type { TaskTemplate } from '@/types/task-templates'
 
 export const Route = createFileRoute('/cron-jobs')({ component: CronJobsPage })
@@ -33,6 +47,10 @@ function CronJobsPage() {
   const [schedule, setSchedule] = useState(DEFAULT_CRON)
   const [goal, setGoal] = useState('')
   const [viewMode, setViewMode] = useState<'list' | 'timeline'>('timeline')
+  const [migrationPreview, setMigrationPreview] = useState<CronMigrationReport | null>(null)
+  const [confirmMigrate, setConfirmMigrate] = useState(false)
+  const [lastReport, setLastReport] = useState<CronMigrationReport | null>(null)
+  const migrateMutation = useMigrateCronTasks()
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['cron-jobs'],
@@ -87,6 +105,37 @@ function CronJobsPage() {
     setShowCreate(true)
   }
 
+  const handleMigrateDryRun = () => {
+    migrateMutation.mutate(
+      { dryRun: true },
+      {
+        onSuccess: (report) => setMigrationPreview(report),
+        onError: () => toast.error(t('cronJobs.migrateDryRunFailed')),
+      },
+    )
+  }
+
+  const handleMigrateConfirm = () => {
+    setConfirmMigrate(false)
+    migrateMutation.mutate(
+      { dryRun: false },
+      {
+        onSuccess: (report) => {
+          setLastReport(report)
+          setMigrationPreview(null)
+          toast.success(
+            t('cronJobs.migrateSuccess', {
+              count: report.created.length,
+              created: report.created.length,
+              skipped: report.skipped.length,
+            }),
+          )
+        },
+        onError: () => toast.error(t('cronJobs.migrateFailed')),
+      },
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Task templates */}
@@ -132,6 +181,15 @@ function CronJobsPage() {
               </button>
             </div>
             <RefreshButton onClick={() => refetch()} isFetching={isFetching} />
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={handleMigrateDryRun}
+              disabled={migrateMutation.isPending || jobs.length === 0}
+            >
+              <Sparkles className="h-4 w-4" /> {t('cronJobs.migrateToTasks')}
+            </Button>
             <Button size="sm" onClick={() => setShowCreate(true)}>
               <Plus className="h-4 w-4" /> {t('cronJobs.newJob')}
             </Button>
@@ -260,6 +318,83 @@ function CronJobsPage() {
           })
         }}
         isPending={updateMutation.isPending}
+      />
+
+      {/* Migration preview dialog */}
+      {migrationPreview && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('cronJobs.migratePreviewTitle')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">{t('cronJobs.migratePreviewIntro')}</p>
+            <div className="rounded-lg border p-3 bg-muted/30 space-y-1">
+              <div className="font-medium">
+                {t('cronJobs.migrateCreatedCount', { count: migrationPreview.created.length })}
+              </div>
+              {migrationPreview.created.length > 0 && (
+                <ul className="list-disc pl-5 text-xs text-muted-foreground">
+                  {migrationPreview.created.map((tk) => (
+                    <li key={tk.id}>
+                      <span className="font-mono">{tk.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {migrationPreview.skipped.length > 0 && (
+              <div className="rounded-lg border p-3 bg-muted/30 space-y-1">
+                <div className="font-medium">
+                  {t('cronJobs.migrateSkippedCount', { count: migrationPreview.skipped.length })}
+                </div>
+                <ul className="list-disc pl-5 text-xs text-muted-foreground">
+                  {migrationPreview.skipped.map((s) => (
+                    <li key={s.name}>
+                      <span className="font-mono">{s.name}</span> — {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" size="sm" onClick={() => setMigrationPreview(null)}>
+                {t('common.cancel')}
+              </Button>
+              <Button
+                size="sm"
+                disabled={migrationPreview.created.length === 0 || migrateMutation.isPending}
+                onClick={() => setConfirmMigrate(true)}
+              >
+                {t('cronJobs.migrateConfirm', {
+                  count: migrationPreview.created.length,
+                })}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Final report */}
+      {lastReport && (
+        <div className="rounded-lg border bg-status-success/10 px-3 py-2 text-xs text-status-success-on-surface">
+          {t('cronJobs.migrateSummary', {
+            count: lastReport.created.length,
+            created: lastReport.created.length,
+            skipped: lastReport.skipped.length,
+          })}
+        </div>
+      )}
+
+      {/* Confirm dialog */}
+      <ConfirmDialog
+        open={confirmMigrate}
+        onOpenChange={setConfirmMigrate}
+        title={t('cronJobs.migrateConfirmTitle')}
+        description={t('cronJobs.migrateConfirmDescription', {
+          count: migrationPreview?.created.length ?? 0,
+        })}
+        confirmLabel={t('cronJobs.migrateConfirmAction')}
+        onConfirm={handleMigrateConfirm}
       />
     </div>
   )

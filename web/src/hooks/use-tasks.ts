@@ -3,13 +3,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api-client'
 import type {
+  AddCommentParams,
+  AddDependencyParams,
   CreateTaskParams,
+  CronMigrationReport,
   ListTasksParams,
+  MigrateCronParams,
   SetScheduleParams,
   SetVerifyParams,
   Task,
+  TaskComment,
   TaskRun,
   TaskStatus,
+  UpdateTaskParams,
 } from '@/types/task'
 
 // ── List ──
@@ -49,6 +55,31 @@ export function useCreateTask() {
   })
 }
 
+// ── Create batch ──
+
+export function useCreateTasksBatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (tasks: CreateTaskParams[]) =>
+      api.post<{ tasks: Task[] }>('/api/tasks/batch', { tasks }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+}
+
+// ── Update (partial) ──
+
+export function useUpdateTask() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...params }: { id: string } & UpdateTaskParams) =>
+      api.put<Task>(`/api/tasks/${id}`, params),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['task', vars.id] })
+    },
+  })
+}
+
 // ── Delete ──
 
 export function useDeleteTask() {
@@ -77,7 +108,10 @@ export function useSetTaskSchedule() {
   return useMutation({
     mutationFn: ({ id, ...params }: { id: string } & SetScheduleParams) =>
       api.put(`/api/tasks/${id}/schedule`, params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['task', vars.id] })
+    },
   })
 }
 
@@ -88,7 +122,10 @@ export function useSetTaskVerify() {
   return useMutation({
     mutationFn: ({ id, ...params }: { id: string } & SetVerifyParams) =>
       api.put(`/api/tasks/${id}/verify`, params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['task', vars.id] })
+    },
   })
 }
 
@@ -113,5 +150,88 @@ export function useTaskRuns(id: string | null) {
     queryKey: ['task-runs', id],
     queryFn: () => api.get<{ runs: TaskRun[]; count: number }>(`/api/tasks/${id}/runs`),
     enabled: !!id,
+  })
+}
+
+// ── Comments ──
+
+export function useTaskComments(taskId: string | null) {
+  return useQuery({
+    queryKey: ['task-comments', taskId],
+    queryFn: () => api.get<{ comments: TaskComment[] }>(`/api/tasks/${taskId}/comments`),
+    enabled: !!taskId,
+  })
+}
+
+export function useAddTaskComment(taskId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: AddCommentParams) =>
+      api.post<TaskComment>(`/api/tasks/${taskId}/comments`, params),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-comments', taskId] }),
+  })
+}
+
+export function useUpdateTaskComment(taskId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ commentId, content }: { commentId: string; content: string }) =>
+      api.put<TaskComment>(`/api/tasks/${taskId}/comments/${commentId}`, { content }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-comments', taskId] }),
+  })
+}
+
+export function useDeleteTaskComment(taskId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (commentId: string) => api.delete(`/api/tasks/${taskId}/comments/${commentId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-comments', taskId] }),
+  })
+}
+
+// ── Dependencies ──
+
+export function useTaskDependencies(taskId: string | null) {
+  return useQuery({
+    queryKey: ['task-dependencies', taskId],
+    queryFn: () => api.get<{ dependencies: Task[] }>(`/api/tasks/${taskId}/dependencies`),
+    enabled: !!taskId,
+  })
+}
+
+export function useAddTaskDependency(taskId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params: AddDependencyParams) =>
+      api.post<Task>(`/api/tasks/${taskId}/dependencies`, params),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-dependencies', taskId] })
+      qc.invalidateQueries({ queryKey: ['task', taskId] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+export function useRemoveTaskDependency(taskId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (dependsOnTaskId: string) =>
+      api.delete(`/api/tasks/${taskId}/dependencies/${dependsOnTaskId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-dependencies', taskId] })
+      qc.invalidateQueries({ queryKey: ['task', taskId] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+// ── Cron migration ──
+
+export function useMigrateCronTasks() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (params?: MigrateCronParams) =>
+      api.post<CronMigrationReport>('/api/tasks/migrate-cron', params ?? {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   })
 }

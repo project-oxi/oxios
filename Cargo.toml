@@ -122,7 +122,7 @@ arc-swap = "1.7"
 
 
 # Brain daemon client (RFC-047)
-oxibrain-client = "0.1"
+oxibrain-client = "0.2"
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).

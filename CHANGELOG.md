@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Changed
+- Bumped `oxibrain-client` to 0.2 (client API unchanged; daemon-side
+  extraction quality fixes — multi-type entity objects, relaxed subject
+  types, `ANTHROPIC_BASE_URL` override, local GGUF extraction).
+
+
 ## [1.40.0] - 2026-08-15
 
 ### Changed (Breaking — RFC-047)

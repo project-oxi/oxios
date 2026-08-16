@@ -287,6 +287,19 @@ impl Kernel {
                 ));
                 // RFC-047: brain daemon facade — the /api/brain/* surface.
                 let kh = kh.with_brain(oxios_kernel::BrainApi::new(self.brain.clone()));
+                // RFC-043: attach the task store so web routes, the auto-run
+                // tick, and the `task` agent tool share ONE store. Boot
+                // continues without it (web surface hard-requires it and
+                // will fail its own expect).
+                let kh = match oxios_kernel::task::TaskStore::open(
+                    &(self.config.kernel.workspace.clone() + "/tasks.db"),
+                ) {
+                    Ok(ts) => kh.with_task_store(std::sync::Arc::new(tokio::sync::Mutex::new(ts))),
+                    Err(e) => {
+                        tracing::error!(error = %e, "task store init failed; tasks degraded");
+                        kh
+                    }
+                };
                 let kh = kh.with_browser(oxios_kernel::BrowserApi::from_config(&self.config));
                 // oximemo (optional first-party app module; `memo` feature + [memo].enabled).
                 #[cfg(feature = "memo")]

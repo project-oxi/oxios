@@ -6,25 +6,32 @@
 
 use anyhow::Result;
 
-use crate::cron::{CronJob, CronScheduler};
+use crate::cron::CronJob;
 use crate::task::model::{CreateTaskParams, SetScheduleParams, Task, TaskAutomationMode};
 use crate::task::store::TaskStore;
 
 /// Result of a cron → task migration run.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CronMigrationSkipped {
+    /// Job name.
+    pub name: String,
+    /// Why it was not migrated.
+    pub reason: String,
+}
+
+/// Result of a cron → task migration run.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CronMigrationReport {
     /// Tasks created (empty when `dry_run`).
     pub created: Vec<Task>,
-    /// Jobs skipped: (job name, reason).
-    pub skipped: Vec<(String, String)>,
+    /// Jobs skipped, with reasons.
+    pub skipped: Vec<CronMigrationSkipped>,
     /// True when this was a preview run.
     pub dry_run: bool,
 }
-
-/// Migrate cron jobs to tasks. Jobs whose slug identifier already exists
-/// as a task are skipped. `dry_run` reports the plan without inserting.
 pub async fn migrate_cron_to_tasks(
-    cron: &CronScheduler,
+    jobs: &[CronJob],
     store: &TaskStore,
     dry_run: bool,
 ) -> Result<CronMigrationReport> {
@@ -35,22 +42,23 @@ pub async fn migrate_cron_to_tasks(
     };
 
     // Sort by name so reports are deterministic.
-    let mut jobs: Vec<CronJob> = cron.list_jobs();
+    let mut jobs: Vec<CronJob> = jobs.to_vec();
     jobs.sort_by(|a, b| a.name.cmp(&b.name));
 
-    for job in jobs {
+    for job in &jobs {
         let identifier = Task::slug_base(&job.name);
         if store.get_task_by_identifier(&identifier).await?.is_some() {
-            report.skipped.push((
-                job.name.clone(),
-                "a task with this identifier already exists".into(),
-            ));
+            report.skipped.push(CronMigrationSkipped {
+                name: job.name.clone(),
+                reason: "a task with this identifier already exists".into(),
+            });
             continue;
         }
         if dry_run {
-            report
-                .skipped
-                .push((job.name.clone(), "would migrate".into()));
+            report.skipped.push(CronMigrationSkipped {
+                name: job.name.clone(),
+                reason: "would migrate".into(),
+            });
             continue;
         }
         let task = store
@@ -87,6 +95,7 @@ pub async fn migrate_cron_to_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cron::CronScheduler;
     use crate::state_store::StateStore;
 
     async fn scheduler_with(job_name: &str) -> CronScheduler {
@@ -107,7 +116,9 @@ mod tests {
     async fn migrates_jobs_as_scheduled_tasks() {
         let cron = scheduler_with("nightly-digest").await;
         let store = TaskStore::in_memory().unwrap();
-        let report = migrate_cron_to_tasks(&cron, &store, false).await.unwrap();
+        let report = migrate_cron_to_tasks(&cron.list_jobs(), &store, false)
+            .await
+            .unwrap();
         assert_eq!(report.created.len(), 1);
         assert!(report.skipped.is_empty());
         let t = &report.created[0];
@@ -137,19 +148,22 @@ mod tests {
             })
             .await
             .unwrap();
-
-        let report = migrate_cron_to_tasks(&cron, &store, false).await.unwrap();
+        let report = migrate_cron_to_tasks(&cron.list_jobs(), &store, false)
+            .await
+            .unwrap();
         assert!(report.created.is_empty());
         assert_eq!(report.skipped.len(), 1);
-        assert!(report.skipped[0].1.contains("already exists"));
+        assert!(report.skipped[0].reason.contains("already exists"));
 
         // Dry run with no collision reports the would-migrate job, creates nothing.
         let store2 = TaskStore::in_memory().unwrap();
-        let dry = migrate_cron_to_tasks(&cron, &store2, true).await.unwrap();
+        let dry = migrate_cron_to_tasks(&cron.list_jobs(), &store2, true)
+            .await
+            .unwrap();
         assert!(dry.dry_run);
         assert!(dry.created.is_empty());
         assert_eq!(dry.skipped.len(), 1);
-        assert_eq!(dry.skipped[0].1, "would migrate");
+        assert_eq!(dry.skipped[0].reason, "would migrate");
         assert!(
             store2
                 .list_tasks(Default::default())

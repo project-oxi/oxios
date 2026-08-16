@@ -417,12 +417,13 @@ impl Surface for WebSurface {
             WebBridgeHandle::from_bridge(&web_channel).with_response_timeout(response_timeout);
 
         // Build app state — all knowledge access goes through kernel.knowledge
-        // Initialize task store (RFC-043)
-        let task_db_path = config.kernel.workspace.clone() + "/tasks.db";
-        let task_store = std::sync::Arc::new(tokio::sync::Mutex::new(
-            oxios_kernel::task::TaskStore::open(&task_db_path)
-                .expect("Failed to initialize task store"),
-        ));
+        // Task store (RFC-043) — attached by the kernel assembler; the web
+        // surface hard-requires it.
+        let task_store = ctx
+            .kernel
+            .task_store
+            .clone()
+            .expect("task store not attached to kernel handle");
 
         let state = Arc::new(AppState {
             base_url: format!("http://{host}:{port}"),
@@ -536,7 +537,7 @@ impl Surface for WebSurface {
 /// (the Task model persists status to SQLite, unlike the CronScheduler's
 /// in-memory set).
 fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
-    use oxios_kernel::task::{TaskAutomationMode, TaskRunTrigger};
+    use oxios_kernel::task::{TaskAutomationMode, TaskRunTrigger, execute_task_run};
 
     tokio::spawn(async move {
         let task_store = state.task_store.clone();
@@ -554,6 +555,7 @@ fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
 
         loop {
             interval.tick().await;
+            let now = chrono::Utc::now();
             let due = match task_store.lock().await.list_due_tasks().await {
                 Ok(t) => t,
                 Err(e) => {
@@ -567,6 +569,43 @@ fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 if task.is_exhausted() {
                     continue;
                 }
+
+                // Dependency gate (RFC-043): defer until all dependencies
+                // reach `completed`. Manual runs bypass this — explicit user
+                // intent. Push next_run_at to the next eligible slot so the
+                // task doesn't pop up on every tick.
+                let unsatisfied = match task_store
+                    .lock()
+                    .await
+                    .unsatisfied_dependencies(&task.id)
+                    .await
+                {
+                    Ok(u) => u,
+                    Err(e) => {
+                        tracing::warn!(task = %task.id, error = %e, "unsatisfied_dependencies failed");
+                        Vec::new()
+                    }
+                };
+                if !unsatisfied.is_empty() {
+                    tracing::debug!(task = %task.id, ?unsatisfied, "deferring: deps not completed");
+                    let next = match task.automation_mode {
+                        Some(TaskAutomationMode::Schedule) => task
+                            .schedule_pattern
+                            .as_deref()
+                            .and_then(|p| oxios_kernel::task::cron_next_after(p, &now).ok()),
+                        Some(TaskAutomationMode::Heartbeat) => task
+                            .heartbeat_interval_secs
+                            .map(|s| (now + chrono::Duration::seconds(s as i64)).to_rfc3339()),
+                        None => None,
+                    };
+                    let _ = task_store
+                        .lock()
+                        .await
+                        .set_next_run(&task.id, next.as_deref())
+                        .await;
+                    continue;
+                }
+
                 let trigger = match task.automation_mode {
                     Some(TaskAutomationMode::Schedule) => TaskRunTrigger::Schedule,
                     _ => TaskRunTrigger::Heartbeat,
@@ -574,13 +613,10 @@ fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
                 let ts = task_store.clone();
                 let kh = kernel.clone();
                 let id = task.id.clone();
-                let instr = task.instruction.clone();
                 tokio::spawn(async move {
                     // Scheduled runs use the longer cron-style ceiling (600 s).
-                    let (_, success, summary) =
-                        routes::execute_task_run(ts, kh, &id, &instr, trigger, 600).await;
+                    let (_, success, _summary) = execute_task_run(ts, kh, &id, trigger, 600).await;
                     tracing::info!(%id, success, "Scheduled task run completed");
-                    let _ = summary; // recorded in task_runs by the helper
                 });
             }
         }

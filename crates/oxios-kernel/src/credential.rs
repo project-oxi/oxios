@@ -31,6 +31,11 @@ pub enum CredentialSource {
     EnvVar,
 }
 
+/// Credential-store key holding the Telegram bot token. Shared by the
+/// Web UI Secrets section, the telegram channel plugin, and config
+/// validation so all three agree on one storage location.
+pub const TELEGRAM_TOKEN_STORE_KEY: &str = "telegram_bot_token";
+
 /// Multi-source credential resolver.
 pub struct CredentialStore;
 

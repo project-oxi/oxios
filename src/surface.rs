@@ -73,6 +73,7 @@ pub async fn activate_surfaces(
             Some(surface) => {
                 let ctx = SurfaceContext {
                     kernel: kernel.handle(),
+                    gateway: kernel.gateway(),
                     config: Arc::new(parking_lot::RwLock::new(config.clone())),
                     config_path: config_path.to_path_buf(),
                     web_dist: web_dist.clone(),

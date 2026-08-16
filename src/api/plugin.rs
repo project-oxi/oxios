@@ -434,6 +434,7 @@ impl Surface for WebSurface {
             rate_limiter: RateLimiter::new(rate_limit),
             web_dist,
             readiness: ctx.kernel.readiness.clone(),
+            gateway: ctx.gateway.clone(),
             task_store,
         });
 

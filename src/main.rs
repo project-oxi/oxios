@@ -3164,7 +3164,7 @@ fn print_remote_readiness(kernel: &Kernel, _config_path: &Path) {
     );
 }
 
-fn build_channel_plugins() -> Vec<Box<dyn ChannelPlugin>> {
+pub(crate) fn build_channel_plugins() -> Vec<Box<dyn ChannelPlugin>> {
     let plugins: Vec<Box<dyn ChannelPlugin>> = vec![];
     let mut plugins = plugins;
     #[cfg(feature = "cli")]

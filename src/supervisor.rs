@@ -153,6 +153,7 @@ impl WebSurfaceRestarter {
         let surface = crate::api::WebSurface::new();
         let ctx = SurfaceContext {
             kernel: self.kernel_handle.clone(),
+            gateway: self.gateway.clone(),
             config: self.config.clone(),
             config_path: self.config_path.clone(),
             web_dist: self.web_dist.clone(),

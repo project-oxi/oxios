@@ -1,3 +1,5 @@
+#[cfg(test)]
+pub(crate) mod fake_server;
 pub mod format;
 pub mod plugin;
 
@@ -91,6 +93,18 @@ impl Default for TelegramSessionSettings {
     }
 }
 
+/// Outcome of a one-shot `getMe` token validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenValidation {
+    /// Telegram accepted the token; carries the bot's username.
+    Valid(String),
+    /// API unreachable (network error, timeout, unexpected payload).
+    /// Non-definitive: the polling loop may still recover later.
+    Unreachable,
+    /// Telegram definitively rejected the token (401/404) with a reason.
+    Rejected(String),
+}
+
 /// Telegram channel adapter.
 ///
 /// Uses long polling (getUpdates) to receive messages
@@ -111,6 +125,8 @@ pub struct TelegramChannel {
     chat_sessions: Arc<RwLock<HashMap<i64, ChatSession>>>,
     /// Session rotation settings
     session_settings: TelegramSessionSettings,
+    /// Bot username confirmed via getMe at setup time (for status display).
+    bot_username: Option<String>,
 }
 
 impl TelegramChannel {
@@ -131,14 +147,74 @@ impl TelegramChannel {
             offset: Arc::new(RwLock::new(0)),
             chat_sessions: Arc::new(RwLock::new(HashMap::new())),
             session_settings: TelegramSessionSettings::default(),
+            bot_username: None,
         }
     }
 
     /// Override API base URL (for local Bot API servers).
-    #[allow(dead_code)] // public builder surface — callers opt in via config wiring (not yet wired in default plugin path)
     pub fn with_api_base(mut self, base: String) -> Self {
         self.api_base = base;
         self
+    }
+
+    /// Attach the bot username confirmed at setup time (status display).
+    pub fn with_bot_username(mut self, username: Option<String>) -> Self {
+        self.bot_username = username;
+        self
+    }
+
+    /// Validate the bot token with a single `getMe` call.
+    ///
+    /// Uses a short per-request timeout (5 s) so callers (channel setup,
+    /// connect endpoint) fail fast instead of waiting on the polling loop's
+    /// 60 s client ceiling. Only definitive Telegram rejections (401/404)
+    /// map to [`TokenValidation::Rejected`]; transient failures map to
+    /// [`TokenValidation::Unreachable`] so boot activation stays resilient.
+    pub async fn validate_token(&self) -> TokenValidation {
+        let resp = self
+            .client
+            .post(self.api_url("getMe"))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "Telegram getMe unreachable");
+                return TokenValidation::Unreachable;
+            }
+        };
+        let status = resp.status();
+        let body: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "Telegram getMe body unparseable");
+                return TokenValidation::Unreachable;
+            }
+        };
+        if status.is_success() && body.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+            return match body.pointer("/result/username").and_then(|u| u.as_str()) {
+                Some(username) => TokenValidation::Valid(username.to_string()),
+                None => {
+                    tracing::warn!("Telegram getMe response missing bot username");
+                    TokenValidation::Unreachable
+                }
+            };
+        }
+        let description = body
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or("unknown error");
+        if status.as_u16() == 401 || status.as_u16() == 404 {
+            TokenValidation::Rejected(description.to_string())
+        } else {
+            tracing::warn!(
+                status = status.as_u16(),
+                description = %description,
+                "Telegram getMe failed (non-definitive)"
+            );
+            TokenValidation::Unreachable
+        }
     }
 
     /// Set session management settings.
@@ -277,6 +353,13 @@ impl TelegramChannel {
 impl Channel for TelegramChannel {
     fn name(&self) -> &str {
         "telegram"
+    }
+
+    fn status(&self) -> serde_json::Value {
+        match &self.bot_username {
+            Some(username) => serde_json::json!({ "bot_username": username }),
+            None => serde_json::Value::Null,
+        }
     }
 
     async fn start(
@@ -521,6 +604,61 @@ mod tests {
         assert!(!channel.is_user_allowed(99999));
     }
 
+    mod validation_tests {
+        use super::*;
+        use crate::channels::telegram::fake_server::{self, FakeResponse};
+
+        #[tokio::test]
+        async fn validate_token_ok_reports_username() {
+            let server = fake_server::spawn(FakeResponse::Ok {
+                username: "oxios_bot".into(),
+            })
+            .await;
+            let channel =
+                TelegramChannel::new("tok".into(), vec![]).with_api_base(server.base_url.clone());
+            assert_eq!(
+                channel.validate_token().await,
+                TokenValidation::Valid("oxios_bot".into())
+            );
+        }
+
+        #[tokio::test]
+        async fn validate_token_unauthorized_is_rejected() {
+            let server = fake_server::spawn(FakeResponse::Unauthorized).await;
+            let channel =
+                TelegramChannel::new("tok-bad".into(), vec![]).with_api_base(server.base_url);
+            match channel.validate_token().await {
+                TokenValidation::Rejected(msg) => {
+                    assert!(msg.contains("Unauthorized"), "unexpected message: {msg}")
+                }
+                other => panic!("expected Rejected, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn validate_token_connection_refused_is_unreachable() {
+            // Bind then drop a listener so the port is (almost certainly)
+            // closed — the next connect is refused.
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            drop(listener);
+            let channel = TelegramChannel::new("tok".into(), vec![]).with_api_base(base);
+            assert_eq!(channel.validate_token().await, TokenValidation::Unreachable);
+        }
+
+        #[tokio::test]
+        async fn status_reports_bot_username() {
+            let channel =
+                TelegramChannel::new("tok".into(), vec![]).with_bot_username(Some("b".into()));
+            assert_eq!(channel.status()["bot_username"], "b");
+        }
+
+        #[tokio::test]
+        async fn status_null_without_bot_username() {
+            let channel = TelegramChannel::new("tok".into(), vec![]);
+            assert!(channel.status().is_null());
+        }
+    }
     #[test]
     fn test_telegram_channel_allow_all() {
         let channel = TelegramChannel::new("test-token".to_string(), vec![]);

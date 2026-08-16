@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import type { SettingsFieldDef } from './field-defs'
 import { FieldRow } from './field-row'
+import { TelegramConnectCard } from './telegram-connect-card'
 
 interface ChannelsSectionProps {
   /** Section key, e.g. `channels.telegram`. */
@@ -17,7 +18,8 @@ interface ChannelsSectionProps {
 /**
  * Renders a single channel section (currently just Telegram). Uses the
  * standard `FieldRow` for every field so the restart badges and form
- * controls stay consistent.
+ * controls stay consistent. The Telegram section additionally renders the
+ * instant-connect card (`TelegramConnectCard`) above the fields.
  */
 export function ChannelsSection({
   sectionKey,
@@ -38,6 +40,7 @@ export function ChannelsSection({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {sectionKey === 'channels.telegram' && <TelegramConnectCard />}
         {fields.map((field, i) => (
           <div key={field.key}>
             {i > 0 && <Separator className="mb-4" />}

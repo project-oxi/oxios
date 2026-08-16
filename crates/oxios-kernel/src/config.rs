@@ -705,10 +705,18 @@ pub struct TelegramChannelConfig {
     /// Telegram session management settings.
     #[serde(default)]
     pub session: TelegramSessionConfig,
+    /// Telegram Bot API base URL. Default: the official API. Point at a
+    /// self-hosted Bot API server (or a local test double) to override.
+    #[serde(default = "default_telegram_api_base")]
+    pub api_base: String,
 }
 
 fn default_telegram_token_env() -> String {
     "TELEGRAM_BOT_TOKEN".to_string()
+}
+
+fn default_telegram_api_base() -> String {
+    "https://api.telegram.org".to_string()
 }
 
 impl Default for TelegramChannelConfig {
@@ -717,10 +725,11 @@ impl Default for TelegramChannelConfig {
             bot_token_env: default_telegram_token_env(),
             allowed_users: Vec::new(),
             session: TelegramSessionConfig::default(),
+            api_base: default_telegram_api_base(),
         }
     }
 }
-///
+
 /// Role-to-model routing configuration (RFC-032).
 /// Maps role names to model IDs in "provider/model" format.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2498,11 +2507,14 @@ impl OxiosConfig {
             );
         }
         if self.channels.enabled.iter().any(|c| c == "telegram")
-            && std::env::var(&self.channels.telegram.bot_token_env).is_err()
+            && crate::credential::CredentialStore::resolve_secret(
+                crate::credential::TELEGRAM_TOKEN_STORE_KEY,
+                &self.channels.telegram.bot_token_env,
+            )
+            .is_none()
         {
-            warnings.push(format!(
-                "channels.telegram: {} env var not set — telegram channel will fail",
-                self.channels.telegram.bot_token_env
+            warnings.push(telegram_token_warning(
+                &self.channels.telegram.bot_token_env,
             ));
         }
         // Token Maxing (RFC-031) — only fail-closed at startup if the
@@ -2539,10 +2551,37 @@ pub fn expand_home(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(path)
 }
 
+/// Warning text for an enabled telegram channel whose bot token resolves
+/// from neither the credential stores nor the configured env var.
+fn telegram_token_warning(env_var: &str) -> String {
+    format!(
+        "channels.telegram: no bot token found — store it in the Web UI \
+         (Settings → Secrets) or set the {env_var} env var; the telegram \
+         channel will fail to start"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn telegram_api_base_defaults_and_parses() {
+        let cfg: OxiosConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.channels.telegram.api_base, "https://api.telegram.org");
+
+        let cfg: OxiosConfig =
+            toml::from_str("[channels.telegram]\napi_base = \"http://127.0.0.1:8081\"\n").unwrap();
+        assert_eq!(cfg.channels.telegram.api_base, "http://127.0.0.1:8081");
+    }
+
+    #[test]
+    fn telegram_api_base_default_impl_matches_serde_default() {
+        assert_eq!(
+            TelegramChannelConfig::default().api_base,
+            default_telegram_api_base()
+        );
+    }
     #[test]
     fn test_default_config_validates() {
         let config = OxiosConfig::default();
@@ -2697,6 +2736,30 @@ exec = "always"
         assert_eq!(
             config.exec.max_timeout_secs,
             deserialized.exec.max_timeout_secs
+        );
+    }
+
+    #[test]
+    fn telegram_token_warning_names_both_sources() {
+        let msg = telegram_token_warning("TELEGRAM_BOT_TOKEN");
+        assert!(msg.contains("TELEGRAM_BOT_TOKEN"), "message: {msg}");
+        assert!(msg.contains("Secrets"), "message: {msg}");
+    }
+
+    #[test]
+    fn telegram_enabled_with_env_token_has_no_missing_token_warning() {
+        // Unique env name keeps parallel tests safe; a resolvable token must
+        // suppress the missing-token warning regardless of machine stores.
+        unsafe { std::env::set_var("OXIOS_TEST_TG_WARN_ENV", "tok") };
+        let cfg: OxiosConfig = toml::from_str(
+            "[channels]\nenabled = [\"telegram\"]\n[channels.telegram]\nbot_token_env = \"OXIOS_TEST_TG_WARN_ENV\"\n",
+        )
+        .unwrap();
+        let (_errors, warnings) = cfg.validate();
+        unsafe { std::env::remove_var("OXIOS_TEST_TG_WARN_ENV") };
+        assert!(
+            !warnings.iter().any(|w| w.contains("no bot token")),
+            "unexpected warning: {warnings:?}"
         );
     }
 

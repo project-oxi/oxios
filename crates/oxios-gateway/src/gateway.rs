@@ -276,6 +276,17 @@ impl Gateway {
         self.channels.read().await.keys().cloned().collect()
     }
 
+    /// Returns a registered channel's live status
+    /// ([`Channel::status`](crate::channel::Channel::status)), or `None`
+    /// when no channel with that name is registered.
+    pub async fn channel_status(&self, name: &str) -> Option<serde_json::Value> {
+        self.channels
+            .read()
+            .await
+            .get(name)
+            .map(|e| e.channel.status())
+    }
+
     // ── Event loop ──────────────────────────────────────────
 
     /// Runs the gateway event loop.

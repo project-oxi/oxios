@@ -41,6 +41,9 @@ pub struct SurfaceContext {
     pub kernel: Arc<oxios_kernel::KernelHandle>,
     /// Hot-reloadable configuration.
     pub config: Arc<parking_lot::RwLock<oxios_kernel::OxiosConfig>>,
+    /// Gateway handle — lets surfaces drive runtime channel operations
+    /// (register/unregister/status) alongside kernel control.
+    pub gateway: Arc<crate::Gateway>,
     /// Path to the config file.
     pub config_path: PathBuf,
     /// Pre-resolved web UI dist directory, published through an atomic

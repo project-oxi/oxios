@@ -1424,6 +1424,7 @@ const RESTART_REQUIRED_FIELDS: &[&str] = &[
     "daemon.log_dir",
     "channels.enabled",
     "channels.telegram.bot_token_env",
+    "channels.telegram.api_base",
     "channels.telegram.allowed_users",
     "channels.telegram.session.rotation_hours",
     "channels.telegram.session.max_messages",

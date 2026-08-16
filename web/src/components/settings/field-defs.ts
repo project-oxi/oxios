@@ -324,6 +324,14 @@ const telegramSection: SettingsSectionDef = {
       restartScope: 'gateway',
     },
     {
+      key: 'api_base',
+      labelKey: 'settings.telegramApiBase',
+      descriptionKey: 'settings.telegramApiBaseDescription',
+      type: 'text',
+      placeholder: 'https://api.telegram.org',
+      restartScope: 'gateway',
+    },
+    {
       key: 'allowed_users',
       labelKey: 'settings.telegramAllowedUsers',
       descriptionKey: 'settings.telegramAllowedUsersDescription',

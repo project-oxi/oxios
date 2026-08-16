@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Telegram instant connect from the Web UI** — Settings → Telegram now has
+  a connection card: paste the @BotFather token, press Connect, and the
+  bot starts immediately (no daemon restart). New `POST /api/channels/{name}/connect`
+  and `POST /api/channels/{name}/disconnect` endpoints drive the gateway's
+  runtime register/unregister and persist `channels.enabled` after a
+  successful start; `GET /api/channels` reports availability, enabled,
+  running, and token source.
+- The Telegram plugin now resolves the bot token via the credential store
+  (env var → `~/.oxios` store → shared `~/.oxicode` store — same resolution
+  the Secrets page displays) and validates it with a one-shot `getMe` call:
+  invalid tokens fail fast with Telegram's own error (e.g. `Unauthorized`),
+  transient network problems still boot with retries.
+- `channels.telegram.api_base` config (default `https://api.telegram.org`)
+  for self-hosted Bot API servers; `Channel::status()` /
+  `Gateway::channel_status()` expose live channel introspection.
+
 ### Changed
 - Bumped `oxibrain-client` to 0.2 (client API unchanged; daemon-side
   extraction quality fixes — multi-type entity objects, relaxed subject

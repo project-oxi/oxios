@@ -41,4 +41,46 @@ pub trait Channel: Send + Sync {
 
     /// Send a response message through this channel.
     async fn send(&self, msg: OutgoingMessage) -> Result<()>;
+
+    /// Live channel-provided status for control-plane introspection.
+    ///
+    /// Cheap and synchronous (no I/O): return a small JSON object describing
+    /// the channel's current identity/runtime state (e.g. the connected bot's
+    /// username), or `Value::Null` (the default) when there is nothing to
+    /// report. Consumed by `Gateway::channel_status`.
+    fn status(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NullChannel;
+
+    #[async_trait]
+    impl Channel for NullChannel {
+        fn name(&self) -> &str {
+            "null"
+        }
+
+        async fn start(
+            &self,
+            _tx: mpsc::Sender<GatewayInbox>,
+            _shutdown: watch::Receiver<bool>,
+        ) -> Result<JoinHandle<()>> {
+            Ok(tokio::spawn(async {}))
+        }
+
+        async fn send(&self, _msg: OutgoingMessage) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn status_defaults_to_null() {
+        let channel = NullChannel;
+        assert!(channel.status().is_null());
+    }
 }

@@ -1104,7 +1104,11 @@ $ cargo uninstall oxios
 
 - **Browse skills:** `oxios skills` — discover available agent capabilities
 - **Schedule tasks:** Add cron jobs to `~/.oxios/config.toml`
-- **Connect Telegram:** Set `TELEGRAM_BOT_TOKEN` and add `"telegram"` to `channels.enabled`
+- **Connect Telegram:** Open the Web UI → Settings → Telegram, paste your
+  @BotFather token, and press **Connect** — the bot starts immediately and
+  `channels.enabled` is persisted for you (no daemon restart). The
+  headless alternative still works: set `TELEGRAM_BOT_TOKEN` and add
+  `"telegram"` to `channels.enabled`.
 - **Enable MCP:** Add servers under `[mcp.servers]` to give agents external tools
 - **Read the architecture:** `docs/ARCHITECTURE.md` for internals
 

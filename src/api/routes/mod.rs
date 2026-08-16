@@ -13,6 +13,7 @@ mod asset_routes;
 mod audit_routes;
 mod budget_routes;
 mod calendar_routes;
+mod channels_routes;
 mod chat;
 mod cost_routes;
 mod cron_jobs;
@@ -84,6 +85,9 @@ pub(crate) use calendar_routes::{
     handle_calendar_by_note, handle_calendar_event_create, handle_calendar_event_delete,
     handle_calendar_event_get, handle_calendar_event_update, handle_calendar_events,
     handle_calendar_freebusy, handle_calendar_search,
+};
+pub(crate) use channels_routes::{
+    handle_channel_connect, handle_channel_disconnect, handle_channels_list,
 };
 pub(crate) use chat::{
     handle_ask_user_respond, handle_chat, handle_chat_seed, handle_chat_stream, handle_chat_ticket,
@@ -789,7 +793,14 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // Search & Browse (Search Panel)
         .route("/api/search", post(handle_search))
-        .route("/api/browse", post(handle_browse));
+        .route("/api/browse", post(handle_browse))
+        // Runtime channel control (telegram instant connect)
+        .route("/api/channels", get(handle_channels_list))
+        .route("/api/channels/{name}/connect", post(handle_channel_connect))
+        .route(
+            "/api/channels/{name}/disconnect",
+            post(handle_channel_disconnect),
+        );
 
     // Screenshot (CSS-rendered, Blitz-backed — `screenshot` feature)
     #[cfg(feature = "screenshot")]

@@ -14,7 +14,10 @@ use std::sync::Arc;
 
 use crate::api::error::AppError;
 use crate::api::server::AppState;
-use oxios_kernel::credential::{CredentialSource, CredentialStore, TELEGRAM_TOKEN_STORE_KEY};
+#[cfg(any(feature = "telegram", test))]
+use oxios_kernel::credential::CredentialSource;
+#[cfg(feature = "telegram")]
+use oxios_kernel::credential::{CredentialStore, TELEGRAM_TOKEN_STORE_KEY};
 
 /// Only channels that make sense to control at runtime. The CLI channel is
 /// interactive (stdin loop) and must not be started from an HTTP call.
@@ -23,6 +26,7 @@ const RUNTIME_CONTROLLABLE: &[&str] = &["telegram"];
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
 /// Add `name` to the enabled list if absent (dedup).
+#[cfg(any(feature = "telegram", test))]
 pub(crate) fn upsert_enabled(enabled: &mut Vec<String>, name: &str) {
     if !enabled.iter().any(|c| c == name) {
         enabled.push(name.to_string());
@@ -33,8 +37,8 @@ pub(crate) fn upsert_enabled(enabled: &mut Vec<String>, name: &str) {
 pub(crate) fn remove_enabled(enabled: &mut Vec<String>, name: &str) {
     enabled.retain(|c| c != name);
 }
-
 /// Map a credential source to the label the Web UI Secrets section uses.
+#[cfg(any(feature = "telegram", test))]
 pub(crate) fn token_source_label(source: Option<CredentialSource>) -> Option<&'static str> {
     match source {
         Some(CredentialSource::EnvVar) => Some("env"),
@@ -50,13 +54,9 @@ pub(crate) fn token_source_label(source: Option<CredentialSource>) -> Option<&'s
 pub(crate) async fn handle_channels_list(
     state: State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let (enabled, telegram_env) = {
-        let config = state.config.read();
-        (
-            config.channels.enabled.clone(),
-            config.channels.telegram.bot_token_env.clone(),
-        )
-    };
+    let enabled = state.config.read().channels.enabled.clone();
+    #[cfg(feature = "telegram")]
+    let telegram_env = state.config.read().channels.telegram.bot_token_env.clone();
     let running = state.gateway.channel_names().await;
 
     let mut channels = Vec::new();
@@ -83,6 +83,9 @@ pub(crate) async fn handle_channels_list(
             "enabled": enabled.contains(&name),
             "running": running.contains(&name),
             "token_source": token_source,
+            // Live channel introspection (e.g. Telegram `bot_username`);
+            // `null` for channels without a status implementation.
+            "info": state.gateway.channel_status(&name).await,
         }));
     }
 
@@ -94,6 +97,7 @@ pub(crate) async fn handle_channels_list(
 pub(crate) struct ConnectBody {
     /// Optional bot token. When present and non-empty it is stored in the
     /// credential store before connecting (single-call connect flow).
+    #[cfg_attr(not(feature = "telegram"), allow(dead_code))]
     pub token: Option<String>,
 }
 

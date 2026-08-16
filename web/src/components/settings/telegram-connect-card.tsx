@@ -22,6 +22,8 @@ export interface ChannelInfo {
   enabled: boolean
   running: boolean
   token_source: string | null
+  /** Live channel introspection from `Channel::status()` (null when absent). */
+  info?: { bot_username?: string | null } | null
 }
 
 /** Connect response: { status, info? }. */
@@ -46,6 +48,10 @@ export function deriveTelegramState(
   return 'no-token'
 }
 
+/** Bot username of a connected channel, or null when unknown. */
+export function connectedBotUsername(channel: ChannelInfo | undefined): string | null {
+  return channel?.info?.bot_username ?? null
+}
 /** Pull the backend's `{"error": msg}` body out of an ApiError for toasts. */
 export function extractErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.body) {
@@ -147,6 +153,8 @@ export function TelegramConnectCard() {
       </Badge>
     ) : null
 
+  const bot = connectedBotUsername(telegram)
+
   return (
     <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
       <div className="flex items-center gap-2">
@@ -154,7 +162,9 @@ export function TelegramConnectCard() {
         {statusBadge()}
         {tokenSourceBadge}
         <span className="ml-auto text-xs text-muted-foreground">
-          {t('settings.telegramReconnectHint')}
+          {connectMutation.isPending
+            ? t('settings.telegramConnecting')
+            : t('settings.telegramReconnectHint')}
         </span>
       </div>
 
@@ -206,6 +216,23 @@ export function TelegramConnectCard() {
           </Button>
         )}
       </div>
+
+      {state === 'no-token' && (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p className="font-medium">{t('settings.telegramHowToTitle')}</p>
+          <ol className="list-decimal space-y-0.5 pl-4">
+            <li>{t('settings.telegramHowToStep1')}</li>
+            <li>{t('settings.telegramHowToStep2')}</li>
+            <li>{t('settings.telegramHowToStep3')}</li>
+          </ol>
+        </div>
+      )}
+
+      {state === 'connected' && bot && (
+        <p className="text-xs text-muted-foreground">
+          {t('settings.telegramStartHint', { bot: `@${bot}` })}
+        </p>
+      )}
     </div>
   )
 }

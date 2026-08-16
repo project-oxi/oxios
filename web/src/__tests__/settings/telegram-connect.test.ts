@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   type ChannelInfo,
+  connectedBotUsername,
   deriveTelegramState,
   extractErrorMessage,
 } from '@/components/settings/telegram-connect-card'
@@ -49,5 +50,20 @@ describe('extractErrorMessage', () => {
 
   it('uses Error.message for non-ApiError failures', () => {
     expect(extractErrorMessage(new Error('network down'))).toBe('network down')
+  })
+})
+
+describe('connectedBotUsername', () => {
+  it('returns the bot username from channel info when connected', () => {
+    expect(
+      connectedBotUsername({ ...base, running: true, info: { bot_username: 'oxios_bot' } }),
+    ).toBe('oxios_bot')
+  })
+
+  it('returns null when info is absent or has no username', () => {
+    expect(connectedBotUsername(undefined)).toBeNull()
+    expect(connectedBotUsername({ ...base, running: true })).toBeNull()
+    expect(connectedBotUsername({ ...base, running: true, info: null })).toBeNull()
+    expect(connectedBotUsername({ ...base, running: true, info: {} })).toBeNull()
   })
 })

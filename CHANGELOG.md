@@ -14,7 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `POST /api/channels/{name}/disconnect` endpoints drive the gateway's
   runtime register/unregister and persist `channels.enabled` after a
   successful start; `GET /api/channels` reports availability, enabled,
-  running, and token source.
+  running, token source, and live channel `info` (e.g. the connected
+  bot's username).
+  The card walks first-time users through the flow: @BotFather token
+  issuance steps when no token is stored, a "validating token and starting
+  the bot" progress label while connecting, and a post-connect hint naming
+  the bot to message in Telegram.
 - The Telegram plugin now resolves the bot token via the credential store
   (env var → `~/.oxios` store → shared `~/.oxicode` store — same resolution
   the Secrets page displays) and validates it with a one-shot `getMe` call:

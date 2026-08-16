@@ -1,4 +1,4 @@
-//! KnowledgeDream — periodic LLM curation of agent-generated knowledge notes (RFC-022).
+//! KnowledgeCuration — periodic LLM curation of agent-generated knowledge notes (RFC-022).
 //!
 //! Phase 1: Scan — find notes with `needs_review: true` and `quality: raw`.
 //! Phase 2: Curate — LLM strips conversational artifacts and improves structure.
@@ -16,9 +16,9 @@ use crate::git_layer::GitLayer;
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::types::{NoteMeta, NoteQuality, NoteSource};
 
-/// Configuration for knowledge dream.
+/// Configuration for knowledge curation (RFC-048 §5).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeDreamConfig {
+pub struct KnowledgeCurationConfig {
     /// Enable/disable knowledge dream.
     #[serde(default)]
     pub enabled: bool,
@@ -43,7 +43,7 @@ fn default_model() -> String {
     "auto".to_string()
 }
 
-impl Default for KnowledgeDreamConfig {
+impl Default for KnowledgeCurationConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -56,9 +56,9 @@ impl Default for KnowledgeDreamConfig {
 
 /// Report from a knowledge dream run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeDreamReport {
+pub struct KnowledgeCurationReport {
     /// Unique dream ID.
-    pub dream_id: String,
+    pub curation_id: String,
     /// When the dream started.
     pub started_at: chrono::DateTime<Utc>,
     /// When the dream completed.
@@ -90,15 +90,15 @@ struct CuratedNote {
 }
 
 /// Knowledge dream process.
-pub struct KnowledgeDream {
+pub struct KnowledgeCuration {
     knowledge_base: Arc<KnowledgeBase>,
     git_layer: Arc<GitLayer>,
     engine_handle: Arc<EngineHandle>,
     model_id: String,
-    config: KnowledgeDreamConfig,
+    config: KnowledgeCurationConfig,
 }
 
-impl KnowledgeDream {
+impl KnowledgeCuration {
     /// Create a new knowledge dream process.
     ///
     /// When `config.model` is an explicit model (not `"auto"`), it is validated
@@ -109,7 +109,7 @@ impl KnowledgeDream {
         knowledge_base: Arc<KnowledgeBase>,
         git_layer: Arc<GitLayer>,
         engine_handle: Arc<EngineHandle>,
-        config: KnowledgeDreamConfig,
+        config: KnowledgeCurationConfig,
     ) -> Result<Self> {
         let model_id = if config.model == "auto" {
             // Will use the default model from engine at curation time.
@@ -121,13 +121,13 @@ impl KnowledgeDream {
             let engine = engine_handle.get();
             let model = engine.resolve_model(&config.model).with_context(|| {
                 format!(
-                    "knowledge_dream.model '{}' is not a known model",
+                    "knowledge_curation.model '{}' is not a known model",
                     config.model
                 )
             })?;
             engine.create_provider(&model.provider).with_context(|| {
                 format!(
-                    "knowledge_dream.model '{}' provider '{}' is not configured",
+                    "knowledge_curation.model '{}' provider '{}' is not configured",
                     config.model, model.provider
                 )
             })?;
@@ -143,12 +143,12 @@ impl KnowledgeDream {
     }
 
     /// Run the knowledge dream.
-    pub async fn dream(&self) -> KnowledgeDreamReport {
-        let dream_id = uuid::Uuid::new_v4().to_string();
+    pub async fn dream(&self) -> KnowledgeCurationReport {
+        let curation_id = uuid::Uuid::new_v4().to_string();
         let started_at = Utc::now();
 
-        let mut report = KnowledgeDreamReport {
-            dream_id: dream_id.clone(),
+        let mut report = KnowledgeCurationReport {
+            curation_id: curation_id.clone(),
             started_at,
             completed_at: started_at,
             notes_scanned: 0,
@@ -163,7 +163,7 @@ impl KnowledgeDream {
             Ok(notes) => notes,
             Err(e) => {
                 report.errors.push(format!("Scan failed: {e}"));
-                return self.finish_dream(report);
+                return self.finish_curation(report);
             }
         };
 
@@ -171,7 +171,7 @@ impl KnowledgeDream {
 
         if raw_notes.len() < self.config.min_raw_notes {
             report.notes_skipped = raw_notes.len();
-            return self.finish_dream(report);
+            return self.finish_curation(report);
         }
 
         // Phase 2: Curate
@@ -179,7 +179,7 @@ impl KnowledgeDream {
             Ok(c) => c,
             Err(e) => {
                 report.errors.push(format!("Curation failed: {e}"));
-                return self.finish_dream(report);
+                return self.finish_curation(report);
             }
         };
 
@@ -188,7 +188,7 @@ impl KnowledgeDream {
             // Git commit the original before overwriting
             if let Err(e) = self.git_layer.commit_file(
                 &note.path,
-                &format!("dream: pre-curation snapshot ({})", dream_id),
+                &format!("curation: pre-write snapshot ({})", curation_id),
             ) {
                 tracing::warn!(
                     path = %note.path,
@@ -227,11 +227,11 @@ impl KnowledgeDream {
             }
         }
 
-        self.finish_dream(report)
+        self.finish_curation(report)
     }
 
     /// Finalize timestamps, save report, return.
-    fn finish_dream(&self, mut report: KnowledgeDreamReport) -> KnowledgeDreamReport {
+    fn finish_curation(&self, mut report: KnowledgeCurationReport) -> KnowledgeCurationReport {
         report.completed_at = Utc::now();
         report.duration_ms = (report.completed_at - report.started_at)
             .num_milliseconds()
@@ -241,8 +241,8 @@ impl KnowledgeDream {
             .knowledge_base
             .root()
             .join(".oxios")
-            .join("dream_reports")
-            .join(format!("{}.json", report.dream_id));
+            .join("curation_reports")
+            .join(format!("{}.json", report.curation_id));
         if let Some(parent) = report_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -259,7 +259,7 @@ impl KnowledgeDream {
             let report = kd.dream().await;
             if report.notes_curated > 0 || !report.errors.is_empty() {
                 tracing::info!(
-                    dream_id = %report.dream_id,
+                    curation_id = %report.curation_id,
                     curated = report.notes_curated,
                     errors = report.errors.len(),
                     "Knowledge dream completed"

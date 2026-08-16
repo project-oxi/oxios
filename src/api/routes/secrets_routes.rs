@@ -112,6 +112,7 @@ fn source_label(s: &CredentialSource) -> &'static str {
         CredentialSource::Config => "config",
         CredentialSource::OxicodeAuthStore => "auth_store",
         CredentialSource::EnvVar => "env",
+        CredentialSource::FoundationKeychain => "foundation_keychain",
     }
 }
 

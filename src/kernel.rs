@@ -1573,10 +1573,10 @@ impl KernelBuilder {
         };
 
         // Knowledge dream (RFC-022)
-        if config.memory.knowledge_dream.enabled {
+        if config.memory.knowledge_curation.enabled {
             let kb = kernel_handle.knowledge.clone();
-            let kd_config = config.memory.knowledge_dream.clone();
-            match oxios_kernel::knowledge_dream::KnowledgeDream::new(
+            let kd_config = config.memory.knowledge_curation.clone();
+            match oxios_kernel::knowledge_curation::KnowledgeCuration::new(
                 kb,
                 git_layer.clone(),
                 engine_handle.clone(),

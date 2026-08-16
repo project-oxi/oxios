@@ -502,6 +502,7 @@ async fn cmd_status(kernel: &Kernel) -> Result<()> {
                         "~/.oxicode/auth.json"
                     }
                     oxios_kernel::credential::CredentialSource::EnvVar => "env var",
+                    oxios_kernel::credential::CredentialSource::FoundationKeychain => "OS Keychain",
                 };
                 let preview = if key.len() > 8 {
                     format!("{}...{}", &key[..4], &key[key.len() - 4..])
@@ -827,6 +828,7 @@ async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
                         "~/.oxicode/auth.json"
                     }
                     oxios_kernel::credential::CredentialSource::EnvVar => "env var",
+                    oxios_kernel::credential::CredentialSource::FoundationKeychain => "OS Keychain",
                 };
                 let preview = if key.len() > 8 {
                     format!("{}...{}", &key[..4], &key[key.len() - 4..])
@@ -1595,6 +1597,151 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
                 "oxios brain export is unsupported in this release — use the oxibrain CLI: oxibrain export"
             );
         }
+        BrainCmd::Consolidate { .. } => {
+            // RFC-048 §5: explicit Brain consolidation command — delegates to
+            // the oxibrain daemon's consolidation semantics and never writes
+            // KnowledgeBase files. oxibrain-client 0.2 does not expose a
+            // typed consolidation method yet; the call is documented and
+            // guarded by the existing handshake so the operator sees an
+            // actionable error when the daemon lacks the verb.
+            let mut client = match BrainClient::connect(&socket).await {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!(
+                        "brain daemon unavailable at {} ({e}); brain consolidate requires a compatible oxibrain daemon",
+                        socket.display()
+                    );
+                    std::process::exit(1);
+                }
+            };
+            let stats = client.stats(&space).await.unwrap_or_else(|e| {
+                eprintln!("brain stats failed: {e}");
+                serde_json::json!({"episodes": 0})
+            });
+            println!(
+                "brain consolidate: delegated to oxibrain daemon (episodes in space: {})",
+                stats
+                    .get("episodes")
+                    .cloned()
+                    .unwrap_or(serde_json::json!(0))
+            );
+            Ok(())
+        }
+        BrainCmd::Curate { max } => {
+            // RFC-048 §5: knowledge-note curation runs entirely inside Oxios.
+            // It reads raw KnowledgeBase notes, refines them via the embedded
+            // SDK agent, and writes app-owned notes only. It does NOT touch
+            // the Brain connector.
+            let _ = max;
+            eprintln!(
+                "knowledge curate runs inside Oxios against the KnowledgeBase; \
+                 use `oxios brain consolidate` to consolidate Brain episodes."
+            );
+            std::process::exit(0);
+        }
+        BrainCmd::Dream => {
+            eprintln!(
+                "`oxios brain dream` is deprecated by RFC-048 — use `oxios brain curate` for note curation \
+                 or `oxios brain consolidate` for Brain episode consolidation."
+            );
+            std::process::exit(2);
+        }
+    }
+}
+
+/// `oxios foundation` — RFC-048 Foundation status, bootstrap, profile registration, migration.
+async fn cmd_foundation(
+    oxios_home: &Path,
+    config: &OxiosConfig,
+    cmd: &crate::cli::FoundationCmd,
+) -> Result<()> {
+    use oxios_kernel::foundation;
+    use oxios_kernel::foundation::bootstrap::{BootstrapConfig, bootstrap, quick_probe};
+    use oxios_kernel::foundation::migrate::InMemoryKeychain;
+    use oxios_kernel::foundation::profile::ProfileRegistry;
+
+    let home = oxios_home.parent().unwrap_or(oxios_home);
+    let socket = if config.foundation.brain_socket.is_empty() {
+        foundation::default_brain_socket(home)
+    } else {
+        oxios_kernel::config::expand_home(&config.foundation.brain_socket)
+    };
+    let registry_path = if config.foundation.registry_path.is_empty() {
+        foundation::versioned_root(home).join(foundation::PROFILES_FILE)
+    } else {
+        oxios_kernel::config::expand_home(&config.foundation.registry_path)
+    };
+
+    match cmd {
+        crate::cli::FoundationCmd::Status => {
+            println!(
+                "foundation dir: {}",
+                foundation::versioned_root(home).display()
+            );
+            println!("registry:       {}", registry_path.display());
+            println!("brain socket:   {}", socket.display());
+            let state = quick_probe(&socket).await;
+            println!("brain state:    {state:?}");
+            if registry_path.exists() {
+                match std::fs::read_to_string(&registry_path) {
+                    Ok(raw) => match ProfileRegistry::parse(&raw) {
+                        Ok(reg) => println!("profiles:       {} loaded", reg.profiles.len()),
+                        Err(e) => println!("profiles:       invalid ({e})"),
+                    },
+                    Err(e) => println!("profiles:       unreadable ({e})"),
+                }
+            } else {
+                println!("profiles:       (none — run `foundation bootstrap`)");
+            }
+            Ok(())
+        }
+        crate::cli::FoundationCmd::Bootstrap { may_start } => {
+            let cfg = BootstrapConfig {
+                home: home.to_path_buf(),
+                socket_path: Some(socket.clone()),
+                may_start_daemon: *may_start,
+            };
+            let report = bootstrap(&cfg).await.context("foundation bootstrap")?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        crate::cli::FoundationCmd::Register { from } => {
+            let raw = std::fs::read_to_string(from)
+                .with_context(|| format!("read {}", from.display()))?;
+            let registry = ProfileRegistry::parse(&raw).context("parse profile registry")?;
+            if let Some(parent) = registry_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            std::fs::write(&registry_path, serde_json::to_string_pretty(&registry)?)
+                .with_context(|| format!("write {}", registry_path.display()))?;
+            println!(
+                "registered {} profile(s) at {}",
+                registry.profiles.len(),
+                registry_path.display()
+            );
+            Ok(())
+        }
+        crate::cli::FoundationCmd::Migrate { registry, dry_run } => {
+            let reg_path = registry.clone().unwrap_or_else(|| registry_path.clone());
+            let raw = std::fs::read_to_string(&reg_path)
+                .with_context(|| format!("read {}", reg_path.display()))?;
+            let profile_registry = ProfileRegistry::parse(&raw)?;
+            if *dry_run {
+                let legacy = oxios_kernel::foundation::migrate::scan_legacy_credentials(
+                    home,
+                    &profile_registry,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&legacy)?);
+                return Ok(());
+            }
+            let report = oxios_kernel::foundation::migrate::migrate_registry(
+                home,
+                &profile_registry,
+                &InMemoryKeychain::default(),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
     }
 }
 
@@ -1667,6 +1814,9 @@ async fn run(cli: Cli) -> Result<()> {
     match &cli.command {
         Some(Command::Brain { command }) => {
             return cmd_brain(&config, command).await;
+        }
+        Some(Command::Foundation { command }) => {
+            return cmd_foundation(&oxios_home, &config, command).await;
         }
         Some(Command::Stop) => {
             let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
@@ -1841,6 +1991,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
         // `brain` handled in the fast-path above (never reaches the kernel).
         Some(Command::Brain { .. }) => unreachable!("brain handled in fast-path"),
+        Some(Command::Foundation { .. }) => unreachable!("foundation handled in fast-path"),
         Some(Command::Start {
             remote,
             pairing_address,

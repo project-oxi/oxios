@@ -26,6 +26,7 @@ embedding-gguf = ["dep:llama-gguf", "dep:hf-hub"]
 # used locally, versions recorded for a future crates.io publish.
 # See docs/designs/2026-08-05-app-module-integration-design.md
 memo = ["dep:oximemo-core"]
+foundation-keychain = ["dep:keyring"]
 timeline = ["dep:oxiline-core"]
 
 [dependencies]
@@ -98,6 +99,7 @@ libc = { workspace = true }
 inquire = { workspace = true }
 console = { workspace = true }
 indicatif = "0.17"
+keyring = { workspace = true, optional = true }
 
 # SQLite — kernel mount/project tables + agent history log (RFC-012, RFC-025).
 # Non-optional since the sqlite-memory feature was removed (RFC-047).

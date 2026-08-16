@@ -967,6 +967,9 @@ impl EngineApi {
                         crate::credential::CredentialSource::EnvVar => "env",
                         crate::credential::CredentialSource::Config => "config",
                         crate::credential::CredentialSource::OxicodeAuthStore => "auth_store",
+                        crate::credential::CredentialSource::FoundationKeychain => {
+                            "foundation_keychain"
+                        }
                     })
                     .unwrap_or("none")
                     .to_string();
@@ -1045,6 +1048,9 @@ impl EngineApi {
                     crate::credential::CredentialSource::EnvVar => "env",
                     crate::credential::CredentialSource::Config => "config",
                     crate::credential::CredentialSource::OxicodeAuthStore => "auth_store",
+                    crate::credential::CredentialSource::FoundationKeychain => {
+                        "foundation_keychain"
+                    }
                 }
                 .to_string()
             })
@@ -1578,6 +1584,7 @@ impl EngineApi {
                 crate::credential::CredentialSource::EnvVar => "env",
                 crate::credential::CredentialSource::Config
                 | crate::credential::CredentialSource::OxicodeAuthStore => "auth_store",
+                crate::credential::CredentialSource::FoundationKeychain => "foundation_keychain",
             })
             .unwrap_or("none")
             .to_string();

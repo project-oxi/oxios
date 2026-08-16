@@ -1,5 +1,13 @@
 # RFC-003: Knowledge Base 독립 분리
-
+> **상태:** 구현 완료 ✅
+>
+> **Note (RFC-048 §5):** The two knowledge systems are kept distinct:
+> **agent memory** is Brain-ledger data (BrainClient via the oxibrain
+> daemon, RFC-047), and **KnowledgeBase notes** are user-facing `.md`
+> files (`oxios-markdown`). The LLM note-refinement feature is now
+> named *knowledge curation* (was *knowledge dream*); Brain episode
+> consolidation is `oxios brain consolidate`. The two operations are
+> never interchanged.
 > **상태:** 구현 완료 ✅  
 > **날짜:** 2026-05-20  
 > **이전:** rfc-003-knowledge-separation.md (초안)  

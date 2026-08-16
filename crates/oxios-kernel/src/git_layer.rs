@@ -266,7 +266,7 @@ impl GitLayer {
     /// (`root.join("/etc/passwd") == "/etc/passwd"`) and `..` components escape
     /// the root. This guards every public commit/restore entry point so an
     /// attacker-controlled `rel_path` (e.g. from `infra_api::git_restore`,
-    /// `KernelHandle::save_and_commit`, or `knowledge_dream::commit_file`)
+    /// `KernelHandle::save_and_commit`, or `knowledge_curation::commit_file`)
     /// cannot read or write outside the repository.
     ///
     /// The check is lexical: it rejects `Component::ParentDir`, `RootDir`, and

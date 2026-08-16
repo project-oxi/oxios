@@ -279,6 +279,7 @@ fn source_label(s: &CredentialSource) -> String {
     match s {
         CredentialSource::Config => "config",
         CredentialSource::OxicodeAuthStore => "auth_store",
+        CredentialSource::FoundationKeychain => "foundation_keychain",
         CredentialSource::EnvVar => "env",
     }
     .into()

@@ -44,6 +44,7 @@ Top-level specs, RFCs, architecture, and user-facing guides. Newest first.
   - `design-knowledge-ui.md`, `design-web-ui-ts.md` — knowledge + web UI technical designs.
 - **RFCs (live)**
   - `rfc-browser-migration.md`
+  - `rfc-048-oxi-foundation-integration.md` — **Oxi Foundation** (live).
   - `rfc-043-task-management.md`
   - `rfc-042-product-interface-layout.md`
   - `rfc-041-host-integrations.md`

@@ -51,7 +51,13 @@ mod audit_persistence;
 
 // ─── Autonomous Persistence ─────────────────────────────────────────
 // RFC-016: Post-execution hook for auto-saving knowledge and memory.
-pub mod knowledge_dream;
+pub mod knowledge_curation;
+// RFC-048 §5: keep the `dream` name as a deprecated re-export for one
+// minor so existing `oxios brain dream` operators keep working.
+#[deprecated(note = "use knowledge_curation instead (RFC-048)")]
+pub mod knowledge_dream {
+    pub use crate::knowledge_curation::*;
+}
 pub mod persistence_hook;
 
 // ─── Communication ──────────────────────────────────────────────────
@@ -65,7 +71,9 @@ pub mod mcp;
 // ─── Intelligence ───────────────────────────────────────────────────
 // 메모리, 임베딩, 페르소나, 온보딩.
 pub mod brain;
+// ─── Oxi Foundation (RFC-048) ─────────────────────────────────────
 pub mod embedding;
+pub mod foundation;
 pub mod memory_agent;
 pub mod onboarding;
 pub mod persona;

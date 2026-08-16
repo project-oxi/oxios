@@ -105,6 +105,37 @@ impl Default for BrainSection {
         }
     }
 }
+/// Foundation settings (RFC-048).
+///
+/// The Foundation layer owns the non-secret profile registry, the shared
+/// package lock, and the Keychain-backed credential locator surface. The
+/// executor stays embedded — Foundation is *not* a provider proxy and
+/// never spawns an external worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FoundationConfig {
+    /// Run Foundation bootstrap automatically on daemon start. When
+    /// `false`, the CLI exposes `foundation bootstrap` / `foundation
+    /// status` for explicit invocation.
+    pub auto_bootstrap: bool,
+    /// Override the registry path. Empty → `~/.oxi/foundation/v1/profiles.json`.
+    pub registry_path: String,
+    /// Override the package lock path. Empty → `~/.oxi/foundation/v1/packages.lock`.
+    pub packages_lock_path: String,
+    /// Override the Brain daemon socket. Empty → `~/.oxi/brain/oxibrain.sock`.
+    pub brain_socket: String,
+}
+
+impl Default for FoundationConfig {
+    fn default() -> Self {
+        Self {
+            auto_bootstrap: true,
+            registry_path: String::new(),
+            packages_lock_path: String::new(),
+            brain_socket: String::new(),
+        }
+    }
+}
 
 /// Memory system configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,7 +178,7 @@ pub struct MemoryConfig {
     pub learning: LearningConfig,
     /// Knowledge dream configuration (RFC-022).
     #[serde(default)]
-    pub knowledge_dream: crate::knowledge_dream::KnowledgeDreamConfig,
+    pub knowledge_curation: crate::knowledge_curation::KnowledgeCurationConfig,
     /// AutoMemoryBridge configuration (RFC-012 Phase 7: SQLite ↔ MEMORY.md sync).
     #[serde(default)]
     pub bridge: MemoryBridgeConfig,
@@ -184,7 +215,7 @@ impl Default for MemoryConfig {
             sqlite: SqliteMemoryConfig::default(),
             embedding: EmbeddingConfig::default(),
             learning: LearningConfig::default(),
-            knowledge_dream: crate::knowledge_dream::KnowledgeDreamConfig::default(),
+            knowledge_curation: crate::knowledge_curation::KnowledgeCurationConfig::default(),
             bridge: MemoryBridgeConfig::default(),
         }
     }
@@ -1251,6 +1282,9 @@ pub struct OxiosConfig {
     /// Brain daemon connection settings (RFC-047).
     #[serde(default)]
     pub brain: BrainSection,
+    /// Foundation settings (RFC-048).
+    #[serde(default)]
+    pub foundation: FoundationConfig,
     /// Cron scheduler settings.
     #[serde(default)]
     pub cron: CronConfig,

@@ -681,7 +681,30 @@ Agent memory lives in a **standalone daemon** (`oxibrain`, separate repo) reache
 
 **Metrics:** `oxibrain_available` (gauge, set at boot + on reconnect), `oxibrain_recall_total` (counter, incremented on successful recall).
 
-**Source:** `crates/oxios-kernel/src/brain/mod.rs`, `crates/oxios-kernel/src/brain/config.rs`
+
+### 3.14.1 Oxi Foundation — Versioned Profile/Package Contract (RFC-048)
+
+The Foundation layer lives at `~/.oxi/foundation/v1`. It owns:
+
+- `profiles.json` — schema-versioned, non-secret provider profiles with
+  OS Keychain `{ service, account }` locators. Profiles declare a role
+  allow-list (`memory.extract`, `memory.consolidate`, `coding.primary`,
+  `assistant.general`) and never receive a CSpace on their own.
+- `packages.lock` — immutable shared package registry; entries include
+  source, blake3 digest, trust label, target list (`oxios` is required),
+  and abstract requirements (`workspace.read`, `shell.execute`,
+  `brain.query`, `schedule.manage`, …).
+
+Foundation is **not** a provider proxy and never spawns an external
+worker. The executor stays the in-process `oxicode_sdk::Oxicode`. The
+kernel boots with an idempotent bootstrap (`oxios foundation
+bootstrap`) that creates the directory, hands the Brain socket a
+version handshake, and refuses to write a lockfile from an agent turn.
+The CLI exposes `oxios foundation status / bootstrap / register /
+migrate` and renders reports as JSON — secrets are redacted in every
+log line and receipt.
+
+**Source:** `crates/oxios-kernel/src/foundation/{mod,bootstrap,profile,packages,migrate,resolver}.rs`
 
 ---
 

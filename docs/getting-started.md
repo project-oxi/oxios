@@ -57,7 +57,13 @@ Set your key before running Oxios:
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
-
+> **Tip (RFC-048):** Oxios no longer expects long-lived provider API keys
+> in environment variables or `~/.oxios/auth.json`. The Foundation
+> layer registers a non-secret profile in `~/.oxi/foundation/v1/profiles.json`
+> and reads the secret from the OS Keychain. The CLI exposes
+> `oxios foundation status` / `bootstrap` / `register` / `migrate` for
+> that flow. The `OXIOS_<PROVIDER>_API_KEY` environment variable remains
+> supported as an explicit override for non-interactive CI.
 > **Tip:** You can also store credentials via `oxi login` (shared with the oxicode CLI) or through the onboarding wizard. See [Credential Resolution](#credential-resolution-order) for the full priority chain.
 
 ---

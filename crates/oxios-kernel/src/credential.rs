@@ -27,6 +27,8 @@ pub enum CredentialSource {
     Config,
     /// From an auth store (~/.oxios or ~/.oxicode)
     OxicodeAuthStore,
+    /// From the Oxi Foundation Keychain locator (RFC-048).
+    FoundationKeychain,
     /// From environment variable
     EnvVar,
 }
@@ -61,7 +63,12 @@ impl CredentialStore {
             return Some((key.to_string(), CredentialSource::Config));
         }
 
-        // 3. oxios auth store (~/.oxios/auth.json via OXICODE_HOME) — primary
+        // 2.5. Oxi Foundation Keychain (RFC-048) — the normal post-migration
+        //      source for non-secret profile metadata + Keychain-backed secret.
+        if let Some((key, source)) = resolve_from_foundation_keychain(provider) {
+            return Some((key, source));
+        }
+
         if let Ok(Some(token)) = oxicode_sdk::load_token(provider)
             && !token.access_token.is_empty()
         {
@@ -161,7 +168,6 @@ impl CredentialStore {
         }
         Ok(())
     }
-
     /// Resolve a non-provider secret (telegram token, email password, etc.).
     ///
     /// Unlike [`resolve`](Self::resolve) — which checks `OXIOS_<PROVIDER>_API_KEY`
@@ -197,6 +203,45 @@ impl CredentialStore {
         }
         model_id.split_once('/').map(|(p, _)| p)
     }
+}
+
+/// Resolve an API key via the Oxi Foundation Keychain (RFC-048).
+///
+/// Looks up `~/.oxi/foundation/v1/profiles.json`, finds the profile whose
+/// `id` matches `provider`, and reads the entry from the OS Keychain
+/// using the profile's `{ service, account }` locator. Returns `None`
+/// when no profile exists, the registry is missing, or the Keychain
+/// entry is absent — callers should fall back to legacy sources.
+pub fn resolve_from_foundation_keychain(provider: &str) -> Option<(String, CredentialSource)> {
+    use crate::foundation::profile::ProfileRegistry;
+
+    let home = dirs::home_dir()?;
+    let registry_path =
+        crate::foundation::versioned_root(&home).join(crate::foundation::PROFILES_FILE);
+    if !registry_path.exists() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(&registry_path).ok()?;
+    let registry = ProfileRegistry::parse(&raw).ok()?;
+    let profile = registry.profiles.iter().find(|p| p.id == provider)?;
+    let locator = &profile.keychain;
+    let secret = foundation_keychain_read(&locator.service, &locator.account)?;
+    Some((secret, CredentialSource::FoundationKeychain))
+}
+
+/// Read a secret from the OS Keychain via the `keyring` crate when
+/// available; falls back to `None` (so legacy paths retain priority)
+/// when the dependency is missing or the entry is absent.
+#[cfg(feature = "foundation-keychain")]
+fn foundation_keychain_read(service: &str, account: &str) -> Option<String> {
+    use keyring::Entry;
+    let entry = Entry::new(service, account).ok()?;
+    entry.get_password().ok()
+}
+
+#[cfg(not(feature = "foundation-keychain"))]
+fn foundation_keychain_read(_service: &str, _account: &str) -> Option<String> {
+    None
 }
 
 // ── Shared oxicode-cli store (read-only fallback) ──────────────────────────────

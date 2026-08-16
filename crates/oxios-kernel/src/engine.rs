@@ -304,6 +304,22 @@ impl OxiosEngine {
     }
 
     /// Resolve a model ID to a Model.
+
+    /// Resolve a model ID through the Oxi Foundation profile resolver
+    /// first (RFC-048 §3). Falls back to the embedded SDK when no
+    /// profile matches the supplied role hint.
+    pub fn resolve_model_via_foundation(
+        &self,
+        role: crate::foundation::profile::ProfileRole,
+    ) -> Result<Option<crate::foundation::resolver::ResolvedModel>> {
+        let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let resolver =
+            match crate::foundation::resolver::FoundationProfileResolver::load_default(&home) {
+                Ok(r) => r,
+                Err(_) => return Ok(None),
+            };
+        Ok(resolver.resolve_for_role(role))
+    }
     pub fn resolve_model(&self, model_id: &str) -> Result<oxicode_sdk::Model> {
         // oxicode-sdk 0.66 returns `Result<_, SdkError>` (R7 typed errors); convert
         // into the kernel's `anyhow::Result` via `?`.

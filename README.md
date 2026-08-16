@@ -94,15 +94,23 @@ cargo install oxios
 
 ### Configure
 
-Set your LLM provider key:
+### Configure
+
+Register a non-secret Foundation profile and let the OS Keychain hold
+the secret (RFC-048):
 
 ```bash
-# Anthropic (Claude)
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# or OpenAI (GPT)
-export OPENAI_API_KEY=sk-...
+oxios foundation bootstrap           # idempotent first-run setup
+oxios foundation register --from ./profile.json   # non-secret profile
+# Store the actual secret in the Keychain via your normal credential
+# helper — Oxios reads from `service="oxios.foundation"` /
+# `account="profile.<id>"` and never writes it back to a JSON file.
 ```
+
+> **Tip:** `OXIOS_<PROVIDER>_API_KEY` remains supported as an explicit
+> override for non-interactive CI. Day-to-day operation no longer
+> requires long-lived provider keys in the shell environment.
+
 
 On first run, Oxios launches an interactive setup wizard to configure your workspace, credentials, and preferences.
 

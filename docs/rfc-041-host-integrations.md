@@ -1,5 +1,15 @@
 # RFC-041: Host Integrations Subsystem
 
+> **Note (RFC-048):** host credential sources are now read from the Oxi
+> Foundation Keychain (`~/.oxi/foundation/v1/profiles.json` +
+> `service="oxios.foundation"` / `account="profile.<id>"` Keychain
+> entry) before any plaintext fallback. The "no Keychain" assumption
+> in §2.3 is dropped; Foundation is the canonical credential source.
+> The join-at-the-API-layer requirement and host-integration
+> requirements stand. Package requirements remain declarative and
+> Foundation packages do not receive a CSpace on their own — RBAC /
+> permissions / execution policy remain the authority.
+
 > **Status:** Phases 1–5 shipped (rev. 3 — review findings H1–H6, M1–M6, B1–B3, S1–S6 folded in and implemented) · **Date:** 2026-07-18
 > **Scope:** `oxios-kernel`, `src/api`, `web/`, `share/`
 >

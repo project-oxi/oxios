@@ -1,5 +1,10 @@
 # RFC-047: Oxibrain Migration — Retire `oxios-memory`, Route Through the Brain
 
+> **Note**: superseded for bootstrap / profile / credential guidance by
+> [RFC-048](rfc-048-oxi-foundation-integration.md) — Foundation adds the
+> non-secret profile registry, OS Keychain-backed credentials, and the
+> shared package importer. RFC-047's memory-migration design is
+> unchanged.
 > **Status**: Implemented (v1.40.0, 2026-08-15)
 > **Supersedes**: RFC-018 (oxios-memory extraction) — kept as historical record
 > **Author**: oxibrain × oxios handoff, 2026-08-13

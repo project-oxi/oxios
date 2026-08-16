@@ -244,8 +244,13 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: BrainCmd,
     },
+    /// Interact with the Oxi Foundation (RFC-048) — bootstrap, status,
+    /// non-secret profile registration.
+    Foundation {
+        #[command(subcommand)]
+        command: crate::cli::FoundationCmd,
+    },
 }
-
 /// `oxios brain` subcommands.
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum BrainCmd {
@@ -268,6 +273,25 @@ pub(crate) enum BrainCmd {
         #[arg(long)]
         output: Option<String>,
     },
+    /// Consolidate Brain episodes (derived/sourced/uncertain). RFC-048
+    /// splits Brain consolidation from KnowledgeBase curation. Brain
+    /// consolidation never writes KnowledgeBase files.
+    Consolidate {
+        /// Optional max episodes to consolidate.
+        #[arg(long)]
+        max: Option<usize>,
+    },
+    /// Curate raw KnowledgeBase notes (LLM-only note refinement). RFC-048
+    /// names this operation `curate`; `dream` remains as a deprecated
+    /// alias below.
+    Curate {
+        /// Optional maximum notes to curate in this run.
+        #[arg(long)]
+        max: Option<usize>,
+    },
+    /// Deprecated alias for `curate`. Kept for one minor.
+    #[command(hide = true)]
+    Dream,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -285,6 +309,34 @@ pub(crate) enum ConfigAction {
     },
     /// Reset a configuration value to its default
     Reset { key: String },
+}
+
+/// `oxios foundation` subcommands (RFC-048).
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum FoundationCmd {
+    /// Show Foundation status (directory, profiles, Brain handshake).
+    Status,
+    /// Run the idempotent bootstrap (create directory, handshake Brain).
+    Bootstrap {
+        /// When set, allow attempting to start a missing compatible daemon.
+        #[arg(long)]
+        may_start: bool,
+    },
+    /// Register a non-secret Foundation profile from a JSON file.
+    Register {
+        /// Path to a profile JSON document.
+        #[arg(long)]
+        from: std::path::PathBuf,
+    },
+    /// Migrate legacy credentials into Keychain-backed profile locators.
+    Migrate {
+        /// Path to the Foundation profile registry.
+        #[arg(long)]
+        registry: Option<std::path::PathBuf>,
+        /// Print the result without touching the legacy stores.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -183,6 +183,8 @@ pub struct TaskComment {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author_agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_session_id: Option<String>,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -233,6 +235,10 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub assignee_agent_id: Option<String>,
     #[serde(default)]
+    pub created_by_agent_id: Option<String>,
+    #[serde(default)]
+    pub created_by_session_id: Option<String>,
+    #[serde(default)]
     pub sort_order: Option<f64>,
 }
 
@@ -250,7 +256,7 @@ pub struct ListTasksParams {
     pub offset: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct SetScheduleParams {
     pub automation_mode: Option<TaskAutomationMode>,
     pub schedule_pattern: Option<String>,
@@ -259,7 +265,7 @@ pub struct SetScheduleParams {
     pub max_executions: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct SetVerifyParams {
     pub enabled: Option<bool>,
     pub requirement: Option<String>,
@@ -267,21 +273,41 @@ pub struct SetVerifyParams {
     pub verifier_agent_id: Option<String>,
 }
 
+/// Partial task update — `None` fields are left unchanged (RFC-043).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct UpdateTaskParams {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub instruction: Option<String>,
+    pub priority: Option<u8>,
+    pub sort_order: Option<f64>,
+    pub parent_task_id: Option<String>,
+    pub assignee_agent_id: Option<String>,
+}
+
 // ── Helpers ──
 
 impl Task {
-    /// Generate a slug-style identifier from a name.
-    pub fn slug_from_name(name: &str) -> String {
+    /// Deterministic slug base from a name — lowercase, non-alphanumerics
+    /// collapsed to `-`, trimmed, capped at 48 chars. No random suffix:
+    /// callers that need uniqueness add one (see [`Self::slug_from_name`]);
+    /// callers that need dedup (cron migration) rely on determinism.
+    pub fn slug_base(name: &str) -> String {
         let slug: String = name
             .to_lowercase()
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '-' })
             .collect();
         let slug = slug.trim_matches('-').to_string();
-        let shortened = if slug.len() > 48 { &slug[..48] } else { &slug };
+        slug.chars().take(48).collect()
+    }
+
+    /// Generate a slug-style identifier from a name (slug base + random
+    /// suffix for uniqueness).
+    pub fn slug_from_name(name: &str) -> String {
         // Add short random suffix for uniqueness
         let suffix = &uuid::Uuid::new_v4().to_string()[..8];
-        format!("{shortened}-{suffix}")
+        format!("{}-{suffix}", Self::slug_base(name))
     }
 
     /// Check if this task should be auto-run now based on schedule/heartbeat.

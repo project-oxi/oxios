@@ -159,6 +159,10 @@ pub struct KernelHandle {
     /// Unified asset store — central binary storage with metadata index.
     /// Attached by the kernel assembler. `None` on the preliminary handle.
     pub asset_store: Option<Arc<crate::asset_store::AssetStore>>,
+    /// Task store (RFC-043) — SQLite-backed task lifecycle. Attached by
+    /// the kernel assembler so the web routes, the auto-run tick, and the
+    /// `task` agent tool share ONE store. `None` on the preliminary handle.
+    pub task_store: Option<Arc<tokio::sync::Mutex<crate::task::TaskStore>>>,
 }
 
 impl KernelHandle {
@@ -215,6 +219,7 @@ impl KernelHandle {
             streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
             orchestrator: None,
             asset_store: None,
+            task_store: None,
         }
     }
 
@@ -309,6 +314,15 @@ impl KernelHandle {
     /// primitive via [`Self::run_goal`].
     pub fn with_orchestrator(mut self, orchestrator: Arc<Orchestrator>) -> Self {
         self.orchestrator = Some(orchestrator);
+        self
+    }
+
+    /// Attach the task store (RFC-043).
+    pub fn with_task_store(
+        mut self,
+        store: Arc<tokio::sync::Mutex<crate::task::TaskStore>>,
+    ) -> Self {
+        self.task_store = Some(store);
         self
     }
 

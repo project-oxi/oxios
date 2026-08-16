@@ -14,6 +14,7 @@
 //! - [`BudgetTool`] — Budget management (check, set, reserve, reset)
 //! - [`ResourceTool`] — Resource monitoring (snapshot, history, overloaded)
 //! - [`CalendarTool`] — Calendar events (create, update, delete, list, search, freebusy)
+//! - [`TaskTool`] — Task management (create, list, view, edit, schedule, verify, run)
 
 pub mod agent_tool;
 pub mod budget_tool;
@@ -34,6 +35,7 @@ pub mod resource_tool;
 pub mod screenshot_tool;
 pub mod security_tool;
 pub mod skill_forge_tool;
+pub mod task_tool;
 #[cfg(feature = "timeline")]
 pub mod timeline_tool;
 
@@ -55,8 +57,11 @@ pub use resource_tool::ResourceTool;
 pub use screenshot_tool::ScreenshotTool;
 pub use security_tool::SecurityTool;
 pub use skill_forge_tool::SkillForgeTool;
+pub use task_tool::TaskTool;
 #[cfg(feature = "timeline")]
 pub use timeline_tool::TimelineTool;
+
+use std::sync::Arc;
 
 use crate::KernelHandle;
 use crate::tools::{AskUserTool, MemoryReadTool, MemorySearchTool, MemoryWriteTool};
@@ -67,7 +72,11 @@ use oxicode_sdk::ToolRegistry;
 ///
 /// Called by [`super::kernel_bridge::OxiosKernelBridge`] during agent build.
 /// This is the canonical list of kernel tools available in oxios agents.
-pub fn register_all_kernel_tools(registry: &ToolRegistry, kernel: &KernelHandle, _agent_id: &str) {
+pub fn register_all_kernel_tools(
+    registry: &ToolRegistry,
+    kernel: &Arc<KernelHandle>,
+    agent_id: &str,
+) {
     let agent_uuid = AgentId::new_v4();
 
     // ExecTool (stores Arc<KernelHandle>)
@@ -96,6 +105,12 @@ pub fn register_all_kernel_tools(registry: &ToolRegistry, kernel: &KernelHandle,
     registry.register(SecurityTool::from_kernel(kernel));
     registry.register(BudgetTool::from_kernel(kernel));
     registry.register(ResourceTool::from_kernel(kernel));
+
+    // Task management (RFC-043 Phase 2) — requires the TaskStore attached
+    // by the assembler; skipped (tool absent) when task storage is disabled.
+    if let Some(task_tool) = TaskTool::from_kernel(kernel, agent_id) {
+        registry.register(task_tool);
+    }
 
     // A2A tools (each stores Arc<KernelHandle>)
     registry.register(crate::tools::A2aDelegateTool::from_kernel(

@@ -52,9 +52,11 @@ impl TaskStore {
             conn.execute(
                 r#"INSERT INTO tasks
                    (id, identifier, name, description, instruction, status, priority,
-                    sort_order, parent_task_id, assignee_agent_id, created_at, updated_at,
+                    sort_order, parent_task_id, assignee_agent_id,
+                    created_by_agent_id, created_by_session_id,
+                    created_at, updated_at,
                     verify_enabled, execution_count, consecutive_failures)
-                   VALUES (?1, ?2, ?3, ?4, ?5, 'backlog', ?6, ?7, ?8, ?9, ?10, ?11, 0, 0, 0)"#,
+                   VALUES (?1, ?2, ?3, ?4, ?5, 'backlog', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, 0, 0)"#,
                 params![
                     id,
                     identifier,
@@ -65,6 +67,8 @@ impl TaskStore {
                     params.sort_order,
                     params.parent_task_id,
                     params.assignee_agent_id,
+                    params.created_by_agent_id,
+                    params.created_by_session_id,
                     now,
                     now,
                 ],
@@ -90,7 +94,30 @@ impl TaskStore {
                FROM tasks WHERE id = ?1"#,
         )?;
 
-        let task = stmt.query_row(params![id], map_task_row)?;
+        let mut task = stmt.query_row(params![id], map_task_row)?;
+        task.dependencies = dependency_ids_locked(&conn, id)?;
+        Ok(task)
+    }
+
+    /// Look up a task by its unique identifier. Used by cron migration
+    /// dedup and identifier-conflict checks.
+    pub async fn get_task_by_identifier(&self, identifier: &str) -> Result<Option<Task>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            r#"SELECT id, identifier, name, description, instruction, status, priority,
+                      sort_order, parent_task_id, assignee_agent_id, created_by_agent_id,
+                      created_by_session_id, automation_mode, schedule_pattern,
+                      schedule_timezone, heartbeat_interval_secs, max_executions,
+                      execution_count, verify_enabled, verify_requirement,
+                      verify_max_iterations, verify_verifier_agent_id,
+                      created_at, updated_at, started_at, completed_at,
+                      last_run_at, next_run_at, last_error, consecutive_failures,
+                      context_json
+               FROM tasks WHERE identifier = ?1"#,
+        )?;
+        let task = stmt
+            .query_row(params![identifier], map_task_row)
+            .optional()?;
         Ok(task)
     }
 
@@ -146,16 +173,25 @@ impl TaskStore {
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn.prepare(&sql)?;
-        let tasks = stmt
+        let mut tasks: Vec<Task> = stmt
             .query_map(param_refs.as_slice(), map_task_row)?
             .filter_map(|r| r.ok())
             .collect();
+        for task in &mut tasks {
+            task.dependencies = dependency_ids_locked(&conn, &task.id)?;
+        }
 
         Ok(tasks)
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<()> {
         let conn = self.conn.lock().await;
+        // `task_dependencies.depends_on` has no FK (shipped schema), so
+        // edges referencing this task are removed explicitly.
+        conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ?1 OR depends_on = ?1",
+            params![id],
+        )?;
         conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])
             .context("delete task")?;
         Ok(())
@@ -175,6 +211,269 @@ impl TaskStore {
             params![status.to_string(), now, completed, id],
         )?;
         Ok(())
+    }
+
+    /// Persist the verify-gate configuration (RFC-043 §Verify Gate).
+    ///
+    /// `None` fields keep their current value; unknown ids error.
+    pub async fn set_verify(&self, id: &str, params: SetVerifyParams) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        let (enabled, requirement, max_iter, verifier): (
+            i64,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT verify_enabled, verify_requirement, verify_max_iterations, \
+                 verify_verifier_agent_id FROM tasks WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("task {id} not found"))?;
+
+        conn.execute(
+            "UPDATE tasks SET verify_enabled = ?1, verify_requirement = ?2, \
+             verify_max_iterations = ?3, verify_verifier_agent_id = ?4, updated_at = ?5 \
+             WHERE id = ?6",
+            params![
+                params.enabled.map(|b| b as i64).unwrap_or(enabled),
+                params.requirement.or(requirement),
+                params.max_iterations.map(|v| v as i64).or(max_iter),
+                params.verifier_agent_id.or(verifier),
+                now,
+                id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Partially update editable task fields — `None` leaves a field
+    /// unchanged (RFC-043 `PUT /api/tasks/:id`).
+    pub async fn update_task(&self, id: &str, params: UpdateTaskParams) -> Result<()> {
+        // Lock first: the boxed ToSql values are !Send, so they must not
+        // live across an await point (async_trait futures must be Send).
+        let conn = self.conn.lock().await;
+        // (column, value) pairs built only from Some fields.
+        let mut sets: Vec<(&str, Box<dyn rusqlite::ToSql>)> = Vec::new();
+        if let Some(v) = params.name {
+            sets.push(("name", Box::new(v)));
+        }
+        if let Some(v) = params.description {
+            sets.push(("description", Box::new(v)));
+        }
+        if let Some(v) = params.instruction {
+            sets.push(("instruction", Box::new(v)));
+        }
+        if let Some(v) = params.priority {
+            sets.push(("priority", Box::new(v)));
+        }
+        if let Some(v) = params.sort_order {
+            sets.push(("sort_order", Box::new(v)));
+        }
+        if let Some(v) = params.parent_task_id {
+            sets.push(("parent_task_id", Box::new(v)));
+        }
+        if let Some(v) = params.assignee_agent_id {
+            sets.push(("assignee_agent_id", Box::new(v)));
+        }
+        if sets.is_empty() {
+            anyhow::bail!("update_task: no fields provided");
+        }
+
+        let now = Utc::now().to_rfc3339();
+        sets.push(("updated_at", Box::new(now)));
+
+        let mut sql = String::from("UPDATE tasks SET ");
+        sql.push_str(
+            &sets
+                .iter()
+                .enumerate()
+                .map(|(i, (col, _))| format!("{col} = ?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        sql.push_str(&format!(" WHERE id = ?{}", sets.len() + 1));
+        let refs: Vec<&dyn rusqlite::ToSql> = sets.iter().map(|(_, v)| v.as_ref()).collect();
+        let mut bind = Vec::with_capacity(refs.len() + 1);
+        bind.extend(refs);
+        bind.push(&id);
+        let changed = conn.execute(&sql, bind.as_slice())?;
+        if changed == 0 {
+            anyhow::bail!("task {id} not found");
+        }
+        Ok(())
+    }
+
+    // ── Comments (RFC-043) ────────────────────────────────────────────
+
+    /// Add a comment to a task. `author_agent_id = None` means a human
+    /// comment. Errors when the parent task doesn't exist (FK).
+    pub async fn add_comment(
+        &self,
+        task_id: &str,
+        content: &str,
+        author_agent_id: Option<&str>,
+        author_session_id: Option<&str>,
+    ) -> Result<TaskComment> {
+        let conn = self.conn.lock().await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO task_comments (id, task_id, content, author_agent_id, \
+             author_session_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                task_id,
+                content,
+                author_agent_id,
+                author_session_id,
+                now
+            ],
+        )
+        .context("insert comment")?;
+        Ok(TaskComment {
+            id,
+            task_id: task_id.to_string(),
+            content: content.to_string(),
+            author_agent_id: author_agent_id.map(str::to_string),
+            author_session_id: author_session_id.map(str::to_string),
+            created_at: now,
+            updated_at: None,
+        })
+    }
+
+    /// Edit a comment's content (stamps `updated_at`). Unknown id errors.
+    pub async fn update_comment(&self, comment_id: &str, content: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let now = Utc::now().to_rfc3339();
+        let changed = conn.execute(
+            "UPDATE task_comments SET content = ?1, updated_at = ?2 WHERE id = ?3",
+            params![content, now, comment_id],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("comment {comment_id} not found");
+        }
+        Ok(())
+    }
+
+    /// Delete a comment. Unknown id errors.
+    pub async fn delete_comment(&self, comment_id: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let changed = conn.execute(
+            "DELETE FROM task_comments WHERE id = ?1",
+            params![comment_id],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("comment {comment_id} not found");
+        }
+        Ok(())
+    }
+
+    /// List a task's comments, oldest first.
+    pub async fn list_comments(&self, task_id: &str) -> Result<Vec<TaskComment>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, content, author_agent_id, author_session_id, \
+             created_at, updated_at FROM task_comments WHERE task_id = ?1 \
+             ORDER BY created_at, id",
+        )?;
+        let comments = stmt
+            .query_map(params![task_id], |r| {
+                Ok(TaskComment {
+                    id: r.get(0)?,
+                    task_id: r.get(1)?,
+                    content: r.get(2)?,
+                    author_agent_id: r.get(3)?,
+                    author_session_id: r.get(4)?,
+                    created_at: r.get(5)?,
+                    updated_at: r.get(6)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(comments)
+    }
+
+    // ── Dependencies (RFC-043) ────────────────────────────────────────
+
+    /// Make `task_id` depend on `depends_on`. Rejects self-edges, unknown
+    /// ids, duplicates, and edges that would create a cycle.
+    pub async fn add_dependency(&self, task_id: &str, depends_on: &str) -> Result<()> {
+        if task_id == depends_on {
+            anyhow::bail!("a task cannot depend on itself");
+        }
+        let conn = self.conn.lock().await;
+        for id in [task_id, depends_on] {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM tasks WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )?;
+            if n == 0 {
+                anyhow::bail!("task {id} not found");
+            }
+        }
+        let dup: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM task_dependencies \
+             WHERE task_id = ?1 AND depends_on = ?2",
+            params![task_id, depends_on],
+            |r| r.get(0),
+        )?;
+        if dup > 0 {
+            anyhow::bail!("dependency already exists");
+        }
+        if creates_cycle(&conn, task_id, depends_on) {
+            anyhow::bail!("adding this dependency would create a cycle");
+        }
+        conn.execute(
+            "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?1, ?2)",
+            params![task_id, depends_on],
+        )
+        .context("insert dependency")?;
+        Ok(())
+    }
+
+    /// Remove a dependency edge. Removing a missing edge errors.
+    pub async fn remove_dependency(&self, task_id: &str, depends_on: &str) -> Result<()> {
+        let conn = self.conn.lock().await;
+        let changed = conn.execute(
+            "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on = ?2",
+            params![task_id, depends_on],
+        )?;
+        if changed == 0 {
+            anyhow::bail!("dependency not found");
+        }
+        Ok(())
+    }
+
+    /// Dependency target ids for a task, insertion-ordered.
+    pub async fn dependency_ids(&self, task_id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().await;
+        dependency_ids_locked(&conn, task_id)
+    }
+
+    /// Dependencies not yet satisfied (target missing or not `completed`).
+    /// Used by the auto-run tick to gate execution.
+    pub async fn unsatisfied_dependencies(&self, task_id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().await;
+        let ids = dependency_ids_locked(&conn, task_id)?;
+        let mut unsatisfied = Vec::new();
+        for dep in ids {
+            let status: Option<String> = conn
+                .query_row(
+                    "SELECT status FROM tasks WHERE id = ?1",
+                    params![dep],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if status.as_deref() != Some("completed") {
+                unsatisfied.push(dep);
+            }
+        }
+        Ok(unsatisfied)
     }
 
     pub async fn list_due_tasks(&self) -> Result<Vec<Task>> {
@@ -291,18 +590,33 @@ impl TaskStore {
     /// If the task still has active automation and hasn't hit `max_executions`,
     /// recompute `next_run_at` and flip status back to `scheduled`; otherwise
     /// leave it terminal (`completed`/`failed`).
+    ///
+    /// `verified` marks the run `verified` (verify gate passed) — the task's
+    /// own status is still `completed`.
+    ///
+    /// Failure fuse (RFC-043): only scheduled/heartbeat failures increment
+    /// `consecutive_failures` (read from the run's `trigger`); manual-run
+    /// failures never touch it. At ≥ 3 consecutive auto failures the task is
+    /// PAUSED (no reschedule) with a `last_error` fuse note.
     pub async fn mark_finished(
         &self,
         id: &str,
         run_id: &str,
         success: bool,
+        verified: bool,
         summary: String,
         error: Option<String>,
     ) -> Result<()> {
         let conn = self.conn.lock().await;
         let now = Utc::now();
         let now_rfc = now.to_rfc3339();
-        let run_status = if success { "completed" } else { "failed" };
+        let run_status = if verified && success {
+            "verified"
+        } else if success {
+            "completed"
+        } else {
+            "failed"
+        };
 
         // 1. task_runs row: terminal status + payload + completed_at.
         conn.execute(
@@ -312,37 +626,64 @@ impl TaskStore {
         )?;
 
         // 2. Read automation config + counts to decide terminal vs. reschedule.
-        let (mode, pattern, hb_secs, exec_count, max_exec, consec_failures): (
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-            i64,
-            Option<i64>,
-            i64,
-        ) = conn.query_row(
-            "SELECT automation_mode, schedule_pattern, heartbeat_interval_secs, \
-             execution_count, max_executions, consecutive_failures FROM tasks WHERE id = ?1",
-            params![id],
+        #[derive(Debug)]
+        struct FinishCtx {
+            mode: Option<String>,
+            pattern: Option<String>,
+            hb_secs: Option<i64>,
+            exec_count: i64,
+            max_exec: Option<i64>,
+            consec_failures: i64,
+            trigger: String,
+        }
+        let ctx: FinishCtx = conn.query_row(
+            "SELECT t.automation_mode, t.schedule_pattern, t.heartbeat_interval_secs, \
+             t.execution_count, t.max_executions, t.consecutive_failures, r.trigger \
+             FROM tasks t JOIN task_runs r ON r.id = ?2 WHERE t.id = ?1",
+            params![id, run_id],
             |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
+                Ok(FinishCtx {
+                    mode: r.get(0)?,
+                    pattern: r.get(1)?,
+                    hb_secs: r.get(2)?,
+                    exec_count: r.get(3)?,
+                    max_exec: r.get(4)?,
+                    consec_failures: r.get(5)?,
+                    trigger: r.get(6)?,
+                })
             },
         )?;
+        let FinishCtx {
+            mode,
+            pattern,
+            hb_secs,
+            exec_count,
+            max_exec,
+            consec_failures,
+            trigger,
+        } = ctx;
 
         let new_count = exec_count + 1;
         let exhausted = max_exec.is_some_and(|m| new_count >= m);
+        // Fuse: only automation-triggered failures count; manual runs never do.
+        let auto_failure = !success && trigger != "manual";
+        let new_consec = if success {
+            0
+        } else if auto_failure {
+            consec_failures + 1
+        } else {
+            consec_failures
+        };
+        let fused = new_consec >= 3 && !success;
+        if fused {
+            tracing::warn!(task = %id, consecutive = new_consec, "Task fuse tripped — paused");
+        }
 
-        // Recompute next_run only on success and when automation is active
-        // and not exhausted. On failure we still reschedule (transient errors
-        // shouldn't permanently disable a scheduled task) but cap via
-        // consecutive_failures.
-        let reschedule = mode.is_some() && !exhausted;
+        // Recompute next_run only when automation is active, not exhausted,
+        // and the fuse hasn't tripped. On ordinary failure we still
+        // reschedule (transient errors shouldn't permanently disable a
+        // scheduled task) — the fuse caps that.
+        let reschedule = mode.is_some() && !exhausted && !fused;
         let next_run = if reschedule {
             match mode.as_deref() {
                 Some("schedule") => pattern.as_deref().and_then(|p| cron_next(p, &now).ok()),
@@ -355,15 +696,23 @@ impl TaskStore {
             None
         };
 
-        let terminal_status = if reschedule {
+        let terminal_status = if fused {
+            "paused"
+        } else if reschedule {
             "scheduled"
         } else if success {
             "completed"
         } else {
             "failed"
         };
-        // Reset consecutive_failures to 0 on success; increment on failure.
-        let new_consec = if success { 0 } else { consec_failures + 1 };
+        let last_error = if fused {
+            Some(format!(
+                "Paused after 3 consecutive failures: {}",
+                error.as_deref().unwrap_or("unknown error")
+            ))
+        } else {
+            error
+        };
         conn.execute(
             r#"UPDATE tasks SET
                  status = ?1, execution_count = ?2,
@@ -374,9 +723,13 @@ impl TaskStore {
             params![
                 terminal_status,
                 new_count,
-                if !reschedule { Some(&now_rfc) } else { None },
+                if !reschedule && !fused {
+                    Some(&now_rfc)
+                } else {
+                    None
+                },
                 new_consec,
-                error,
+                last_error,
                 next_run,
                 now_rfc,
                 id,
@@ -513,8 +866,23 @@ fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_task_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_next_run ON tasks(next_run_at);
         CREATE INDEX IF NOT EXISTS idx_runs_task ON task_runs(task_id);
+        CREATE INDEX IF NOT EXISTS idx_comments_task ON task_comments(task_id);
+        CREATE INDEX IF NOT EXISTS idx_task_deps ON task_dependencies(depends_on);
         "#,
     )?;
+
+    // Guarded column migration: `task_comments.author_session_id` was added
+    // after the table first shipped (RFC-043 completion). SQLite has no
+    // `ADD COLUMN IF NOT EXISTS`, so probe pragma first.
+    let mut stmt = conn.prepare("PRAGMA table_info(task_comments)")?;
+    let has_session_col = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .any(|name| name == "author_session_id");
+    drop(stmt);
+    if !has_session_col {
+        conn.execute_batch("ALTER TABLE task_comments ADD COLUMN author_session_id TEXT;")?;
+    }
 
     Ok(())
 }
@@ -609,6 +977,38 @@ fn cron_next(pattern: &str, after: &DateTime<Utc>) -> Result<String> {
     Ok(next.to_rfc3339())
 }
 
+/// Dependency target ids for a task, insertion-ordered (rowid order).
+/// Caller must hold the connection lock.
+fn dependency_ids_locked(conn: &Connection, task_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT depends_on FROM task_dependencies WHERE task_id = ?1")?;
+    let ids = stmt
+        .query_map(params![task_id], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(ids)
+}
+
+/// Whether adding `task_id → depends_on` would create a cycle: walk
+/// forward from `depends_on` through existing edges; reaching `task_id`
+/// means the new edge closes a loop.
+fn creates_cycle(conn: &Connection, task_id: &str, depends_on: &str) -> bool {
+    let mut stack = vec![depends_on.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(cur) = stack.pop() {
+        if cur == task_id {
+            return true;
+        }
+        if !seen.insert(cur.clone()) {
+            continue;
+        }
+        let Ok(next) = dependency_ids_locked(conn, &cur) else {
+            continue;
+        };
+        stack.extend(next);
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,6 +1022,8 @@ mod tests {
             priority: None,
             parent_task_id: None,
             assignee_agent_id: None,
+            created_by_agent_id: None,
+            created_by_session_id: None,
             sort_order: None,
         }
     }
@@ -814,7 +1216,7 @@ mod tests {
         assert!(mid.started_at.is_some());
 
         store
-            .mark_finished(&t.id, &run_id, true, "ok".into(), None)
+            .mark_finished(&t.id, &run_id, true, false, "ok".into(), None)
             .await
             .unwrap();
         let done = store.get_task_by_id(&t.id).await.unwrap();
@@ -855,7 +1257,14 @@ mod tests {
                 .await
                 .unwrap();
             store
-                .mark_finished(&t.id, &rid, false, String::new(), Some("boom".into()))
+                .mark_finished(
+                    &t.id,
+                    &rid,
+                    false,
+                    false,
+                    String::new(),
+                    Some("boom".into()),
+                )
                 .await
                 .unwrap();
         }
@@ -868,7 +1277,7 @@ mod tests {
             .await
             .unwrap();
         store
-            .mark_finished(&t.id, &rid, true, "recovered".into(), None)
+            .mark_finished(&t.id, &rid, true, false, "recovered".into(), None)
             .await
             .unwrap();
         let after_ok = store.get_task_by_id(&t.id).await.unwrap();
@@ -899,7 +1308,7 @@ mod tests {
                 .await
                 .unwrap();
             store
-                .mark_finished(&t.id, &rid, true, "ok".into(), None)
+                .mark_finished(&t.id, &rid, true, false, "ok".into(), None)
                 .await
                 .unwrap();
         }
@@ -962,5 +1371,285 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, "failed");
         assert!(runs[0].error.is_some());
+    }
+
+    // ── Verify config + partial update (RFC-043 completion) ──
+
+    #[tokio::test]
+    async fn set_verify_persists_and_errors_on_unknown() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store.create_task(sample_params("fonts")).await.unwrap();
+        store
+            .set_verify(
+                &t.id,
+                SetVerifyParams {
+                    enabled: Some(true),
+                    requirement: Some("Must include 3 pairings".into()),
+                    max_iterations: Some(5),
+                    verifier_agent_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        let got = store.get_task_by_id(&t.id).await.unwrap();
+        assert!(got.verify_enabled);
+        assert_eq!(
+            got.verify_requirement.as_deref(),
+            Some("Must include 3 pairings")
+        );
+        assert_eq!(got.verify_max_iterations, 5);
+
+        // Unknown id errors instead of silently succeeding.
+        assert!(
+            store
+                .set_verify("nope", SetVerifyParams::default())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn update_task_partial_updates_only_provided() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store.create_task(sample_params("partial")).await.unwrap();
+        store
+            .update_task(
+                &t.id,
+                UpdateTaskParams {
+                    name: Some("Renamed".into()),
+                    priority: Some(2),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let got = store.get_task_by_id(&t.id).await.unwrap();
+        assert_eq!(got.name, "Renamed");
+        assert_eq!(got.instruction, t.instruction, "instruction untouched");
+        assert_eq!(got.priority, 2);
+
+        // Empty update is rejected (nothing to do).
+        assert!(
+            store
+                .update_task(&t.id, UpdateTaskParams::default())
+                .await
+                .is_err()
+        );
+        // Unknown id errors.
+        assert!(
+            store
+                .update_task(
+                    "nope",
+                    UpdateTaskParams {
+                        name: Some("x".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    // ── Verified runs + trigger-aware failure fuse ──
+
+    #[tokio::test]
+    async fn verified_run_marks_run_verified_and_task_completed() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store.create_task(sample_params("vrun")).await.unwrap();
+        let rid = store
+            .mark_running(&t.id, TaskRunTrigger::Manual)
+            .await
+            .unwrap();
+        store
+            .mark_finished(&t.id, &rid, true, true, "done".into(), None)
+            .await
+            .unwrap();
+        let task = store.get_task_by_id(&t.id).await.unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+        let runs = store.list_runs(&t.id).await.unwrap();
+        assert_eq!(runs[0].status, "verified");
+    }
+
+    #[tokio::test]
+    async fn manual_failure_does_not_touch_fuse() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store
+            .create_task(sample_params("manualfuse"))
+            .await
+            .unwrap();
+        for _ in 0..4 {
+            let rid = store
+                .mark_running(&t.id, TaskRunTrigger::Manual)
+                .await
+                .unwrap();
+            store
+                .mark_finished(
+                    &t.id,
+                    &rid,
+                    false,
+                    false,
+                    String::new(),
+                    Some("boom".into()),
+                )
+                .await
+                .unwrap();
+        }
+        let task = store.get_task_by_id(&t.id).await.unwrap();
+        assert_eq!(task.consecutive_failures, 0, "manual failures never count");
+        assert_eq!(
+            task.status,
+            TaskStatus::Failed,
+            "terminal without automation"
+        );
+    }
+
+    #[tokio::test]
+    async fn fuse_pauses_after_three_auto_failures() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store.create_task(sample_params("fuse")).await.unwrap();
+        store
+            .set_automation(
+                &t.id,
+                SetScheduleParams {
+                    automation_mode: Some(TaskAutomationMode::Heartbeat),
+                    heartbeat_interval_secs: Some(60),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            let rid = store
+                .mark_running(&t.id, TaskRunTrigger::Heartbeat)
+                .await
+                .unwrap();
+            store
+                .mark_finished(
+                    &t.id,
+                    &rid,
+                    false,
+                    false,
+                    String::new(),
+                    Some("boom".into()),
+                )
+                .await
+                .unwrap();
+        }
+        let task = store.get_task_by_id(&t.id).await.unwrap();
+        assert_eq!(task.status, TaskStatus::Paused, "fused → paused");
+        assert!(task.next_run_at.is_none(), "paused → no reschedule");
+        assert!(
+            task.last_error
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("Paused after 3 consecutive failures"),
+            "error carries the fuse note: {:?}",
+            task.last_error
+        );
+    }
+
+    // ── Comments (RFC-043) ──
+
+    #[tokio::test]
+    async fn comments_roundtrip_update_delete_and_cascade() {
+        let store = TaskStore::in_memory().unwrap();
+        let t = store.create_task(sample_params("cmt")).await.unwrap();
+        let c1 = store.add_comment(&t.id, "first", None, None).await.unwrap();
+        let c2 = store
+            .add_comment(&t.id, "second", Some("agent-7"), Some("sess-1"))
+            .await
+            .unwrap();
+        assert_eq!(c1.content, "first");
+        assert_eq!(c2.author_agent_id.as_deref(), Some("agent-7"));
+
+        let listed = store.list_comments(&t.id).await.unwrap();
+        assert_eq!(listed.len(), 2, "oldest first");
+        assert_eq!(listed[0].id, c1.id);
+        assert_eq!(listed[1].id, c2.id);
+
+        store.update_comment(&c1.id, "edited").await.unwrap();
+        let listed = store.list_comments(&t.id).await.unwrap();
+        assert_eq!(listed[0].content, "edited");
+        assert!(listed[0].updated_at.is_some());
+        assert!(
+            store.update_comment("nope", "x").await.is_err(),
+            "unknown comment errors"
+        );
+
+        store.delete_comment(&c2.id).await.unwrap();
+        assert_eq!(store.list_comments(&t.id).await.unwrap().len(), 1);
+
+        // Comment on an unknown task errors (FK enforced).
+        assert!(store.add_comment("ghost", "x", None, None).await.is_err());
+
+        // Deleting the task cascades comments.
+        store.delete_task(&t.id).await.unwrap();
+        assert_eq!(store.list_comments(&t.id).await.unwrap().len(), 0);
+    }
+
+    // ── Dependencies (RFC-043) ──
+
+    #[tokio::test]
+    async fn dependencies_add_list_remove_and_populates_task_field() {
+        let store = TaskStore::in_memory().unwrap();
+        let a = store.create_task(sample_params("dep-a")).await.unwrap();
+        let b = store.create_task(sample_params("dep-b")).await.unwrap();
+        store.add_dependency(&a.id, &b.id).await.unwrap();
+
+        let got = store.get_task_by_id(&a.id).await.unwrap();
+        assert_eq!(got.dependencies, vec![b.id.clone()]);
+        let listed = store.list_tasks(ListTasksParams::default()).await.unwrap();
+        let a_row = listed.iter().find(|t| t.id == a.id).unwrap();
+        assert_eq!(a_row.dependencies, vec![b.id.clone()]);
+
+        assert_eq!(store.dependency_ids(&a.id).await.unwrap().len(), 1);
+        // Unsatisfied while B is backlog.
+        assert_eq!(
+            store.unsatisfied_dependencies(&a.id).await.unwrap().len(),
+            1
+        );
+        store
+            .update_status(&b.id, &TaskStatus::Completed)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .unsatisfied_dependencies(&a.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        store.remove_dependency(&a.id, &b.id).await.unwrap();
+        assert_eq!(store.dependency_ids(&a.id).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn dependencies_reject_self_duplicate_unknown_and_cycles() {
+        let store = TaskStore::in_memory().unwrap();
+        let a = store.create_task(sample_params("cy-a")).await.unwrap();
+        let b = store.create_task(sample_params("cy-b")).await.unwrap();
+        let c = store.create_task(sample_params("cy-c")).await.unwrap();
+
+        // Self-edge.
+        let err = store.add_dependency(&a.id, &a.id).await.unwrap_err();
+        assert!(err.to_string().contains("itself"), "{err}");
+        // Unknown dependency target.
+        let err = store.add_dependency(&a.id, "ghost").await.unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+
+        // a → b → c, then c → a must be rejected as a cycle.
+        store.add_dependency(&a.id, &b.id).await.unwrap();
+        store.add_dependency(&b.id, &c.id).await.unwrap();
+        let err = store.add_dependency(&c.id, &a.id).await.unwrap_err();
+        assert!(err.to_string().contains("cycle"), "{err}");
+
+        // Duplicate is a no-op error.
+        let err = store.add_dependency(&a.id, &b.id).await.unwrap_err();
+        assert!(err.to_string().contains("already"), "{err}");
+
+        // Deleting a task cascades its dependency edges.
+        store.delete_task(&b.id).await.unwrap();
+        assert!(store.dependency_ids(&a.id).await.unwrap().is_empty());
     }
 }

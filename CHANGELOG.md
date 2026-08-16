@@ -5,9 +5,46 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.41.0] - 2026-08-16
 
 ### Added
+- **RFC-043 complete: task management end-to-end** —
+  - **Verify gate**: `TaskStore::set_verify` persists
+    `verify_enabled`/`verify_requirement`/`verify_max_iterations`/
+    `verify_verifier_agent_id`; a run with the gate armed is checked by a
+    separate verifier conversation and, on FAIL, repaired with the
+    verifier's feedback (bounded by one shared deadline). Runs finalize as
+    `verified`; the web run history shows a verified badge. `PUT
+    /api/tasks/:id/verify` now persists (it previously echoed its input).
+  - **`task` agent tool** (Phase 2): create, create_batch, list, view,
+    edit, update_status, set_schedule, set_verify, run, add_comment,
+    delete. `run` is fire-and-forget through the shared runner; agent
+    creations/comments are stamped with the agent + session id.
+  - **Failure fuse** (Phase 5): three consecutive scheduled/heartbeat
+    failures pause a task (`paused`, no reschedule) with a fuse note in
+    `last_error`; manual-run failures never count.
+  - **Comments & dependencies** (Phase 1 remainder): store CRUD + HTTP
+    routes + web UI (thread, add/remove with cycle-guard errors surfaced);
+    dependency graph (d3-force) in the task detail dialog; auto-run tick
+    defers tasks whose dependencies aren't all completed.
+  - **Edit + batch**: `PUT /api/tasks/:id` partial update, `POST
+    /api/tasks/batch`, task edit dialog in the web UI.
+  - **Cron → task migration** (Phase 5): `POST /api/tasks/migrate-cron`
+    with `dryRun` preview; "Migrate to tasks" action on /cron-jobs.
+    Copy-based — cron jobs are left in place.
+  - Task execution consolidated into `oxios-kernel`'s
+    `task::runner::execute_task_run` (manual endpoint, auto-run tick, and
+    agent tool share one path); `KernelHandle` owns the TaskStore.
+
+### Fixed
+- Task API wire format: task DTOs now serialize camelCase, matching the
+  web types that shipped reading camelCase (multi-word fields such as
+  `verifyEnabled`, `nextRunAt`, and `createdAt` previously surfaced as
+  `undefined` in the web UI; create/update params with multi-word keys
+  were silently dropped).
+- Mount auto-promotion scanner is now stopped during graceful shutdown
+  (Promo-6 wiring); stale TODOs resolved in the WS done-chunk
+  `tool_calls` path and `oxios-markdown::should_split_checklist`.
 - **Telegram instant connect from the Web UI** — Settings → Telegram now has
   a connection card: paste the @BotFather token, press Connect, and the
   bot starts immediately (no daemon restart). New `POST /api/channels/{name}/connect`

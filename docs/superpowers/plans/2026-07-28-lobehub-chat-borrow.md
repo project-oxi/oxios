@@ -1,4 +1,5 @@
 # LobeHub Chat Borrow (Virtualization + Shiny Thinking) Implementation Plan
+> **Status**: Shipped — v1.31.x–1.33.0 (ChatMiniMap, chat UX polish)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

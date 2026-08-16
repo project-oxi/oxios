@@ -1,4 +1,5 @@
 # Knowledge × Search Integration Implementation Plan
+> **Status**: Shipped — 2026-07 (chat mention knowledge search)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use executing-plans to implement.
 

@@ -1,6 +1,6 @@
 # RFC-044 — Remote Access, Mobile Companion & Multi-Agent Coding UX
 
-> **Status:** DESIGN (awaiting implementation plan). 2026-08-04.
+> **Status:** Implemented (v1.37.0) — Phases 1–4
 > **Supersedes:** [`2026-07-29-remote-access-architecture-design.md.superseded`](designs/deferred/2026-07-29-remote-access-architecture-design.md.superseded) and [`2026-07-29-managed-relay-architecture.md`](designs/deferred/2026-07-29-managed-relay-architecture.md) (both in `designs/deferred/`).
 > **Reference project:** [`orca`](https://github.com/stablyai/orca) — cloned at `/Volumes/MERCURY/PROJECTS/orca` (MIT). Joins `lobehub-analysis/` as a living reference.
 > **Scope:** How Oxios is securely reached from any device (native mobile companion + browser), and how multi-purpose agents (coding / Q&A / longform) are expressed as personas with role-specific UI.

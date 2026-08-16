@@ -1,7 +1,7 @@
 # Context Compression — Design Spec
 
 > **Date**: 2026-07-28
-> **Status**: Draft
+> **Status**: Implemented (2026-07-31)
 > **Scope**: Backend LLM summarization + frontend Summary/History tabs in CompressedGroup
 > **Reference**: LobeHub `compressContext` pipeline, ported to Oxios architecture
 

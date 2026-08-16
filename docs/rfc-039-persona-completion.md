@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Implemented (2026-08, v1.38.0 audit) |
 | **Author** | Persona system analysis (kernel team) |
 | **Scope** | `crates/oxios-kernel/src/persona/`, `src/api/persona_routes.rs`, `src/kernel.rs:880`, `web/src/components/command-palette/switch.tsx`, `web/src/routes/personas.tsx` |
 

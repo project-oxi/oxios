@@ -1,6 +1,6 @@
 # RFC-047: Oxibrain Migration — Retire `oxios-memory`, Route Through the Brain
 
-> **Status**: Proposed (oxibrain-side M5 complete; oxios-side work remains)
+> **Status**: Implemented (v1.40.0, 2026-08-15)
 > **Supersedes**: RFC-018 (oxios-memory extraction) — kept as historical record
 > **Author**: oxibrain × oxios handoff, 2026-08-13
 > **Depends on**: `oxibrain` crate (Consumption Contract 1.0, `doc/CONSUMPTION_CONTRACT.md`);

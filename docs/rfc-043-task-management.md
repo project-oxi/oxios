@@ -1,6 +1,7 @@
 # RFC-043: Task Management System
 
 > Ported from LobeHub's `builtin-tool-task` — full agent task lifecycle management.
+> **Status**: Implemented (2026-08-16) — see docs/designs/2026-08-16-rfc-043-completion-design.md
 
 ## Overview
 
@@ -423,3 +424,22 @@ web/src/
 └── types/
     └── task.ts             — TypeScript types
 ```
+
+## Implementation notes (2026-08-16 completion)
+
+- **Verify loop semantics** — execution, verification, and repair re-runs
+  share ONE deadline (`timeout_secs`); a verify-enabled run can never exceed
+  the caller's ceiling. An unparseable verifier verdict is a FAIL (an
+  unreadable verdict must never accept work).
+- **A2A delegation is a non-goal for task execution** —
+  `A2AProtocol::delegate_task` is fire-and-forget messaging with no result
+  return; wiring `assignee_agent_id` through it would produce runs that never
+  record outcomes. Assignee stays metadata + list filter.
+- **Run cost/token columns stay NULL** — `OrchestrationResult` carries no
+  usage data; `task_runs.cost_usd`/`tokens_used` await SDK-side per-run
+  usage. The schema supports backfill.
+- **Cron migration is copy-based** — jobs are never deleted or disabled by
+  migration; retiring a cron job stays an explicit user decision.
+- **Wire format** — task DTOs serialize camelCase (matching the shipped web
+  types); the `task` agent tool keeps its snake_case schema via serde
+  aliases.

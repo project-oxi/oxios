@@ -110,6 +110,7 @@ impl std::str::FromStr for TaskRunTrigger {
 // ── Core structs ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
     pub identifier: String,
@@ -177,6 +178,7 @@ fn default_verify_iterations() -> u32 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskComment {
     pub id: String,
     pub task_id: String,
@@ -191,6 +193,7 @@ pub struct TaskComment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskRun {
     pub id: String,
     pub task_id: String,
@@ -221,6 +224,7 @@ fn default_run_status() -> String {
 // ── Create params ──
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateTaskParams {
     pub name: String,
     pub instruction: String,
@@ -230,25 +234,26 @@ pub struct CreateTaskParams {
     pub description: Option<String>,
     #[serde(default)]
     pub priority: Option<u8>,
-    #[serde(default)]
+    #[serde(default, alias = "parent_task_id")]
     pub parent_task_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "assignee_agent_id")]
     pub assignee_agent_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "created_by_agent_id")]
     pub created_by_agent_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "created_by_session_id")]
     pub created_by_session_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "sort_order")]
     pub sort_order: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ListTasksParams {
     #[serde(default)]
     pub statuses: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, alias = "assignee_agent_id")]
     pub assignee_agent_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "parent_task_id")]
     pub parent_task_id: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
@@ -257,31 +262,44 @@ pub struct ListTasksParams {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SetScheduleParams {
+    #[serde(default, alias = "automation_mode")]
     pub automation_mode: Option<TaskAutomationMode>,
+    #[serde(default, alias = "schedule_pattern")]
     pub schedule_pattern: Option<String>,
+    #[serde(default, alias = "schedule_timezone")]
     pub schedule_timezone: Option<String>,
+    #[serde(default, alias = "heartbeat_interval_secs")]
     pub heartbeat_interval_secs: Option<u64>,
+    #[serde(default, alias = "max_executions")]
     pub max_executions: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SetVerifyParams {
     pub enabled: Option<bool>,
     pub requirement: Option<String>,
+    #[serde(default, alias = "max_iterations")]
     pub max_iterations: Option<u32>,
+    #[serde(default, alias = "verifier_agent_id")]
     pub verifier_agent_id: Option<String>,
 }
 
 /// Partial task update — `None` fields are left unchanged (RFC-043).
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateTaskParams {
     pub name: Option<String>,
     pub description: Option<String>,
     pub instruction: Option<String>,
     pub priority: Option<u8>,
+    #[serde(default, alias = "sort_order")]
     pub sort_order: Option<f64>,
+    #[serde(default, alias = "parent_task_id")]
     pub parent_task_id: Option<String>,
+    #[serde(default, alias = "assignee_agent_id")]
     pub assignee_agent_id: Option<String>,
 }
 

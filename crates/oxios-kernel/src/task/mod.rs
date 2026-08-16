@@ -5,7 +5,7 @@ pub mod model;
 pub mod runner;
 pub mod store;
 
-pub use migrate::{CronMigrationReport, migrate_cron_to_tasks};
+pub use migrate::{CronMigrationReport, CronMigrationSkipped, migrate_cron_to_tasks};
 pub use model::*;
 pub use runner::{
     cron_next_after, execute_task_run, parse_verdict, repair_prompt, verifier_prompt,

@@ -1,6 +1,6 @@
 [package]
 name = "oxios"
-version = "1.40.0"
+version = "1.41.0"
 edition = "2024"
 description = "Oxios Agent OS — Agent Operating System powered by oxicode-sdk"
 license = "MIT"

@@ -1,6 +1,6 @@
 [package]
 name = "oxios-kernel"
-version = "1.40.0"
+version = "1.41.0"
 edition = "2024"
 description = "Oxios kernel: supervisor, event bus, state store"
 license = "MIT"

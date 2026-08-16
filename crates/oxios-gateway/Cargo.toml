@@ -1,6 +1,6 @@
 [package]
 name = "oxios-gateway"
-version = "1.40.0"
+version = "1.41.0"
 edition = "2024"
 description = "Channel-agnostic message gateway for Oxios"
 license = "MIT"

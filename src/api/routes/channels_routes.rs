@@ -44,6 +44,7 @@ pub(crate) fn token_source_label(source: Option<CredentialSource>) -> Option<&'s
         Some(CredentialSource::EnvVar) => Some("env"),
         Some(CredentialSource::OxicodeAuthStore) => Some("auth_store"),
         Some(CredentialSource::Config) => Some("config"),
+        Some(CredentialSource::FoundationKeychain) => Some("foundation_keychain"),
         None => None,
     }
 }

@@ -6,13 +6,17 @@ use super::prompt::{compact_path, format_skills_for_prompt};
 use super::requirements::check_requirements;
 use super::types::*;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::sync::RwLock;
 
 pub struct SkillManager {
     skills_dir: PathBuf,
     bundled_dir: PathBuf,
+    /// Foundation lockfile + archive dir (RFC-048 §4). `None` until
+    /// [`SkillManager::with_foundation`] attaches a home.
+    foundation_lock: Option<PathBuf>,
+    foundation_packages_dir: Option<PathBuf>,
     installed: RwLock<HashMap<String, SkillEntry>>,
 }
 impl std::fmt::Debug for SkillManager {
@@ -28,8 +32,21 @@ impl SkillManager {
         Self {
             skills_dir,
             bundled_dir,
+            foundation_lock: None,
+            foundation_packages_dir: None,
             installed: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Attach the Foundation shared-package registry (RFC-048 §4).
+    ///
+    /// `home` is the user home holding `~/.oxi/foundation/v1`. After this,
+    /// [`Self::init`] loads verified packages between the bundled defaults
+    /// and the user skills dir — bundled < Foundation < user/workspace.
+    pub fn with_foundation(mut self, home: &Path) -> Self {
+        self.foundation_lock = Some(crate::foundation::packages::default_lock_path(home));
+        self.foundation_packages_dir = Some(crate::foundation::packages_dir(home));
+        self
     }
     pub async fn init(&self) -> Result<()> {
         if !self.skills_dir.exists() {
@@ -43,6 +60,9 @@ impl SkillManager {
             self.load_skills_from_dir(&self.bundled_dir, true, &mut map)
                 .await?;
         }
+        // RFC-048 §4 precedence: bundled defaults first, then verified
+        // Foundation packages, then user/workspace skills (later wins).
+        self.load_foundation_packages(&mut map).await?;
         self.load_skills_from_dir(&self.skills_dir, false, &mut map)
             .await?;
         *self.installed.write().await = map;
@@ -68,6 +88,19 @@ impl SkillManager {
         _agent_id: Option<&str>,
         skill_filter: Option<&[String]>,
     ) -> SkillSnapshot {
+        self.build_snapshot_for(_agent_id, skill_filter, None).await
+    }
+
+    /// Persona-aware snapshot (RFC-048 §4). Foundation packages that
+    /// declare a persona hint contribute content only to agents running
+    /// that persona — a request never receives every shared `SKILL.md`.
+    /// Every contributing package's verified digest is recorded for audit.
+    pub async fn build_snapshot_for(
+        &self,
+        _agent_id: Option<&str>,
+        skill_filter: Option<&[String]>,
+        persona: Option<&str>,
+    ) -> SkillSnapshot {
         let entries = self.list_skills().await;
         let visible: Vec<&SkillEntry> = entries
             .iter()
@@ -75,6 +108,7 @@ impl SkillManager {
                 e.status != SkillStatus::Disabled
                     && e.eligibility.eligible
                     && !e.invocation.disable_model_invocation
+                    && persona_hint_matches(persona, e.foundation.as_ref())
             })
             .collect();
         let filtered: Vec<&SkillEntry> = if let Some(f) = skill_filter {
@@ -84,6 +118,14 @@ impl SkillManager {
                 .collect()
         } else {
             visible
+        };
+        let foundation_packages = {
+            let mut seen = std::collections::BTreeSet::new();
+            filtered
+                .iter()
+                .filter_map(|e| e.foundation.clone())
+                .filter(|f| seen.insert(f.id.clone()))
+                .collect()
         };
         SkillSnapshot {
             prompt: format_skills_for_prompt(&filtered),
@@ -107,11 +149,20 @@ impl SkillManager {
                 })
                 .collect(),
             skill_filter: skill_filter.map(|f| f.to_vec()),
+            foundation_packages,
         }
     }
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<()> {
         let mut installed = self.installed.write().await;
         if let Some(entry) = installed.get_mut(name) {
+            // Foundation packages are immutable (RFC-048 §4) — no in-place
+            // state writes into the shared registry tree.
+            if entry.foundation.is_some() {
+                anyhow::bail!(
+                    "skill '{name}' comes from a read-only Foundation package; \
+                     import a local copy to customize it"
+                );
+            }
             let state = SkillState {
                 enabled,
                 installed_at: chrono::Utc::now().to_rfc3339(),
@@ -413,6 +464,146 @@ impl SkillManager {
             } else {
                 SkillSource::Managed
             },
+            foundation: None,
+            invocation: parsed.invocation,
+            format: parsed.format,
+            raw_yaml: parsed.raw_yaml,
+        })
+    }
+
+    /// Load verified Foundation shared packages into the skill map
+    /// (RFC-048 §4). Read-only: never writes the lockfile or the
+    /// Foundation tree. A missing lock is not an error — Foundation is
+    /// optional. Each package is gated individually through
+    /// [`crate::foundation::packages::PackageLock::import`] so one bad
+    /// digest never hides the healthy packages behind it.
+    async fn load_foundation_packages(&self, map: &mut HashMap<String, SkillEntry>) -> Result<()> {
+        let Some(lock_path) = self.foundation_lock.clone() else {
+            return Ok(());
+        };
+        let raw = match tokio::fs::read_to_string(&lock_path).await {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                tracing::warn!(error = %e, path = %lock_path.display(), "foundation lock unreadable");
+                return Ok(());
+            }
+        };
+        let lock = match crate::foundation::packages::PackageLock::parse(&raw) {
+            Ok(lock) => lock,
+            Err(e) => {
+                tracing::warn!(error = %e, "foundation package lock rejected; skipping");
+                return Ok(());
+            }
+        };
+        let dir = self.foundation_packages_dir.clone().unwrap_or_else(|| {
+            lock_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default()
+        });
+        for entry in &lock.entries {
+            let archive_path = dir.join(format!("{}.zip", entry.id));
+            let bytes = match std::fs::read(&archive_path) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    tracing::warn!(error = %e, path = %archive_path.display(), "foundation package archive missing; skipped");
+                    continue;
+                }
+            };
+            // Digest/trust gate through the same importer the CLI uses.
+            let single = crate::foundation::packages::PackageLock {
+                schema_version: lock.schema_version,
+                entries: vec![entry.clone()],
+            };
+            let mut archives = BTreeMap::new();
+            archives.insert(entry.id.clone(), bytes.clone());
+            let imported = match single.import(&archives) {
+                Ok(mut imported) => imported.remove(0),
+                Err(e) => {
+                    tracing::warn!(error = %e, id = %entry.id, "foundation package rejected");
+                    continue;
+                }
+            };
+            match Self::load_foundation_entry(&imported, &bytes, &dir) {
+                Ok(skill_entry) => {
+                    tracing::info!(id = %entry.id, digest = %entry.digest, "foundation package loaded");
+                    map.insert(skill_entry.skill.name.clone(), skill_entry);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, id = %entry.id, "foundation package skill parse failed");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse one verified Foundation package archive into a skill entry.
+    /// Entirely in memory — the Foundation tree stays read-only.
+    fn load_foundation_entry(
+        pkg: &crate::foundation::packages::ImportedPackage,
+        bytes: &[u8],
+        dir: &Path,
+    ) -> Result<SkillEntry> {
+        use std::io::Read;
+
+        let cursor = std::io::Cursor::new(bytes);
+        let mut zip = zip::ZipArchive::new(cursor).context("read foundation package archive")?;
+        // Prefer the shallowest SKILL.md (package root) over nested copies.
+        let mut skill_md: Option<String> = None;
+        for i in 0..zip.len() {
+            let name = zip.by_index(i)?.name().to_string();
+            if name.ends_with("SKILL.md")
+                && skill_md
+                    .as_deref()
+                    .is_none_or(|best| name.len() < best.len())
+            {
+                skill_md = Some(name);
+            }
+        }
+        let entry_name = skill_md.context("no SKILL.md found in foundation package")?;
+        let mut raw = String::new();
+        zip.by_name(&entry_name)
+            .with_context(|| format!("extract {entry_name}"))?
+            .read_to_string(&mut raw)?;
+
+        let pkg_dir = dir.join(&pkg.id);
+        let (parsed, body) = parse_skill(&raw, &pkg_dir)?;
+        let name = if parsed.name.is_empty() {
+            sanitize_skill_name(&pkg.id)
+        } else {
+            parsed.name.clone()
+        };
+        let (eligibility, status) = {
+            let check = check_requirements(&parsed.metadata);
+            let status = if check.eligible {
+                SkillStatus::Ready
+            } else {
+                SkillStatus::NeedsSetup
+            };
+            (check, status)
+        };
+        let skill_file = pkg_dir.join("SKILL.md");
+        Ok(SkillEntry {
+            skill: Skill {
+                name,
+                description: parsed.description,
+                content: body,
+                path: skill_file.clone(),
+                base_dir: pkg_dir,
+                file_path: skill_file,
+            },
+            metadata: Some(parsed.metadata),
+            eligibility,
+            status,
+            bundled: false,
+            source: SkillSource::Foundation,
+            foundation: Some(FoundationPackageInfo {
+                id: pkg.id.clone(),
+                version: pkg.version.clone(),
+                digest: pkg.digest.clone(),
+                persona: pkg.persona.clone(),
+            }),
             invocation: parsed.invocation,
             format: parsed.format,
             raw_yaml: parsed.raw_yaml,
@@ -471,5 +662,15 @@ fn sanitize_skill_name(raw: &str) -> String {
         "imported-skill".to_string()
     } else {
         s
+    }
+}
+
+/// RFC-048 §4 persona gating: a Foundation package that declares a
+/// persona hint contributes content only when the requesting persona
+/// matches (case-insensitive). Packages without a hint are general.
+fn persona_hint_matches(persona: Option<&str>, foundation: Option<&FoundationPackageInfo>) -> bool {
+    match foundation.and_then(|f| f.persona.as_deref()) {
+        None => true,
+        Some(hint) => persona.is_some_and(|p| p.eq_ignore_ascii_case(hint)),
     }
 }

@@ -139,6 +139,28 @@ impl PersonaManager {
         self.active_persona_id.read().clone()
     }
 
+    /// RFC-048 §4: filter Foundation shared packages by persona
+    /// compatibility. A package that declares a persona hint is offered
+    /// only when the active persona's id or name matches it
+    /// (case-insensitive); packages without a hint are generally
+    /// available. This keeps package content selective — an agent's
+    /// prompt never receives every shared SKILL.md.
+    pub fn compatible_foundation_packages(
+        &self,
+        packages: &[crate::foundation::packages::ImportedPackage],
+    ) -> Vec<crate::foundation::packages::ImportedPackage> {
+        let active = self.get_active_persona();
+        let matches = |hint: &str| {
+            active.as_ref().is_some_and(|p| {
+                p.id.eq_ignore_ascii_case(hint) || p.name.eq_ignore_ascii_case(hint)
+            })
+        };
+        packages
+            .iter()
+            .filter(|pkg| pkg.persona.as_deref().is_none_or(&matches))
+            .cloned()
+            .collect()
+    }
     // ── RFC-039 ────────────────────────────────────────────────────────────
 
     /// Active persona 의 우선순위 결정:
@@ -451,5 +473,41 @@ mod tests {
         // Cloned manager should persist and reseed via the shared Arcs.
         cloned.set_active("research").await.unwrap();
         assert!(received.lock().is_some());
+    }
+
+    // ─── RFC-048 §4: Foundation package persona filtering ──────────
+
+    fn pkg(id: &str, persona: Option<&str>) -> crate::foundation::packages::ImportedPackage {
+        crate::foundation::packages::ImportedPackage {
+            id: id.into(),
+            version: "0.1.0".into(),
+            source: format!("local://./{id}"),
+            digest: "0".repeat(64),
+            trust: crate::foundation::packages::SourceTrust::Unsigned,
+            targets: vec!["oxios".into()],
+            capabilities: vec![],
+            persona: persona.map(String::from),
+        }
+    }
+
+    #[tokio::test]
+    async fn compatible_foundation_packages_filters_by_active_persona() {
+        let pm = PersonaManager::new();
+        // Default active persona is "dev".
+        pm.set_active("dev").await.unwrap();
+        let packages = vec![
+            pkg("oxi.general", None),
+            pkg("oxi.dev-tool", Some("dev")),
+            pkg("oxi.research-kit", Some("research")),
+        ];
+        let compatible = pm.compatible_foundation_packages(&packages);
+        let ids: Vec<&str> = compatible.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["oxi.general", "oxi.dev-tool"]);
+
+        // Switching the active persona exposes the research kit instead.
+        pm.set_active("research").await.unwrap();
+        let compatible = pm.compatible_foundation_packages(&packages);
+        let ids: Vec<&str> = compatible.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, vec!["oxi.general", "oxi.research-kit"]);
     }
 }

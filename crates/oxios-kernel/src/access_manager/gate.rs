@@ -959,4 +959,65 @@ mod tests {
         assert!(s.contains("[ExecPolicy]"));
         assert!(s.contains("not in allowlist"));
     }
+
+    // ─── Foundation package capabilities (RFC-048 §4) ────────────────
+
+    /// Helper: a Foundation `shell.execute` package mapped through the
+    /// reviewed requirement table.
+    fn shell_package() -> crate::foundation::packages::ImportedPackage {
+        crate::foundation::packages::ImportedPackage {
+            id: "oxi.shell-helper".into(),
+            version: "0.1.0".into(),
+            source: "local://./oxi.shell-helper".into(),
+            digest: "0".repeat(64),
+            trust: crate::foundation::packages::SourceTrust::Unsigned,
+            targets: vec!["oxios".into()],
+            capabilities: vec![crate::foundation::packages::requirement_to_resource(
+                crate::foundation::packages::AbstractRequirement::ShellExecute,
+            )],
+            persona: None,
+        }
+    }
+
+    #[test]
+    fn foundation_shell_requirement_denied_when_cspace_lacks_exec() {
+        // Agent CSpace carries no Exec capability: the package requires
+        // `shell.execute`, but a package never bypasses Layer 0 — the
+        // mapped capability must already be in the agent's resolved
+        // CSpace for the gate to admit it.
+        let cspace = crate::capability::CSpace::new(crate::types::AgentId::new_v4());
+        let ctx = AgentContext::test_fixture_with_cspace("pkg-agent", cspace);
+        let (gate, _) = make_gate();
+        let err = gate
+            .check(CheckRequest::Exec {
+                context: &ctx,
+                binary: "ls",
+                args: &[],
+            })
+            .unwrap_err();
+        assert_eq!(err.layer, DenyLayer::Capability);
+    }
+
+    #[test]
+    fn foundation_cspace_capability_still_denied_by_permissions() {
+        // The package's `shell.execute` maps into the CSpace (Layer 0
+        // passes), but the agent holds no `exec` tool grant — Layer 2
+        // denies. A verified digest is never an authorization decision.
+        let template = crate::foundation::packages::apply_to_template(
+            crate::capability::template::CapabilityTemplate::worker(),
+            &shell_package(),
+        );
+        let ctx = AgentContext::test_fixture_with_cspace("pkg-agent", template.build());
+        // AccessManager has no permissions for "pkg-agent" (make_gate's
+        // fixture is for "test-agent").
+        let (gate, _) = make_gate();
+        let err = gate
+            .check(CheckRequest::Exec {
+                context: &ctx,
+                binary: "ls",
+                args: &[],
+            })
+            .unwrap_err();
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
 }

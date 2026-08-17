@@ -303,8 +303,6 @@ impl OxiosEngine {
         self.cost_tracker.as_ref()
     }
 
-    /// Resolve a model ID to a Model.
-
     /// Resolve a model ID through the Oxi Foundation profile resolver
     /// first (RFC-048 §3). Falls back to the embedded SDK when no
     /// profile matches the supplied role hint.

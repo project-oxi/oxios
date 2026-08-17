@@ -88,3 +88,45 @@ fn rejects_unsupported_schema() {
         oxios_kernel::foundation::packages::PackageError::UnsupportedSchema { .. }
     ));
 }
+
+#[test]
+fn brain_query_maps_to_readonly_brain_cspace() {
+    use oxios_kernel::capability::template::CapabilityTemplate;
+    use oxios_kernel::capability::{ResourceRef, Rights};
+
+    let archive = b"package payload";
+    let digest = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(archive);
+        hasher.finalize().to_hex().to_string()
+    };
+    let lock = PackageLock {
+        schema_version: 1,
+        entries: vec![minimal_entry(
+            "oxi.brain-helper",
+            vec![AbstractRequirement::BrainQuery],
+            &digest,
+        )],
+    };
+    let mut archives = BTreeMap::new();
+    archives.insert("oxi.brain-helper".to_string(), archive.to_vec());
+    let pkg = &lock.import(&archives).expect("imports")[0];
+
+    // Applied through the reviewed table only.
+    let template =
+        oxios_kernel::foundation::packages::apply_to_template(CapabilityTemplate::worker(), pkg);
+    let cspace = template.build();
+    let brain = ResourceRef::KernelDomain {
+        domain: "brain".into(),
+    };
+    // brain.query grants READ — never Brain write.
+    assert!(cspace.can(&brain, Rights::READ));
+    assert!(!cspace.can(&brain, Rights::WRITE));
+    // The worker base caps are preserved alongside the package caps.
+    assert!(cspace.can(
+        &ResourceRef::Exec {
+            mode: "shell".into()
+        },
+        Rights::EXECUTE
+    ));
+}

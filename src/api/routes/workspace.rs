@@ -329,6 +329,7 @@ fn skill_entry_to_json(entry: &SkillEntry) -> serde_json::Value {
         SkillSource::Bundled => "bundled",
         SkillSource::Managed => "managed",
         SkillSource::Workspace => "workspace",
+        SkillSource::Foundation => "foundation",
     };
     let status_str = match entry.status {
         SkillStatus::Ready => "ready",
@@ -463,6 +464,12 @@ fn skill_entry_to_json(entry: &SkillEntry) -> serde_json::Value {
         "os": os,
         "install": install,
         "config_checks": config_checks,
+        "foundation": entry.foundation.as_ref().map(|f| serde_json::json!({
+            "id": f.id,
+            "version": f.version,
+            "digest": f.digest,
+            "persona": f.persona,
+        })),
         "format": entry.format.to_string(),
     })
 }

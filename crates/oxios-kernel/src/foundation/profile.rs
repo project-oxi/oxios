@@ -201,9 +201,7 @@ impl ProfileRegistry {
     /// the caller to choose the profile explicitly when more than one is
     /// available — this helper is only used for the default mapping.
     pub fn first_for_role(&self, role: ProfileRole) -> Option<&Profile> {
-        self.profiles
-            .iter()
-            .find(|p| p.roles.iter().any(|r| *r == role))
+        self.profiles.iter().find(|p| p.roles.contains(&role))
     }
 
     fn reject_raw_credentials(value: &serde_json::Value) -> Result<(), ProfileError> {

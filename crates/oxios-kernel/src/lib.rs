@@ -193,9 +193,9 @@ pub use skill::skills_sh::{
     SkillsShInstaller, SkillsShOrigin, SkillsShSearchResponse, SkillsShSkill, SkillsShSkillDetail,
 };
 pub use skill::{
-    InstallKind, Requirements, RequirementsCheck, Skill, SkillConfig, SkillEntry, SkillFormat,
-    SkillInstallSpec, SkillInvocationPolicy, SkillManager, SkillMeta, SkillMetadata, SkillRef,
-    SkillSnapshot, SkillSource, SkillState, SkillStatus,
+    FoundationPackageInfo, InstallKind, Requirements, RequirementsCheck, Skill, SkillConfig,
+    SkillEntry, SkillFormat, SkillInstallSpec, SkillInvocationPolicy, SkillManager, SkillMeta,
+    SkillMetadata, SkillRef, SkillSnapshot, SkillSource, SkillState, SkillStatus,
 };
 pub use tools::ToolMeta;
 pub use tools::tool_types::{ArgumentDef, ToolDef};

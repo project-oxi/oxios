@@ -49,7 +49,7 @@ impl KeychainBackend for RecordingKeychain {
     }
 }
 
-fn fixture(home: &std::path::Path) -> ProfileRegistry {
+fn fixture() -> ProfileRegistry {
     ProfileRegistry {
         schema_version: 1,
         profiles: vec![Profile {
@@ -77,7 +77,7 @@ fn migration_round_trips_legacy_secret() {
         r#"{"providers":{"anthropic-coding":"sk-ant-secret"}}"#,
     )
     .unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let kc = RecordingKeychain::default();
 
     let report = oxios_kernel::foundation::migrate::migrate_registry(home.path(), &registry, &kc)
@@ -101,7 +101,7 @@ fn migration_is_idempotent() {
         r#"{"providers":{"anthropic-coding":"sk-ant-secret"}}"#,
     )
     .unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let kc = RecordingKeychain::default();
 
     oxios_kernel::foundation::migrate::migrate_registry(home.path(), &registry, &kc).unwrap();
@@ -122,7 +122,7 @@ fn migration_failure_leaves_legacy_file_intact() {
         r#"{"providers":{"anthropic-coding":"sk-ant-secret"}}"#,
     )
     .unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let kc = RecordingKeychain::default();
     *kc.fail_writes.lock() = true;
 
@@ -143,7 +143,7 @@ fn scan_redacts_secret_in_report() {
         r#"{"providers":{"anthropic-coding":"sk-ant-secret"}}"#,
     )
     .unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let found = scan_legacy_credentials(home.path(), &registry).unwrap();
     assert_eq!(found.len(), 1);
     assert!(!found[0].redacted.contains("sk-ant-secret"));
@@ -152,8 +152,7 @@ fn scan_redacts_secret_in_report() {
 
 #[test]
 fn revoke_clears_keychain_entry() {
-    let home = tempfile::tempdir().unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let kc = RecordingKeychain::default();
     kc.write("oxios.foundation", "profile.anthropic-coding", "x")
         .unwrap();
@@ -167,8 +166,7 @@ fn revoke_clears_keychain_entry() {
 
 #[test]
 fn revoke_missing_profile_errors() {
-    let home = tempfile::tempdir().unwrap();
-    let registry = fixture(home.path());
+    let registry = fixture();
     let kc = RecordingKeychain::default();
     let err = revoke(&registry, "ghost", &kc).unwrap_err();
     assert!(matches!(err, MigrationError::ProfileMissing(_)));

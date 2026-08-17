@@ -121,6 +121,24 @@ pub enum SkillSource {
     Bundled,
     Managed,
     Workspace,
+    /// Shared immutable package from the Foundation registry (RFC-048 §4).
+    /// Content is read-only; enable/disable and edits require a local copy.
+    Foundation,
+}
+
+/// Provenance of a skill loaded from a Foundation shared package
+/// (RFC-048 §4). Recorded in the runtime snapshot so audits can pin the
+/// exact package version/digest that contributed to an agent's prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundationPackageInfo {
+    /// Lockfile entry id (e.g. `oxi.brain-helper`).
+    pub id: String,
+    pub version: String,
+    /// blake3 hex digest of the verified package archive.
+    pub digest: String,
+    /// Persona hint from the lockfile — when set, the package content is
+    /// only offered to agents running that persona.
+    pub persona: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,11 +244,12 @@ pub struct SkillEntry {
     pub status: SkillStatus,
     pub bundled: bool,
     pub source: SkillSource,
+    /// Set when this skill came from a Foundation shared package.
+    pub foundation: Option<FoundationPackageInfo>,
     pub invocation: SkillInvocationPolicy,
     pub format: SkillFormat,
     pub raw_yaml: serde_yaml::Value,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRef {
     pub name: String,
@@ -248,8 +267,11 @@ pub struct SkillSnapshot {
     pub prompt: String,
     pub skills: Vec<SkillRef>,
     pub skill_filter: Option<Vec<String>>,
+    /// Foundation packages whose content is included in this snapshot.
+    /// Each entry carries the verified digest (RFC-048 §4 audit trail).
+    #[serde(default)]
+    pub foundation_packages: Vec<FoundationPackageInfo>,
 }
-
 pub(crate) fn default_true() -> bool {
     true
 }
@@ -452,6 +474,7 @@ mod tests {
                 required_integrations: vec![],
             }],
             skill_filter: Some(vec!["bash".to_string()]),
+            foundation_packages: vec![],
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored: SkillSnapshot = serde_json::from_str(&json).unwrap();

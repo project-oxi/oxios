@@ -307,17 +307,17 @@ fn read_secret(provider: &str, home: &Path) -> Option<String> {
     for legacy in legacy_paths(home) {
         let raw = std::fs::read_to_string(&legacy).ok()?;
         let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
-        if let Some(map) = value.get("providers").and_then(|v| v.as_object()) {
-            if let Some(v) = map.get(provider).and_then(|v| v.as_str()) {
-                return Some(v.to_string());
-            }
+        if let Some(map) = value.get("providers").and_then(|v| v.as_object())
+            && let Some(v) = map.get(provider).and_then(|v| v.as_str())
+        {
+            return Some(v.to_string());
         }
         if let Some(items) = value.get("keys").and_then(|v| v.as_array()) {
             for item in items {
-                if item.get("provider").and_then(|v| v.as_str()) == Some(provider) {
-                    if let Some(k) = item.get("key").and_then(|v| v.as_str()) {
-                        return Some(k.to_string());
-                    }
+                if item.get("provider").and_then(|v| v.as_str()) == Some(provider)
+                    && let Some(k) = item.get("key").and_then(|v| v.as_str())
+                {
+                    return Some(k.to_string());
                 }
             }
         }
@@ -370,7 +370,7 @@ mod tests {
         KeychainLocator, ModelCapabilities, ProfileRole, ProviderKind,
     };
 
-    fn fixture(home: &Path) -> ProfileRegistry {
+    fn fixture() -> ProfileRegistry {
         ProfileRegistry {
             schema_version: 1,
             profiles: vec![Profile {
@@ -405,7 +405,7 @@ mod tests {
             r#"{"providers": {"anthropic-default": "sk-ant-secret"}}"#,
         )
         .unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let found = scan_legacy_credentials(home.path(), &registry).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].provider, "anthropic-default");
@@ -424,7 +424,7 @@ mod tests {
             r#"{"providers": {"anthropic-default": "sk-ant-secret"}}"#,
         )
         .unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let kc = InMemoryKeychain::default();
         let report = migrate_registry(home.path(), &registry, &kc).unwrap();
         assert_eq!(report.migrated, vec!["anthropic-default".to_string()]);
@@ -446,7 +446,7 @@ mod tests {
             r#"{"providers": {"anthropic-default": "sk-ant-secret"}}"#,
         )
         .unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let kc = InMemoryKeychain::default();
         migrate_registry(home.path(), &registry, &kc).unwrap();
         let report = migrate_registry(home.path(), &registry, &kc).unwrap();
@@ -468,7 +468,7 @@ mod tests {
             r#"{"providers": {"anthropic-default": "sk-ant-secret"}}"#,
         )
         .unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let kc = FailingKeychain;
         let report = migrate_registry(home.path(), &registry, &kc).unwrap();
         assert_eq!(report.failures.len(), 1);
@@ -495,8 +495,7 @@ mod tests {
 
     #[test]
     fn missing_profile_revoke_errors() {
-        let home = tempfile::tempdir().unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let kc = InMemoryKeychain::default();
         let err = revoke(&registry, "ghost", &kc).unwrap_err();
         assert!(matches!(err, MigrationError::ProfileMissing(_)));
@@ -504,8 +503,7 @@ mod tests {
 
     #[test]
     fn availability_reports_each_profile() {
-        let home = tempfile::tempdir().unwrap();
-        let registry = fixture(home.path());
+        let registry = fixture();
         let kc = InMemoryKeychain::default();
         kc.write("oxios.foundation", "profile.anthropic-default", "x")
             .unwrap();

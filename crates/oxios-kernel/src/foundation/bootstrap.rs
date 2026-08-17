@@ -82,7 +82,6 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
         .map(|mut d| d.next().is_none())
         .unwrap_or(true);
     if fresh {
-
         info!(
             dir = %foundation_dir.display(),
             "fresh foundation directory created"

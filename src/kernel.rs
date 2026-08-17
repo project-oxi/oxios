@@ -1208,7 +1208,15 @@ impl KernelBuilder {
 
         let skills_dir = PathBuf::from(&config.kernel.workspace).join("skills");
         let bundled_dir = PathBuf::from(&config.kernel.workspace).join("share/skills");
-        let skill_manager = Arc::new(SkillManager::new(skills_dir, bundled_dir));
+        // RFC-048 §4: attach the Foundation shared-package registry so
+        // verified packages surface as skills (bundled < Foundation < user).
+        let skill_manager = Arc::new({
+            let manager = SkillManager::new(skills_dir, bundled_dir);
+            match dirs::home_dir() {
+                Some(home) => manager.with_foundation(&home),
+                None => manager,
+            }
+        });
 
         let mcp_bridge = Arc::new(init_mcp_bridge(&config).await?);
 

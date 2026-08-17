@@ -16,9 +16,9 @@ pub use manager::SkillManager;
 pub use prompt::{compact_path, escape_xml};
 pub use requirements::check_requirements;
 pub use types::{
-    ConfigCheck, InstallKind, Requirements, RequirementsCheck, Skill, SkillConfig, SkillEntry,
-    SkillInstallSpec, SkillInvocationPolicy, SkillMeta, SkillMetadata, SkillRef, SkillSnapshot,
-    SkillSource, SkillState, SkillStatus,
+    ConfigCheck, FoundationPackageInfo, InstallKind, Requirements, RequirementsCheck, Skill,
+    SkillConfig, SkillEntry, SkillInstallSpec, SkillInvocationPolicy, SkillMeta, SkillMetadata,
+    SkillRef, SkillSnapshot, SkillSource, SkillState, SkillStatus,
 };
 
 /// Returns true if `rel` is a safe relative path: no parent/root/prefix

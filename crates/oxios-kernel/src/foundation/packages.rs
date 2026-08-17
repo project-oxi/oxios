@@ -283,6 +283,23 @@ pub fn requirement_to_resource(req: AbstractRequirement) -> PackageCapability {
     }
 }
 
+/// Apply a verified package's abstract requirements to a capability
+/// template (RFC-048 §4). This is the **only** translation from package
+/// requirements to CSpace resources — the reviewed
+/// [`requirement_to_resource`] table. The resulting template is still
+/// evaluated through `resolve_cspace`, `AccessGate`, RBAC, and execution
+/// policy; a verified digest never grants authority by itself.
+pub fn apply_to_template(
+    template: crate::capability::template::CapabilityTemplate,
+    pkg: &ImportedPackage,
+) -> crate::capability::template::CapabilityTemplate {
+    let mut template = template;
+    for cap in &pkg.capabilities {
+        template = template.with(cap.resource.clone(), cap.rights);
+    }
+    template
+}
+
 /// Convenience: parse the lockfile at the standard location and import.
 pub fn import_from_path(
     lock_path: &Path,

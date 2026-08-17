@@ -44,6 +44,10 @@ pub const PROFILES_FILE: &str = "profiles.json";
 /// Relative path of the immutable shared package lock.
 pub const PACKAGES_LOCK: &str = "packages.lock";
 
+/// Directory holding the package archives referenced by the lock
+/// (`<versioned>/packages/<id>.zip`).
+pub const PACKAGES_DIR: &str = "packages";
+
 /// Default directory name under the user home.
 pub const FOUNDATION_DIR: &str = ".oxi/foundation";
 
@@ -66,6 +70,11 @@ pub fn foundation_root(home: &Path) -> PathBuf {
 /// Resolve the versioned Foundation directory (`~/.oxi/foundation/v1`).
 pub fn versioned_root(home: &Path) -> PathBuf {
     foundation_root(home).join(VERSIONED_DIR)
+}
+
+/// Resolve the package archive directory (`~/.oxi/foundation/v1/packages`).
+pub fn packages_dir(home: &Path) -> PathBuf {
+    versioned_root(home).join(PACKAGES_DIR)
 }
 
 /// Default Brain socket path used when no explicit override is provided.

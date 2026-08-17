@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use oxios_ouroboros::{ModelResolver, ResolvedModel};
 
-use crate::credential::{CredentialStore, discover_auth_store_providers};
+use crate::credential::{CredentialAuthProvider, CredentialStore, discover_auth_store_providers};
 
 /// The kernel's engine — wraps oxicode-sdk's Oxicode instance.
 ///
@@ -57,7 +57,10 @@ impl OxiosEngine {
     /// built-in models and providers.
     pub fn new(default_model_id: impl Into<String>) -> Self {
         let model_id = default_model_id.into();
-        let oxi = OxicodeBuilder::new().with_builtins().build();
+        let oxi = OxicodeBuilder::new()
+            .with_builtins()
+            .with_auth(Arc::new(CredentialAuthProvider))
+            .build();
         Self {
             oxi,
             default_model_id: model_id,
@@ -113,7 +116,13 @@ impl OxiosEngine {
             .map(|(p, _)| p)
             .unwrap_or("anthropic");
 
-        let mut builder = OxicodeBuilder::new().with_builtins();
+        let mut builder = OxicodeBuilder::new()
+            .with_builtins()
+            // Auth port: consults CredentialStore on every provider
+            // construction, so stored keys (~/.oxios, ~/.oxicode) work
+            // without env vars. Without this, providers fall through to
+            // bare env vars and fail with `Missing API key`.
+            .with_auth(Arc::new(CredentialAuthProvider));
 
         // Collect all providers that need credential injection:
         // 1. Known major providers (always try to resolve)
@@ -165,7 +174,7 @@ impl OxiosEngine {
                 None
             };
 
-            if let Some((key, source)) = CredentialStore::resolve(provider, config_key) {
+            if let Some((key, source)) = CredentialStore::resolve_exact(provider, config_key) {
                 tracing::debug!(
                     provider,
                     source = ?source,
@@ -221,7 +230,9 @@ impl OxiosEngine {
     /// and security handles. All three are `None` by default.
     pub fn builder() -> OxiosEngineBuilder {
         OxiosEngineBuilder {
-            inner: OxicodeBuilder::new().with_builtins(),
+            inner: OxicodeBuilder::new()
+                .with_builtins()
+                .with_auth(Arc::new(CredentialAuthProvider)),
             default_model_id: "anthropic/claude-sonnet-4-20250514".to_string(),
             // RFC-014 Phase D: optional, off by default
             authorizer: None,
@@ -392,6 +403,16 @@ impl OxiosEngineBuilder {
             router_config: self.router_config,
             hook_specs: self.hook_specs,
         }
+    }
+
+    /// Attach the SDK auth port consulted on every provider construction.
+    ///
+    /// [`OxiosEngine::builder`] already wires
+    /// [`crate::credential::CredentialAuthProvider`]; this exists so embedders
+    /// and tests can substitute their own credential source.
+    pub fn with_auth(mut self, auth: Arc<dyn oxicode_sdk::ports::AuthProvider>) -> Self {
+        self.inner = self.inner.with_auth(auth);
+        self
     }
 
     pub fn provider(self, name: &str, p: impl oxicode_sdk::Provider + 'static) -> Self {

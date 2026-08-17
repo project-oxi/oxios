@@ -19,6 +19,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 /// Where a credential was found.
 #[derive(Debug, Clone)]
@@ -47,7 +48,42 @@ impl CredentialStore {
     /// Priority: OXIOS_<PROVIDER>_API_KEY env → config.toml → oxios auth store
     /// (~/.oxios) → shared oxicode-cli store (~/.oxicode) → oxicode-ai env fallback.
     /// Environment variables take highest priority for container/K8s deployments.
+    ///
+    /// Unlike [`resolve_exact`](Self::resolve_exact) this also tries the
+    /// `<provider>-coding-plan` suffix fallback, so UI/validation surfaces can
+    /// report "a key exists for this provider family".
     pub fn resolve(provider: &str, config_key: Option<&str>) -> Option<(String, CredentialSource)> {
+        if let Some(found) = Self::resolve_exact(provider, config_key) {
+            return Some(found);
+        }
+
+        // 6. Suffix fallback: subscription credentials may be stored under
+        //    "<provider>-coding-plan" (e.g. "zai-coding-plan"). Only auth
+        //    stores are consulted — env vars use the canonical name.
+        //    Display/validation only: a plan key does not authenticate on the
+        //    base provider's endpoint, so wire auth uses `resolve_exact`.
+        let alt = format!("{provider}-coding-plan");
+        if let Ok(Some(token)) = oxicode_sdk::load_token(&alt)
+            && !token.access_token.is_empty()
+        {
+            return Some((token.access_token, CredentialSource::OxicodeAuthStore));
+        }
+        if let Some(key) = load_from_shared_store(&alt) {
+            return Some((key, CredentialSource::OxicodeAuthStore));
+        }
+        None
+    }
+
+    /// Like [`resolve`](Self::resolve) but WITHOUT the `<provider>-coding-plan`
+    /// suffix fallback.
+    ///
+    /// This is the variant for authenticating real requests: a subscription
+    /// (coding-plan) key only works against the plan provider's own endpoint,
+    /// so it must never be attached to the base provider (e.g. `zai`).
+    pub fn resolve_exact(
+        provider: &str,
+        config_key: Option<&str>,
+    ) -> Option<(String, CredentialSource)> {
         // 1. Explicit Oxios env var: OXIOS_<PROVIDER>_API_KEY (highest priority for containers)
         let env_var = format!("OXIOS_{}_API_KEY", provider.to_uppercase());
         if let Ok(key) = std::env::var(&env_var)
@@ -83,21 +119,6 @@ impl CredentialStore {
         // 5. oxicode-ai env var fallback
         if let Some(key) = oxicode_sdk::get_env_api_key(provider) {
             return Some((key, CredentialSource::EnvVar));
-        }
-
-        // 6. Suffix fallback: subscription credentials may be stored under
-        //    "<provider>-coding-plan" (e.g. "zai-coding-plan"). Only auth
-        //    stores are consulted — env vars use the canonical name.
-        {
-            let alt = format!("{provider}-coding-plan");
-            if let Ok(Some(token)) = oxicode_sdk::load_token(&alt)
-                && !token.access_token.is_empty()
-            {
-                return Some((token.access_token, CredentialSource::OxicodeAuthStore));
-            }
-            if let Some(key) = load_from_shared_store(&alt) {
-                return Some((key, CredentialSource::OxicodeAuthStore));
-            }
         }
         None
     }
@@ -202,6 +223,95 @@ impl CredentialStore {
             return None;
         }
         model_id.split_once('/').map(|(p, _)| p)
+    }
+}
+
+/// SDK auth port ([`oxicode_sdk::ports::AuthProvider`]) backed by the
+/// multi-source [`CredentialStore`].
+///
+/// Wired into every `OxicodeBuilder` the kernel constructs (boot engine,
+/// hot-swaps) so provider construction consults oxios's credential chain
+/// (env → config → `~/.oxios/auth.json` → `~/.oxicode/auth.json`) instead of
+/// falling through to bare provider env vars and failing with
+/// `Missing API key` for providers that only have a stored credential.
+///
+/// Reads use [`CredentialStore::resolve_exact`] — deliberately without the
+/// `<provider>-coding-plan` suffix fallback, since a plan key must not be
+/// sent to the base provider's endpoint. Writes target the oxios auth store
+/// (`~/.oxios/auth.json`), matching the Web UI's Secrets / Engine key flows.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CredentialAuthProvider;
+
+impl oxicode_sdk::ports::AuthProvider for CredentialAuthProvider {
+    fn get_api_key(
+        &self,
+        provider: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, oxicode_sdk::SdkError>> + Send + '_>>
+    {
+        // Resolve eagerly: the boxed future captures no borrows, so the
+        // trait's single elided lifetime is satisfied for both inputs.
+        let result = self.get_api_key_sync(provider);
+        Box::pin(async move { result })
+    }
+
+    /// Sync fast-path — the credential source `Oxicode::create_provider`
+    /// consults on every provider construction (oxicode-sdk issue #40).
+    fn get_api_key_sync(&self, provider: &str) -> Result<Option<String>, oxicode_sdk::SdkError> {
+        Ok(CredentialStore::resolve_exact(provider, None).map(|(key, _)| key))
+    }
+
+    fn set_api_key(
+        &self,
+        provider: &str,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), oxicode_sdk::SdkError>> + Send + '_>> {
+        let provider = provider.to_string();
+        let key = key.to_string();
+        Box::pin(async move {
+            CredentialStore::store(&provider, &key).map_err(oxicode_sdk::SdkError::Internal)
+        })
+    }
+
+    fn delete_api_key(
+        &self,
+        provider: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), oxicode_sdk::SdkError>> + Send + '_>> {
+        let provider = provider.to_string();
+        Box::pin(async move {
+            CredentialStore::delete(&provider).map_err(oxicode_sdk::SdkError::Internal)
+        })
+    }
+
+    fn get_oauth(
+        &self,
+        _provider: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<Option<oxicode_sdk::ports::OAuthToken>, oxicode_sdk::SdkError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        // OAuth bundles are managed by the OAuth broker, not this port.
+        Box::pin(async { Ok(None) })
+    }
+
+    fn set_oauth(
+        &self,
+        _provider: &str,
+        _token: oxicode_sdk::ports::OAuthToken,
+    ) -> Pin<Box<dyn Future<Output = Result<(), oxicode_sdk::SdkError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn list_providers(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, oxicode_sdk::SdkError>> + Send + '_>>
+    {
+        Box::pin(async move {
+            discover_auth_store_providers().map_err(oxicode_sdk::SdkError::Internal)
+        })
     }
 }
 
@@ -481,5 +591,19 @@ mod tests {
     fn extract_credential_empty_token_is_none() {
         let raw = r#"{"openai":{"type":"api_key","key":""}}"#;
         assert!(extract_credential("openai", raw).is_none());
+    }
+
+    #[test]
+    fn auth_port_sync_returns_none_for_unknown_provider() {
+        // The SDK auth port must resolve cleanly (Ok) even when no
+        // credential exists — `None` lets `create_provider` fall back to
+        // env vars instead of erroring.
+        use oxicode_sdk::ports::AuthProvider as _;
+
+        let port = CredentialAuthProvider;
+        assert_eq!(
+            port.get_api_key_sync("no-such-provider-xyz-000").unwrap(),
+            None
+        );
     }
 }

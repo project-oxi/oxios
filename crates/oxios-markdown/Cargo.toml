@@ -1,6 +1,6 @@
 [package]
 name = "oxios-markdown"
-version = "1.41.0"
+version = "1.42.0"
 edition = "2024"
 license = "MIT"
 description = "Markdown knowledge management — ported from files.md by Artem Zakirullin"

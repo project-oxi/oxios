@@ -5,6 +5,62 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+## [1.42.0] - 2026-08-17
+
+### Added
+- **RFC-048: Oxi Foundation integration** — versioned Foundation filesystem
+  contract (`~/.oxi/foundation/v1`) that owns non-secret profile metadata,
+  OS Keychain credential locators, and the immutable shared package lock.
+  Foundation is not a provider proxy and never shells out to an external
+  worker — `OxiosEngine` stays the embedded `oxicode_sdk::Oxicode`.
+  - New `foundation` module in `oxios-kernel`: bootstrap, profile,
+    packages, migrate, resolver (keychain-backed
+    `CredentialSource::FoundationKeychain` via the optional
+    `foundation-keychain` feature).
+  - `FoundationProfileResolver` wired into `OxiosEngine` for role-based
+    model resolution.
+  - New CLI commands: `foundation status|bootstrap|register|migrate`,
+    `brain consolidate` (delegates to the oxibrain daemon).
+  - `knowledge_dream` → `knowledge_curation` rename (deprecated alias
+    kept for compatibility).
+  - Integration tests: `foundation_bootstrap`, `foundation_profiles`,
+    `foundation_packages`, `foundation_credential_migration`.
+  - Docs: `INDEX.md`, `ARCHITECTURE.md`, `README.md`, `getting-started.md`
+    updated; RFC-003, RFC-041, RFC-047 carry RFC-048 supersession links.
+- **Foundation packages surface as skills (RFC-048 §4)** — wire the
+  read-only Foundation package registry into the live product.
+  - `SkillManager::with_foundation(home)` attaches the registry;
+    `init()` loads verified packages between bundled defaults and user
+    skills (precedence: bundled < Foundation < user/workspace). Packages
+    are gated per-entry through `PackageLock::import` so one bad digest
+    never hides healthy packages. Archives are parsed fully in memory;
+    the Foundation tree stays read-only (`set_enabled` rejects Foundation
+    skills).
+  - `SkillSource::Foundation` + `FoundationPackageInfo` provenance
+    (id/version/digest/persona) recorded on `SkillEntry` and exposed via
+    `SkillSnapshot.foundation_packages` for the audit trail.
+  - `build_snapshot_for(persona)` keeps prompt construction selective:
+    persona-hinted packages contribute only to matching personas;
+    `PersonaManager::compatible_foundation_packages` exposes the same
+    filter.
+  - `apply_to_template` maps package requirements through the reviewed
+    requirement table into `CapabilityTemplate`; `AccessGate`/RBAC still
+    make every decision. Gate tests cover CSpace-lacking and
+    permission-denied paths; `brain.query` maps to read-only Brain access.
+  - Boot wiring (`src/kernel.rs`) + Web API exposes `source` /
+    `foundation` fields.
+  - CLI channels label for `CredentialSource::FoundationKeychain`.
+  - Clippy cleanups in foundation (collapsible ifs, `contains`,
+    redundant closure, unused fixture params, stray doc line).
+
+### Fixed
+- Workspace `clippy` gate: new Foundation integration tests now declare
+  `#![allow(clippy::unwrap_used)]` so `.unwrap()` / `.unwrap_err()` in
+  tests is idiomatic (matching the existing test convention). Keeps
+  `cargo clippy --workspace --all-targets -- -D warnings` green.
+
 ## [1.41.0] - 2026-08-16
 
 ### Added

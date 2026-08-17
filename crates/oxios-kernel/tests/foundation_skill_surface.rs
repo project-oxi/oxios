@@ -1,6 +1,7 @@
 //! Foundation packages surfacing as skills through `SkillManager`
 //! (RFC-048 §4): precedence, digest provenance, persona selectivity,
 //! and read-only enforcement.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

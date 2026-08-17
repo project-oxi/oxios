@@ -5,6 +5,7 @@
 //! - idempotent rerun
 //! - explicit endpoint override
 //! - missing executable reported as actionable (not a silent fallback)
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use std::path::Path;
 

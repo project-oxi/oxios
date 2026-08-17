@@ -2,6 +2,7 @@
 //!
 //! Covers successful migration, idempotent rerun, Keychain write failure
 //! leaving the legacy file intact, redacted reports, and revocation.
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use parking_lot::Mutex;
 use std::collections::HashMap;

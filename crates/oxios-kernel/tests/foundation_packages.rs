@@ -1,4 +1,5 @@
 //! Integration tests for the Foundation shared package importer (RFC-048 §4).
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use std::collections::BTreeMap;
 

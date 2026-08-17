@@ -1,4 +1,5 @@
 //! Integration tests for the Foundation profile registry (RFC-048 §3).
+#![allow(clippy::unwrap_used)] // `.unwrap()` in tests is idiomatic (workspace convention)
 
 use oxios_kernel::foundation::profile::{
     KeychainLocator, ModelCapabilities, Profile, ProfileRegistry, ProfileRole, ProviderKind,

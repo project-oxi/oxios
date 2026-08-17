@@ -66,6 +66,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96
       - name: Verify each crate packages cleanly
         # `cargo package --list` only checks that the .crate tarball can be
         # assembled and metadata is valid — it does NOT compile. The real
@@ -115,6 +119,10 @@ jobs:
           - oxios
     steps:
       - uses: actions/checkout@v5
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96
       - name: Wait for crates.io index to see the dependency's new version
         # Poll the crates.io API (not `cargo search`, which only does
         # name matching) for the exact new version of the heaviest

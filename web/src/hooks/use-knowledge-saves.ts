@@ -44,7 +44,9 @@ export function useSaveToKnowledge(sessionId: string | null) {
     mutationFn: ({ messageIndex, path }: { messageIndex: number; path?: string }) =>
       api.post<SaveResult | SaveError>(
         `/api/chat/${encodeURIComponent(sessionId!)}/messages/${messageIndex}/save-to-knowledge`,
-        path ? { path } : undefined,
+        // Always a JSON object: the axum `Json<SaveToKnowledgeRequest>` extractor
+        // answers a bodyless POST (headers-only) with 400.
+        path ? { path } : {},
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['chat', 'knowledge-saves', sessionId] })

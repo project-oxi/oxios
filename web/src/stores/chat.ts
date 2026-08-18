@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { adaptChunk } from '@/lib/stream/adapter'
 import type { ProcessorResult } from '@/lib/stream/StreamProcessor'
 import { StreamProcessor } from '@/lib/stream/StreamProcessor'
+import { uuid } from '@/lib/uuid'
 import { usePortalStore } from '@/stores/portal'
 import type {
   ChatActivity,
@@ -272,7 +273,7 @@ export function ensureLastAssistant(
     return { messages, index: messages.length - 1 }
   }
   const placeholder: ChatMessage = {
-    id: crypto.randomUUID(),
+    id: uuid(),
     role: 'assistant',
     content: '',
     timestamp: new Date().toISOString(),
@@ -1029,7 +1030,7 @@ export const useChatStore = create<ChatStore>()(
         // message is created lazily on the first reasoning/tool/token chunk and
         // patched in place thereafter; `done`/`error` merge into it.
         const userMsg: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           role: 'user',
           content,
           timestamp: new Date().toISOString(),
@@ -1119,7 +1120,7 @@ export const useChatStore = create<ChatStore>()(
             const agentMsg = agentMsgs[i]
             if (userMsg != null) {
               messages.push({
-                id: crypto.randomUUID(),
+                id: uuid(),
                 role: 'user',
                 content: userMsg.content,
                 timestamp: userMsg.timestamp ?? data.created_at,
@@ -1190,7 +1191,7 @@ export const useChatStore = create<ChatStore>()(
                 blocks.push({ type: 'text', id: `t-${i}-1`, text: agentMsg.content })
               }
               const assistantMessage: ChatMessage = {
-                id: crypto.randomUUID(),
+                id: uuid(),
                 role: 'assistant',
                 content: agentMsg.content ?? '',
                 timestamp: agentMsg.timestamp ?? data.updated_at,
@@ -1350,7 +1351,7 @@ export const useChatStore = create<ChatStore>()(
         // Persist interview questions as an assistant message BEFORE
         // the user's answer, so the Q&A exchange remains in chat history.
         const interviewMsg: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           role: 'assistant',
           content: '',
           timestamp: new Date().toISOString(),
@@ -1379,7 +1380,7 @@ export const useChatStore = create<ChatStore>()(
 
         // Add user message showing their answers
         const userMsg: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           role: 'user',
           content: answerText || answers.map((a) => a.value).join(', '),
           timestamp: new Date().toISOString(),
@@ -1650,7 +1651,7 @@ export const useChatStore = create<ChatStore>()(
               const target = currentAssistant(updated)
               if (!target) {
                 const placeholder: ChatMessage = {
-                  id: crypto.randomUUID(),
+                  id: uuid(),
                   role: 'assistant',
                   content: '',
                   timestamp: new Date().toISOString(),
@@ -1673,7 +1674,7 @@ export const useChatStore = create<ChatStore>()(
 
               updated[updated.length - 1] = {
                 ...target,
-                id: target.id ?? crypto.randomUUID(),
+                id: target.id ?? uuid(),
                 metadata: {
                   phase,
                   evaluation_passed: evaluationPassed,
@@ -1747,7 +1748,7 @@ export const useChatStore = create<ChatStore>()(
               const updated = [...s.messages]
               // Add an error message after the user's last message
               const errorMsg: ChatMessage = {
-                id: crypto.randomUUID(),
+                id: uuid(),
                 role: 'assistant',
                 content: errorContent,
                 timestamp: new Date().toISOString(),

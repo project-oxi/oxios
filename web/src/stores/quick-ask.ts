@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ChatBlock, ChatMessage, StreamChunk } from '@/types'
+import { uuid } from '@/lib/uuid'
 import {
   applyContentChunk,
   applyTextFlush,
@@ -166,14 +167,14 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
 
     const now = new Date().toISOString()
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       role: 'user',
       content,
       timestamp: now,
     }
     // Optimistic assistant placeholder for streaming tokens.
     const assistantMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: uuid(),
       role: 'assistant',
       content: '',
       timestamp: now,

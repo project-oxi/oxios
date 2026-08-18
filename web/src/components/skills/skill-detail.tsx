@@ -59,8 +59,8 @@ export function SkillDetail({
     skill.missing.anyBins.length > 0 ||
     skill.missing.env.length > 0 ||
     skill.missing.config.length > 0 ||
-    skill.missing.integrations.length > 0 ||
-    skill.missing.anyIntegrations.length > 0
+    (skill.missing.integrations?.length ?? 0) > 0 ||
+    (skill.missing.anyIntegrations?.length ?? 0) > 0
 
   return (
     <div className="space-y-4">
@@ -144,13 +144,13 @@ export function SkillDetail({
                 {skill.requirements.config.length > 0 && (
                   <ReqList items={skill.requirements.config} missing={skill.missing.config} />
                 )}
-                {skill.requirements.integrations.length > 0 && (
+                {(skill.requirements.integrations?.length ?? 0) > 0 && (
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">
                       {t('skills.requiresIntegrations')}:
                     </span>
                     <ul className="flex flex-col gap-1">
-                      {skill.requirements.integrations.map((id) => {
+                      {(skill.requirements.integrations ?? []).map((id) => {
                         const status = skill.integration_status?.find((s) => s.id === id)
                         const ok = status?.satisfied ?? false
                         return (
@@ -204,8 +204,8 @@ export function SkillDetail({
                     ...skill.missing.env.map((e) => `env:${e}`),
                     ...skill.missing.config.map((c) => `config:${c}`),
                     ...skill.missing.anyBins.map((b) => `any_bin:${b}`),
-                    ...skill.missing.integrations.map((i) => `integration:${i}`),
-                    ...skill.missing.anyIntegrations.map((i) => `any_integration:${i}`),
+                    ...(skill.missing.integrations ?? []).map((i) => `integration:${i}`),
+                    ...(skill.missing.anyIntegrations ?? []).map((i) => `any_integration:${i}`),
                   ].join(', '),
                 })}
               </p>

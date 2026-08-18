@@ -774,8 +774,8 @@ function SkillCard({
     skill.missing.anyBins.length > 0 ||
     skill.missing.env.length > 0 ||
     skill.missing.config.length > 0 ||
-    skill.missing.integrations.length > 0 ||
-    skill.missing.anyIntegrations.length > 0
+    (skill.missing.integrations?.length ?? 0) > 0 ||
+    (skill.missing.anyIntegrations?.length ?? 0) > 0
 
   return (
     <Card
@@ -928,8 +928,8 @@ function SkillCard({
                   ...skill.missing.env.map((e) => `env:${e}`),
                   ...skill.missing.config.map((c) => `config:${c}`),
                   ...skill.missing.anyBins.map((b) => `any_bin:${b}`),
-                  ...skill.missing.integrations.map((i) => `integration:${i}`),
-                  ...skill.missing.anyIntegrations.map((i) => `any_integration:${i}`),
+                  ...(skill.missing.integrations ?? []).map((i) => `integration:${i}`),
+                  ...(skill.missing.anyIntegrations ?? []).map((i) => `any_integration:${i}`),
                 ].join(', '),
               })}
             </p>

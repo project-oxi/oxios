@@ -135,10 +135,12 @@ export interface SkillRequirements {
   anyBins: string[]
   env: string[]
   config: string[]
-  /** Integration IDs this skill hard-requires (RFC-041). */
-  integrations: string[]
-  /** Integration IDs of which at least one must be satisfied. */
-  anyIntegrations: string[]
+  /** Integration IDs this skill hard-requires (RFC-041). Optional: the
+   * skills list API omits the key entirely when the skill declares none. */
+  integrations?: string[]
+  /** Integration IDs of which at least one must be satisfied. Optional —
+   * same API omission as `integrations`. */
+  anyIntegrations?: string[]
 }
 
 export interface SkillInstallSpec {

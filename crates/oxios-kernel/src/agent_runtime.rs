@@ -1104,368 +1104,398 @@ async fn run_agent(
     // deltas. Lookup misses silently (no gateway registered → not a chat).
     let streaming_sinks_for_cb: Arc<crate::streaming_sink::StreamingSinkRegistry> =
         Arc::clone(&kernel_handle.streaming_sinks);
-    // Run the agent with streaming events.
+    // Run the agent with live-streaming events.
+    //
+    // oxicode-sdk's `Agent::run_streaming` awaits the FULL `run_with_channel`
+    // future before draining its internal std channel, so every callback —
+    // text/reasoning deltas included — fires only after the response
+    // completes, and the Web UI received each answer as one end-of-turn
+    // burst. `run_tokio_stream` hands back the live receiver instead, so
+    // deltas reach the streaming sink as the provider emits them. Its
+    // completion `Response` is a stub (`content` empty) — this call site
+    // already assembles the result from `exec_state`, so only the Ok/Err
+    // signal is taken from it.
     let mut sent_model_for_cb: bool = false;
-    let result = agent
-        .run_streaming(prompt, move |event| {
-            if !sent_model_for_cb
-                && let Some(ref sid) = transparency_session
-                && !model_id_for_callback.is_empty()
-                && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
-            {
-                let _ = tx.try_send(StreamDelta::Model(model_id_for_callback.clone()));
-                sent_model_for_cb = true;
-            }
-            let mut s = exec_state_cb.lock();
-            match event {
-                AgentEvent::ToolExecutionStart {
-                    tool_name,
-                    tool_call_id,
-                    args,
-                    context,
-                    ..
-                } => {
-                    // Record start time and push a placeholder step.
-                    let idx = s.trajectory_steps.len();
-                    s.pending_tools
-                        .insert(tool_call_id.clone(), (std::time::Instant::now(), idx));
-                    s.tool_args_map.insert(
-                        tool_call_id.clone(),
-                        serde_json::to_string(&args).unwrap_or_default(),
-                    );
-                    s.tool_timestamps
-                        .insert(tool_call_id.clone(), chrono::Utc::now());
-                    s.tool_call_ids.push(tool_call_id.clone());
-                    s.trajectory_steps
-                        .push(crate::memory_agent::sona::TrajectoryStep {
-                            input: tool_name.clone(),
-                            output: String::new(),
-                            duration_ms: 0,
-                            confidence: 0.0,
+    let mut on_event = move |event: AgentEvent| {
+        if !sent_model_for_cb
+            && let Some(ref sid) = transparency_session
+            && !model_id_for_callback.is_empty()
+            && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
+        {
+            let _ = tx.try_send(StreamDelta::Model(model_id_for_callback.clone()));
+            sent_model_for_cb = true;
+        }
+        let mut s = exec_state_cb.lock();
+        match event {
+            AgentEvent::ToolExecutionStart {
+                tool_name,
+                tool_call_id,
+                args,
+                context,
+                ..
+            } => {
+                // Record start time and push a placeholder step.
+                let idx = s.trajectory_steps.len();
+                s.pending_tools
+                    .insert(tool_call_id.clone(), (std::time::Instant::now(), idx));
+                s.tool_args_map.insert(
+                    tool_call_id.clone(),
+                    serde_json::to_string(&args).unwrap_or_default(),
+                );
+                s.tool_timestamps
+                    .insert(tool_call_id.clone(), chrono::Utc::now());
+                s.tool_call_ids.push(tool_call_id.clone());
+                s.trajectory_steps
+                    .push(crate::memory_agent::sona::TrajectoryStep {
+                        input: tool_name.clone(),
+                        output: String::new(),
+                        duration_ms: 0,
+                        confidence: 0.0,
+                    });
+                // RFC-015: broadcast tool start so Web UI can show progress.
+                if let Some(ref sid) = transparency_session {
+                    let context_json = context
+                        .as_ref()
+                        .map(serde_json::to_value)
+                        .transpose()
+                        .unwrap_or(None);
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::ToolExecutionStarted {
+                            session_id: sid.clone(),
+                            tool_name: tool_name.clone(),
+                            tool_call_id: tool_call_id.clone(),
+                            tool_args: args.clone(),
+                            context: context_json,
                         });
-                    // RFC-015: broadcast tool start so Web UI can show progress.
-                    if let Some(ref sid) = transparency_session {
-                        let context_json = context
-                            .as_ref()
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .unwrap_or(None);
-                        let _ =
-                            kernel_handle_for_cb
-                                .infra
-                                .publish(KernelEvent::ToolExecutionStarted {
-                                    session_id: sid.clone(),
-                                    tool_name: tool_name.clone(),
-                                    tool_call_id: tool_call_id.clone(),
-                                    tool_args: args.clone(),
-                                    context: context_json,
-                                });
-                    }
                 }
-                AgentEvent::ToolExecutionUpdate {
-                    tool_call_id,
-                    tool_name,
-                    partial_result,
-                    tab_id,
-                    context,
-                } => {
-                    // RFC-015: forward real-time progress to the event bus
-                    // so the Web UI can show a spinner and progress text
-                    // while the tool is still executing. Best-effort —
-                    // publish failures (e.g. lagged subscribers) are ignored.
-                    //
-                    // `tab_id` and `context` come from oxicode-agent 0.29+
-                    // (ToolCallContext: PageVisit, WebSearch, etc.).
-                    // Older agent versions won't send these — they default
-                    // to None and the UI gracefully ignores them.
-                    if let Some(ref sid) = transparency_session {
-                        let context_json = context
-                            .as_ref()
-                            .map(serde_json::to_value)
-                            .transpose()
-                            .unwrap_or(None);
-                        let _ = kernel_handle_for_cb.infra.publish(
-                            KernelEvent::ToolExecutionProgress {
+            }
+            AgentEvent::ToolExecutionUpdate {
+                tool_call_id,
+                tool_name,
+                partial_result,
+                tab_id,
+                context,
+            } => {
+                // RFC-015: forward real-time progress to the event bus
+                // so the Web UI can show a spinner and progress text
+                // while the tool is still executing. Best-effort —
+                // publish failures (e.g. lagged subscribers) are ignored.
+                //
+                // `tab_id` and `context` come from oxicode-agent 0.29+
+                // (ToolCallContext: PageVisit, WebSearch, etc.).
+                // Older agent versions won't send these — they default
+                // to None and the UI gracefully ignores them.
+                if let Some(ref sid) = transparency_session {
+                    let context_json = context
+                        .as_ref()
+                        .map(serde_json::to_value)
+                        .transpose()
+                        .unwrap_or(None);
+                    let _ =
+                        kernel_handle_for_cb
+                            .infra
+                            .publish(KernelEvent::ToolExecutionProgress {
                                 session_id: sid.clone(),
                                 tool_call_id: tool_call_id.clone(),
                                 tool_name: tool_name.clone(),
                                 progress: partial_result,
                                 tab_id,
                                 context: context_json,
-                            },
-                        );
+                            });
+                }
+            }
+            AgentEvent::ToolExecutionEnd {
+                tool_name,
+                tool_call_id,
+                is_error,
+                result,
+                ..
+            } => {
+                if !is_error {
+                    s.steps_completed += 1;
+                }
+                // Look up the exact step by tool_call_id.
+                let mut duration_ms: u64 = 0;
+                let mut summary = String::new();
+                if let Some((start, idx)) = s.pending_tools.remove(tool_call_id.as_str()) {
+                    duration_ms = start.elapsed().as_millis() as u64;
+                    if let Some(step) = s.trajectory_steps.get_mut(idx) {
+                        summary = summarize_tool_result(&result.content, 200);
+                        step.output = summary.clone();
+                        step.duration_ms = duration_ms;
+                        step.confidence = if is_error { 0.3 } else { 0.8 };
                     }
                 }
-                AgentEvent::ToolExecutionEnd {
-                    tool_name,
-                    tool_call_id,
-                    is_error,
-                    result,
-                    ..
-                } => {
-                    if !is_error {
-                        s.steps_completed += 1;
-                    }
-                    // Look up the exact step by tool_call_id.
-                    let mut duration_ms: u64 = 0;
-                    let mut summary = String::new();
-                    if let Some((start, idx)) = s.pending_tools.remove(tool_call_id.as_str()) {
-                        duration_ms = start.elapsed().as_millis() as u64;
-                        if let Some(step) = s.trajectory_steps.get_mut(idx) {
-                            summary = summarize_tool_result(&result.content, 200);
-                            step.output = summary.clone();
-                            step.duration_ms = duration_ms;
-                            step.confidence = if is_error { 0.3 } else { 0.8 };
-                        }
-                    }
-                    s.tool_error_map.insert(tool_call_id.clone(), is_error);
-                    // RFC-015: broadcast tool completion.
-                    if let Some(ref sid) = transparency_session {
-                        let _ = kernel_handle_for_cb.infra.publish(
-                            KernelEvent::ToolExecutionFinished {
+                s.tool_error_map.insert(tool_call_id.clone(), is_error);
+                // RFC-015: broadcast tool completion.
+                if let Some(ref sid) = transparency_session {
+                    let _ =
+                        kernel_handle_for_cb
+                            .infra
+                            .publish(KernelEvent::ToolExecutionFinished {
                                 session_id: sid.clone(),
                                 tool_call_id: tool_call_id.clone(),
                                 tool_name: tool_name.clone(),
                                 duration_ms,
                                 is_error,
                                 output_summary: summary,
-                            },
-                        );
-                    }
-                }
-                AgentEvent::AgentEnd {
-                    messages,
-                    stop_reason,
-                    ..
-                } => {
-                    if let Some(oxicode_sdk::Message::Assistant(a)) = messages.last() {
-                        s.final_content = a.text_content();
-                    }
-                    // oxi 0.32.0: loop exits naturally when LLM produces text-only
-                    // response (StopReason::Stop). Error/Aborted = failure.
-                    // ToolUse should not occur at AgentEnd in 0.32.0 (the loop
-                    // continues until text-only), but treat it as non-failure
-                    // since tool calls were executed successfully.
-                    s.success = matches!(stop_reason.as_deref(), Some("Stop") | Some("ToolUse"));
-                }
-                AgentEvent::Error { message, .. } => {
-                    s.final_content = message.clone();
-                    s.success = false;
-                }
-                AgentEvent::Usage {
-                    input_tokens,
-                    output_tokens,
-                } => {
-                    // Accumulate totals for ExecutionResult.
-                    s.total_input_tokens += input_tokens as u64;
-                    s.total_output_tokens += output_tokens as u64;
-
-                    // Record token usage to cost tracker (existing).
-                    let agent_label = format!("agent-{agent_id_for_callback}");
-                    crate::observability::cost_tracker().record(
-                        &agent_label,
-                        &oxicode_sdk::Model::new(
-                            &model_id_for_callback,
-                            &model_id_for_callback,
-                            oxicode_sdk::Api::OpenAiCompletions,
-                            "unknown",
-                            "https://unknown.com",
-                        ),
-                        oxicode_sdk::TokenUsage {
-                            input: input_tokens as u64,
-                            output: output_tokens as u64,
-                            cache_read: 0,
-                            cache_write: 0,
-                        },
-                    );
-
-                    // Record to routing stats (RFC-011).
-                    if let Some(stats) = &routing_stats_for_cb {
-                        let cost = crate::kernel_handle::engine_api::estimate_cost(
-                            &model_id_for_callback,
-                            input_tokens as u64,
-                            output_tokens as u64,
-                        );
-                        stats.record_model_usage(&model_id_for_callback, cost);
-                    }
-                    // RFC-015: publish cumulative token usage.
-                    if let Some(ref sid) = transparency_session {
-                        let _ = kernel_handle_for_cb
-                            .infra
-                            .publish(KernelEvent::TokenUsageUpdate {
-                                session_id: sid.clone(),
-                                input_tokens: input_tokens as u64,
-                                output_tokens: output_tokens as u64,
                             });
-                    }
                 }
-                AgentEvent::Compaction {
-                    event: CompactionEvent::Completed { result, .. },
-                } => {
-                    handle_compaction(
-                        result.summary.clone(),
-                        session_id_for_callback.clone(),
-                        brain_for_callback.clone(),
-                    );
-                    // RFC-015: compaction is a form of reasoning — expose it.
-                    if let Some(ref sid) = transparency_session {
-                        let _ =
-                            kernel_handle_for_cb
-                                .infra
-                                .publish(KernelEvent::ReasoningFragment {
-                                    session_id: sid.clone(),
-                                    content: result.summary.clone(),
-                                    source: "compaction".to_string(),
-                                });
-                    }
-                }
-                AgentEvent::Compaction {
-                    event: CompactionEvent::Triggered { source, .. },
-                } => {
-                    // RFC-035 gap 2: surface the trigger source so the
-                    // 3-4× heuristic drift (pre-0.53 silent no-op) is
-                    // observable end-to-end. The match arm itself does
-                    // not act on compaction — the SDK handles the
-                    // actual trigger — we only publish a KernelEvent.
-                    if let Some(ref sid) = transparency_session {
-                        let _ =
-                            kernel_handle_for_cb
-                                .infra
-                                .publish(KernelEvent::CompactionTriggered {
-                                    session_id: Some(sid.clone()),
-                                    source,
-                                });
-                    } else {
-                        let _ =
-                            kernel_handle_for_cb
-                                .infra
-                                .publish(KernelEvent::CompactionTriggered {
-                                    session_id: None,
-                                    source,
-                                });
-                    }
-                }
-                AgentEvent::MessageUpdate { delta, .. } => {
-                    // SDK 0.66.0: unified streaming delta. Text deltas arrive
-                    // ONLY here (the legacy TextChunk variant is never emitted
-                    // in 0.66.0), so this arm is the live text path.
-                    match delta {
-                        oxicode_agent::StreamDelta::Text(text) => {
-                            if let Some(ref sid) = transparency_session
-                                && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
-                            {
-                                let _ = tx.try_send(StreamDelta::Text(text));
-                            }
-                        }
-                        oxicode_agent::StreamDelta::Thinking(text) if !text.is_empty() => {
-                            // SDK emits thinking deltas BOTH as legacy
-                            // ThinkingDelta and as MessageUpdate::Thinking.
-                            // We handle them here and drop the legacy arm to
-                            // avoid double-emission to the UI.
-                            const REASONING_CAP: usize = 4096;
-                            if s.reasoning_text.len() < REASONING_CAP {
-                                s.reasoning_text.push_str(&text);
-                                if s.reasoning_text.len() > REASONING_CAP {
-                                    s.reasoning_text.truncate(REASONING_CAP);
-                                }
-                            }
-                            // Block-stream transparency: capture into a
-                            // positioned segment keyed by tools started so far.
-                            if s.reasoning_bytes < REASONING_CAP {
-                                let budget = REASONING_CAP - s.reasoning_bytes;
-                                let mut chunk = String::new();
-                                for ch in text.chars() {
-                                    if chunk.len() + ch.len_utf8() > budget {
-                                        break;
-                                    }
-                                    chunk.push(ch);
-                                }
-                                if !chunk.is_empty() {
-                                    s.reasoning_bytes += chunk.len();
-                                    let pos = s.trajectory_steps.len();
-                                    if s.reasoning_segments
-                                        .last()
-                                        .is_some_and(|l| l.before_step == pos)
-                                    {
-                                        s.reasoning_segments
-                                            .last_mut()
-                                            .expect("checked Some in the enclosing if condition")
-                                            .text
-                                            .push_str(&chunk);
-                                    } else {
-                                        s.reasoning_segments.push(
-                                            oxios_ouroboros::ReasoningSegment {
-                                                before_step: pos,
-                                                text: chunk,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            if let Some(ref sid) = transparency_session
-                                && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
-                            {
-                                let _ = tx.try_send(StreamDelta::Thinking);
-                                let _ = tx.try_send(StreamDelta::ThinkingDelta(text));
-                            }
-                        }
-                        oxicode_agent::StreamDelta::Sync => {
-                            // Tool-call end marker — not a reasoning span end.
-                            // The authoritative reasoning.end marker comes from
-                            // the legacy ThinkingEnd event (handled below).
-                        }
-                        // Empty Thinking delta — the guarded
-                        // `Thinking(text) if !text.is_empty()` arm above
-                        // doesn't count for exhaustiveness, so handle the
-                        // empty case here as a no-op.
-                        _ => {}
-                    }
-                }
-                AgentEvent::Thinking => {
-                    // P4: signal-only — LiveActivityBar flips to "추론 중".
-                    // Sent through the same connection-scoped sink so the
-                    // state change is visible to the live chat only (no
-                    // EventBus broadcast for a transient UI signal).
-                    if let Some(ref sid) = transparency_session
-                        && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
-                    {
-                        let _ = tx.try_send(StreamDelta::Thinking);
-                    }
-                }
-                AgentEvent::ThinkingEnd => {
-                    // oxi 0.58+: explicit reasoning-end signal. Drives the
-                    // authoritative `reasoning.end` close for providers that
-                    // emit it. The collector resets its `was_reasoning` flag
-                    // so the first-Text fallback (reasoning_content models)
-                    // never double-fires.
-                    if let Some(ref sid) = transparency_session
-                        && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
-                    {
-                        let _ = tx.try_send(StreamDelta::ThinkingEnd);
-                    }
-                }
-                AgentEvent::ToolCallDelta {
-                    tool_call_id,
-                    args_delta,
-                } => {
-                    // oxi 0.58+: partial tool-call args streamed by the LLM
-                    // while it is still constructing the call (before
-                    // ToolExecutionStart). Each `args_delta` is a raw JSON
-                    // fragment; consumers accumulate per `tool_call_id`.
-                    if let Some(ref sid) = transparency_session {
-                        let _ = kernel_handle_for_cb
-                            .infra
-                            .publish(KernelEvent::ToolArgsDelta {
-                                session_id: sid.clone(),
-                                tool_call_id: tool_call_id.clone(),
-                                args_delta: args_delta.clone(),
-                            });
-                    }
-                }
-                _ => {}
             }
-        })
-        .await;
+            AgentEvent::AgentEnd {
+                messages,
+                stop_reason,
+                ..
+            } => {
+                if let Some(oxicode_sdk::Message::Assistant(a)) = messages.last() {
+                    s.final_content = a.text_content();
+                }
+                // oxi 0.32.0: loop exits naturally when LLM produces text-only
+                // response (StopReason::Stop). Error/Aborted = failure.
+                // ToolUse should not occur at AgentEnd in 0.32.0 (the loop
+                // continues until text-only), but treat it as non-failure
+                // since tool calls were executed successfully.
+                s.success = matches!(stop_reason.as_deref(), Some("Stop") | Some("ToolUse"));
+            }
+            AgentEvent::Error { message, .. } => {
+                s.final_content = message.clone();
+                s.success = false;
+            }
+            AgentEvent::Usage {
+                input_tokens,
+                output_tokens,
+            } => {
+                // Accumulate totals for ExecutionResult.
+                s.total_input_tokens += input_tokens as u64;
+                s.total_output_tokens += output_tokens as u64;
+
+                // Record token usage to cost tracker (existing).
+                let agent_label = format!("agent-{agent_id_for_callback}");
+                crate::observability::cost_tracker().record(
+                    &agent_label,
+                    &oxicode_sdk::Model::new(
+                        &model_id_for_callback,
+                        &model_id_for_callback,
+                        oxicode_sdk::Api::OpenAiCompletions,
+                        "unknown",
+                        "https://unknown.com",
+                    ),
+                    oxicode_sdk::TokenUsage {
+                        input: input_tokens as u64,
+                        output: output_tokens as u64,
+                        cache_read: 0,
+                        cache_write: 0,
+                    },
+                );
+
+                // Record to routing stats (RFC-011).
+                if let Some(stats) = &routing_stats_for_cb {
+                    let cost = crate::kernel_handle::engine_api::estimate_cost(
+                        &model_id_for_callback,
+                        input_tokens as u64,
+                        output_tokens as u64,
+                    );
+                    stats.record_model_usage(&model_id_for_callback, cost);
+                }
+                // RFC-015: publish cumulative token usage.
+                if let Some(ref sid) = transparency_session {
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::TokenUsageUpdate {
+                            session_id: sid.clone(),
+                            input_tokens: input_tokens as u64,
+                            output_tokens: output_tokens as u64,
+                        });
+                }
+            }
+            AgentEvent::Compaction {
+                event: CompactionEvent::Completed { result, .. },
+            } => {
+                handle_compaction(
+                    result.summary.clone(),
+                    session_id_for_callback.clone(),
+                    brain_for_callback.clone(),
+                );
+                // RFC-015: compaction is a form of reasoning — expose it.
+                if let Some(ref sid) = transparency_session {
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::ReasoningFragment {
+                            session_id: sid.clone(),
+                            content: result.summary.clone(),
+                            source: "compaction".to_string(),
+                        });
+                }
+            }
+            AgentEvent::Compaction {
+                event: CompactionEvent::Triggered { source, .. },
+            } => {
+                // RFC-035 gap 2: surface the trigger source so the
+                // 3-4× heuristic drift (pre-0.53 silent no-op) is
+                // observable end-to-end. The match arm itself does
+                // not act on compaction — the SDK handles the
+                // actual trigger — we only publish a KernelEvent.
+                if let Some(ref sid) = transparency_session {
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::CompactionTriggered {
+                            session_id: Some(sid.clone()),
+                            source,
+                        });
+                } else {
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::CompactionTriggered {
+                            session_id: None,
+                            source,
+                        });
+                }
+            }
+            AgentEvent::MessageUpdate { delta, .. } => {
+                // SDK 0.66.0: unified streaming delta. Text deltas arrive
+                // ONLY here (the legacy TextChunk variant is never emitted
+                // in 0.66.0), so this arm is the live text path.
+                match delta {
+                    oxicode_agent::StreamDelta::Text(text) => {
+                        if let Some(ref sid) = transparency_session
+                            && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
+                        {
+                            let _ = tx.try_send(StreamDelta::Text(text));
+                        }
+                    }
+                    oxicode_agent::StreamDelta::Thinking(text) if !text.is_empty() => {
+                        // SDK emits thinking deltas BOTH as legacy
+                        // ThinkingDelta and as MessageUpdate::Thinking.
+                        // We handle them here and drop the legacy arm to
+                        // avoid double-emission to the UI.
+                        const REASONING_CAP: usize = 4096;
+                        if s.reasoning_text.len() < REASONING_CAP {
+                            s.reasoning_text.push_str(&text);
+                            if s.reasoning_text.len() > REASONING_CAP {
+                                s.reasoning_text.truncate(REASONING_CAP);
+                            }
+                        }
+                        // Block-stream transparency: capture into a
+                        // positioned segment keyed by tools started so far.
+                        if s.reasoning_bytes < REASONING_CAP {
+                            let budget = REASONING_CAP - s.reasoning_bytes;
+                            let mut chunk = String::new();
+                            for ch in text.chars() {
+                                if chunk.len() + ch.len_utf8() > budget {
+                                    break;
+                                }
+                                chunk.push(ch);
+                            }
+                            if !chunk.is_empty() {
+                                s.reasoning_bytes += chunk.len();
+                                let pos = s.trajectory_steps.len();
+                                if s.reasoning_segments
+                                    .last()
+                                    .is_some_and(|l| l.before_step == pos)
+                                {
+                                    s.reasoning_segments
+                                        .last_mut()
+                                        .expect("checked Some in the enclosing if condition")
+                                        .text
+                                        .push_str(&chunk);
+                                } else {
+                                    s.reasoning_segments
+                                        .push(oxios_ouroboros::ReasoningSegment {
+                                            before_step: pos,
+                                            text: chunk,
+                                        });
+                                }
+                            }
+                        }
+                        if let Some(ref sid) = transparency_session
+                            && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
+                        {
+                            let _ = tx.try_send(StreamDelta::Thinking);
+                            let _ = tx.try_send(StreamDelta::ThinkingDelta(text));
+                        }
+                    }
+                    oxicode_agent::StreamDelta::Sync => {
+                        // Tool-call end marker — not a reasoning span end.
+                        // The authoritative reasoning.end marker comes from
+                        // the legacy ThinkingEnd event (handled below).
+                    }
+                    // Empty Thinking delta — the guarded
+                    // `Thinking(text) if !text.is_empty()` arm above
+                    // doesn't count for exhaustiveness, so handle the
+                    // empty case here as a no-op.
+                    _ => {}
+                }
+            }
+            AgentEvent::Thinking => {
+                // P4: signal-only — LiveActivityBar flips to "추론 중".
+                // Sent through the same connection-scoped sink so the
+                // state change is visible to the live chat only (no
+                // EventBus broadcast for a transient UI signal).
+                if let Some(ref sid) = transparency_session
+                    && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
+                {
+                    let _ = tx.try_send(StreamDelta::Thinking);
+                }
+            }
+            AgentEvent::ThinkingEnd => {
+                // oxi 0.58+: explicit reasoning-end signal. Drives the
+                // authoritative `reasoning.end` close for providers that
+                // emit it. The collector resets its `was_reasoning` flag
+                // so the first-Text fallback (reasoning_content models)
+                // never double-fires.
+                if let Some(ref sid) = transparency_session
+                    && let Some(tx) = streaming_sinks_for_cb.lookup(sid)
+                {
+                    let _ = tx.try_send(StreamDelta::ThinkingEnd);
+                }
+            }
+            AgentEvent::ToolCallDelta {
+                tool_call_id,
+                args_delta,
+            } => {
+                // oxi 0.58+: partial tool-call args streamed by the LLM
+                // while it is still constructing the call (before
+                // ToolExecutionStart). Each `args_delta` is a raw JSON
+                // fragment; consumers accumulate per `tool_call_id`.
+                if let Some(ref sid) = transparency_session {
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::ToolArgsDelta {
+                            session_id: sid.clone(),
+                            tool_call_id: tool_call_id.clone(),
+                            args_delta: args_delta.clone(),
+                        });
+                }
+            }
+            _ => {}
+        }
+    };
+
+    let (mut event_rx, run_handle) = match agent.run_tokio_stream(prompt).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            // Mirror the terminal-error path below (breaker + restore state).
+            LLM_CIRCUIT_BREAKER.record_failure();
+            crate::metrics::get_metrics()
+                .llm_circuit_breaker_state
+                .set(match LLM_CIRCUIT_BREAKER.state() {
+                    BreakerState::Closed => 0.0,
+                    BreakerState::HalfOpen => 0.5,
+                    BreakerState::Open => 1.0,
+                });
+            let restore_state = agent.export_state().ok();
+            return Err(crate::resilience::AgentRunError::wrap(e, restore_state).into());
+        }
+    };
+    while let Some(event) = event_rx.recv().await {
+        on_event(event);
+    }
+    // The handle resolves to the stub `Response` on success; a JoinError
+    // means the spawned agent task panicked or was cancelled.
+    let result = run_handle
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!("agent stream task failed: {e}").into()));
 
     // Record circuit breaker result after agent execution. The breaker is
     // observational (see `LLM_CIRCUIT_BREAKER`); the gauge reflects its real

@@ -307,11 +307,10 @@ impl oxicode_sdk::ports::AuthProvider for CredentialAuthProvider {
 
     fn list_providers(
         &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, oxicode_sdk::SdkError>> + Send + '_>>
-    {
-        Box::pin(async move {
-            discover_auth_store_providers().map_err(oxicode_sdk::SdkError::Internal)
-        })
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, oxicode_sdk::SdkError>> + Send + '_>> {
+        Box::pin(
+            async move { discover_auth_store_providers().map_err(oxicode_sdk::SdkError::Internal) },
+        )
     }
 }
 

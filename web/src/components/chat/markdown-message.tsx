@@ -231,6 +231,39 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           {preprocessArtifacts(children)}
         </ReactMarkdown>
       </div>
+export const MarkdownMessage = memo(function MarkdownMessage({
+  children,
+  className,
+  messageId = '',
+  isStreaming = false,
+}: MarkdownMessageProps) {
+  // Per-render counter for artifact ordinals. react-markdown renders
+  // components in document order within one render pass, so a plain
+  // `let` + closure mutated by ArtifactCard yields 0,1,2,… deterministically
+  // per pass. The closure resets every render, so the ordinals track
+  // document position even after streaming re-renders.
+  let artifactOrdinal = 0
+  return (
+    <ArtifactContext.Provider
+      value={{ messageId, isStreaming, nextOrdinal: () => artifactOrdinal++ }}
+    >
+      <div className={cn('prose prose-sm dark:prose-invert max-w-none', className)}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[
+            [rehypeRaw, { allowDangerousHtml: true }],
+            [rehypeSanitize, sanitizeSchema],
+            // After sanitize — defaultSchema strips unknown properties.
+            rehypeMarkInlineCode,
+            rehypeHighlight,
+            rehypeThinking,
+            rehypeLinkCard,
+          ]}
+          components={markdownComponents}
+        >
+          {preprocessArtifacts(isStreaming ? healStreamingMarkdown(children) : children)}
+        </ReactMarkdown>
+      </div>
     </ArtifactContext.Provider>
   )
 })

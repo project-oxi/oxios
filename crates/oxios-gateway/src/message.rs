@@ -102,7 +102,11 @@ pub struct UserFacingError {
 }
 
 /// Error kind classification.
+///
+/// `snake_case` on the wire: the web client narrows on these exact strings
+/// (`web/src/stores/chat.ts`). Renaming a variant is a wire-breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
     /// Agent execution failed.
     ExecutionFailed,
@@ -116,6 +120,8 @@ pub enum ErrorKind {
     PermissionDenied,
     /// Input validation failed.
     ValidationError,
+    /// The user cancelled the turn (RFC-049). Not a fault.
+    Cancelled,
     /// Internal system error (details not exposed to user).
     Internal,
 }

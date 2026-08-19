@@ -9,7 +9,10 @@
     "code": "Code",
     "preview": "Preview",
     "copy": "Copy",
-    "download": "Download"
+    "download": "Download",
+    "version": "v{{n}} of {{total}}",
+    "versionPrev": "Previous version",
+    "versionNext": "Next version"
   },
   "portal": {
     "back": "Back",

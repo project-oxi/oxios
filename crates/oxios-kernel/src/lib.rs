@@ -19,6 +19,7 @@ pub mod readiness;
 pub mod streaming_sink;
 pub mod subagent_runner;
 pub mod supervisor;
+pub mod turn_registry;
 
 // ─── Agent History Log ──────────────────────────────────────────────
 // 에이전트 실행 기록 — SQLite + JSON dual storage.

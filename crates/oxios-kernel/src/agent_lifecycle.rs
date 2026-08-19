@@ -31,6 +31,10 @@ pub struct AgentLifecycleManager {
     network_access: bool,
     /// Workspace path for path sandbox.
     workspace_path: String,
+    /// Workspace path for path sandbox.
+    workspace_path: String,
+    /// RFC-049: shared turn registry, used to bind forks to their turn key.
+    turns: Arc<crate::turn_registry::TurnRegistry>,
 }
 
 impl Clone for AgentLifecycleManager {

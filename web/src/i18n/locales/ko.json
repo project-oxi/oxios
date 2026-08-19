@@ -9,7 +9,10 @@
     "code": "코드",
     "preview": "미리보기",
     "copy": "복사",
-    "download": "다운로드"
+    "download": "다운로드",
+    "version": "{{total}}개 중 v{{n}}",
+    "versionPrev": "이전 버전",
+    "versionNext": "다음 버전"
   },
   "portal": {
     "back": "뒤로",

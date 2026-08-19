@@ -14,15 +14,20 @@ import { create } from 'zustand'
 import type { ArtifactDisplayMode, ArtifactMeta } from '@/types/artifact'
 
 /** A single view pushed onto the portal navigation stack. */
-export type PortalView =
   | {
-      type: 'artifact'
-      /** Stable identity: `${messageId}::${type}::${title}`. */
-      key: string
-      meta: ArtifactMeta
-      content: string
-      displayMode: ArtifactDisplayMode
-    }
+    type: 'artifact'
+    /** Stable identity: `${messageId}::${type}::${ordinal}::${title}`. */
+    key: string
+    meta: ArtifactMeta
+    content: string
+    displayMode: ArtifactDisplayMode
+    /** Full revision history. Index 0 is the first version; `activeVersion`
+     *  points at the one currently shown in the panel. Streaming updates
+     *  mutate `activeVersion` in place; a completed rewrite pushes a new
+     *  entry so the user can diff against what the agent replaced. */
+    versions: string[]
+    activeVersion: number
+  }
   | {
       type: 'filePreview'
       /** Absolute path of the file being previewed. */

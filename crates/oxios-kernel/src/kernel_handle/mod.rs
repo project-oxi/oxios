@@ -150,6 +150,9 @@ pub struct KernelHandle {
     /// the orchestrator and drops it after the collector completes; the
     /// `Weak` entries auto-clean.
     pub streaming_sinks: Arc<crate::streaming_sink::StreamingSinkRegistry>,
+    /// RFC-049: in-flight turns, addressable for cancellation. Shares its key
+    /// space with `streaming_sinks`.
+    pub turns: Arc<crate::turn_registry::TurnRegistry>,
     /// The Ouroboros orchestrator — the "brain". Attached by the kernel
     /// assembler so background loops (cron auto-start, task auto-run) and
     /// the HTTP task-run handler share ONE execution primitive (`run_goal`)
@@ -214,6 +217,8 @@ impl KernelHandle {
             token_maxing: None,
             compression: None,
             host_tools: HostToolsApi::new(),
+            streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
+            turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
             streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
@@ -306,6 +311,17 @@ impl KernelHandle {
         registry: Arc<crate::streaming_sink::StreamingSinkRegistry>,
     ) -> Self {
         self.streaming_sinks = registry;
+        self
+    }
+
+    /// Attach the shared turn registry (the gateway holds the same `Arc`).
+    pub fn with_turns(mut self, registry: Arc<crate::turn_registry::TurnRegistry>) -> Self {
+        self.turns = registry;
+        self
+    }
+    /// Attach the shared turn registry (the gateway holds the same `Arc`).
+    pub fn with_turns(mut self, registry: Arc<crate::turn_registry::TurnRegistry>) -> Self {
+        self.turns = registry;
         self
     }
 

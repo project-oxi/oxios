@@ -9,11 +9,12 @@ use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
     A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
-    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
-    EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
-    OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
-    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
-    auth::AuthManager, config::load_config, mcp::validate_mcp_command,
+    BrainConnection, BrainSupervisor, BudgetManager, ClawHubClient, ClawHubInstaller,
+    CronScheduler, EngineHandle, EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge,
+    McpServer, Orchestrator, OxiosConfig, OxiosEngine, PersonaManager, ProjectManager,
+    ResourceMonitor, SkillManager, SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor,
+    SupervisorConfig, access_manager::AccessManager, auth::AuthManager, config::load_config,
+    mcp::validate_mcp_command,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;

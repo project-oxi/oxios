@@ -37,6 +37,11 @@ export interface ArtifactMeta {
   language?: string
   /** Detection path. */
   source: ArtifactSource
+  /** Zero-based index of this artifact within its owning message. Assigned
+   *  by `ArtifactCard` from a per-message counter in `ArtifactContext`, so
+   *  two untitled artifacts of the same type in one message get distinct
+   *  identity keys (and therefore distinct panel entries). */
+  ordinal: number
 }
 
 /** Panel display mode — code source vs live preview. */

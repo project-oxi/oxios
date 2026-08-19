@@ -16,10 +16,10 @@
 // renders as an interactive ArtifactCard that opens a sandboxed preview panel
 // — NOT as a plain code listing. See components/chat/artifact/.
 
-import type { Element, ElementContent } from 'hast'
+import type { Element, ElementContent, Root, RootContent } from 'hast'
 import type { Schema } from 'hast-util-sanitize'
 import { Check, Copy } from 'lucide-react'
-import { type ComponentPropsWithoutRef, memo, useCallback, useState } from 'react'
+import { type ComponentPropsWithoutRef, memo, type ReactNode, useCallback, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeRaw from 'rehype-raw'
@@ -34,15 +34,25 @@ import { preprocessArtifacts } from './markdown-plugins/preprocess-artifacts'
 
 // ── Code block with language label + copy button ──────────────────
 
-function CodeBlock({ language, children }: { language?: string; children: string }) {
+function CodeBlock({
+  language,
+  code,
+  children,
+}: {
+  language?: string
+  /** Raw source text — copy payload. Never derived from the rendered nodes. */
+  code: string
+  /** Highlighted hast children as rendered by react-markdown. */
+  children: ReactNode
+}) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(children).then(() => {
+    navigator.clipboard.writeText(code).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
-  }, [children])
+  }, [code])
 
   return (
     <div className="group relative my-3 rounded-lg border bg-muted/50 overflow-hidden">
@@ -51,7 +61,7 @@ function CodeBlock({ language, children }: { language?: string; children: string
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover:opacity-100"
+          className="flex items-center gap-1 text-xs text-muted-foreground transition-opacity opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
         >
           {copied ? (
             <>
@@ -132,15 +142,30 @@ function hastToText(node: ElementContent | undefined | null): string {
   return ''
 }
 
+/** react-markdown v10 dropped the `inline` prop (grep the published lib: zero
+ *  occurrences), so the component map has no way to tell `` `x` `` from a
+ *  fenced block — every inline span was rendering as a full CodeBlock card,
+ *  emitting a `<div>` inside a `<p>`. Block code is *always* `<pre><code>`;
+ *  mark everything else so the `code` component can branch on structure. */
+function rehypeMarkInlineCode() {
+  return (tree: Root) => {
+    const walk = (node: Root | RootContent, parentTag?: string): void => {
+      if (node.type === 'element' && node.tagName === 'code' && parentTag !== 'pre') {
+        node.properties = { ...node.properties, dataInlineCode: 'true' }
+      }
+      if (node.type !== 'element' && node.type !== 'root') return
+      for (const child of node.children) {
+        walk(child, node.type === 'element' ? node.tagName : undefined)
+      }
+    }
+    walk(tree)
+  }
+}
+
 const markdownComponents = {
   pre: ({ children }: ComponentPropsWithoutRef<'pre'>) => <>{children}</>,
-  code({
-    node,
-    className,
-    children,
-    inline,
-  }: ComponentPropsWithoutRef<'code'> & { node?: Element; inline?: boolean }) {
-    if (inline) return <InlineCode>{children}</InlineCode>
+  code({ node, className, children }: ComponentPropsWithoutRef<'code'> & { node?: Element }) {
+    if (node?.properties?.dataInlineCode === 'true') return <InlineCode>{children}</InlineCode>
 
     const langMatch = /language-(\w+)/.exec(className ?? '')
     const language = langMatch ? langMatch[1] : undefined
@@ -158,7 +183,14 @@ const markdownComponents = {
       )
     }
 
-    return <CodeBlock language={language}>{extractText(children)}</CodeBlock>
+    // rehype-highlight has already wrapped every token in `<span class="hljs-*">`.
+    // Render those children so highlighting survives, but take the copy payload
+    // from the hast node — flattening React children drops every token.
+    return (
+      <CodeBlock language={language} code={hastToText(node)}>
+        {children}
+      </CodeBlock>
+    )
   },
   a: ExternalLink,
 }
@@ -188,6 +220,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           rehypePlugins={[
             [rehypeRaw, { allowDangerousHtml: true }],
             [rehypeSanitize, sanitizeSchema],
+            // After sanitize — defaultSchema strips unknown properties.
+            rehypeMarkInlineCode,
             rehypeHighlight,
             rehypeThinking,
             rehypeLinkCard,

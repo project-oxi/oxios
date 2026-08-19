@@ -119,6 +119,7 @@ pub struct ToolProfileSpec {
     pub capability_ceiling: Vec<CapabilityRequest>,
     pub include: Vec<ToolSelector>,
     pub exclude: Vec<ToolSelector>,
+    pub dynamic_providers: Vec<DynamicProviderContract>,
     pub activation: ToolActivationPolicy,
 }
 
@@ -133,11 +134,15 @@ personas continue to reference their pinned revision until explicitly upgraded.
 This prevents ambient authority and behavior changes.
 
 Tool selectors are authoring syntax, not live queries by default. Publishing a
-profile revision resolves tag/provider selectors to an immutable set of
-namespaced tool IDs stored with that revision. A profile may opt into a dynamic
-provider contract only by declaring the provider identity, accepted capability
-ceiling, and compatibility policy explicitly. Dynamic binding still cannot
-expand the bounding authority.
+fixed profile revision resolves selectors to immutable namespaced tool IDs and
+descriptor contract versions stored with that revision. A fixed binding becomes
+unavailable, rather than silently changing, when its required descriptor
+contract is no longer present.
+
+A profile opts into dynamic resolution only through a typed
+`DynamicProviderContract`. Every dynamic result remains bounded by the
+contract's provider, selector, compatibility rule, and capability ceiling and is
+recorded in the snapshot's catalog dependency digest.
 
 There is no raw `domains: Vec<String>` escape hatch. Long-tail tools use typed
 capability requests or namespaced tool selectors.
@@ -190,6 +195,7 @@ Every tool provider publishes self-describing descriptors:
 pub struct ToolDescriptor {
     pub id: ToolId,
     pub provider: ToolProviderId,
+    pub contract_version: ToolContractVersion,
     pub description: String,
     pub tags: Vec<ToolTag>,
     pub required_capabilities: Vec<CapabilityRequirement>,
@@ -212,6 +218,47 @@ skill.novel.outline
 The runtime catalog is assembled from provider descriptors. There is no
 separate hand-maintained `TOOL_CATALOG` name list. Built-in, feature-gated, MCP,
 and skill-provided tools participate in the same catalog contract.
+
+Dynamic provider and activation semantics are explicit:
+
+```rust
+pub struct DynamicProviderContract {
+    pub provider: ToolProviderId,
+    pub selector: ProviderToolSelector,
+    pub capability_ceiling: Vec<CapabilityRequest>,
+    pub compatibility: ProviderCompatibilityPolicy,
+}
+
+pub enum ProviderCompatibilityPolicy {
+    ExactContract(ToolContractVersion),
+    CompatibleMajor { contract: ToolContractId, major: u32 },
+}
+
+pub enum ActivationClass {
+    Always,
+    IntentMatched,
+    OnDemand,
+    ApprovalOnly,
+}
+
+pub struct ToolActivationPolicy {
+    pub max_active_tools: usize,
+    pub required_core: Vec<ToolId>,
+    pub sticky_turns: u32,
+}
+```
+
+`ProviderToolSelector` is constrained to the named provider and selects exact
+tool IDs or provider-declared tags. `CompatibleMajor` admits only descriptors
+whose capability contract has the named major version; it does not waive the
+contract capability ceiling.
+
+Descriptor `ActivationClass` is the minimum restriction. A profile policy may
+make a tool more restrictive but never less restrictive: `ApprovalOnly` cannot
+become active without approval, and `OnDemand` cannot become `Always`.
+`required_core` must reference eligible `Always` or `IntentMatched` tools and
+profile publication fails when the required core alone exceeds
+`max_active_tools`.
 
 ### 4.5 Authority context
 
@@ -293,11 +340,13 @@ Resolution is deterministic for identical inputs.
 6. Intersect requested capabilities with the bounding authority.
 7. Apply RBAC, AgentPermissions, ExecConfig, runtime feature availability, and
    deployment policy.
-8. Classify each tool. `Active` and `AvailableOnDemand` require every descriptor
-   capability to be present in the effective CSpace. A missing requirement is
-   `RequiresApproval` only when it is satisfiable from the approving
-   principal's authority and the complete delegation chain; otherwise the tool
-   is `Unavailable`.
+8. Classify each tool. A requirement outside the profile or dynamic-contract
+   capability ceiling is always `Unavailable(CeilingExceeded)` and is never
+   approval-eligible. Otherwise, `Active` and `AvailableOnDemand` require every
+   descriptor capability to be present in the effective CSpace. A missing
+   requirement is `RequiresApproval` only when it is satisfiable from the
+   approving principal's authority and complete delegation chain; all other
+   cases are `Unavailable`.
 9. Select the per-turn active set according to activation policy.
 10. Derive UI affordances from the requested UI profile intersected with
     effective tool availability.
@@ -336,6 +385,7 @@ For remote A2A:
 ```text
 remote effective authority
   = delegated request
+  ∩ delegating agent's effective authority
   ∩ delegating principal's permitted A2A delegation scope
   ∩ target principal's accepted delegation authority
   ∩ target deployment policy
@@ -357,10 +407,12 @@ registered as callable until approval succeeds. A single cataloged
 candidate tool; it cannot issue authority.
 
 Approved capabilities are minted from the approving principal's bounding
-CSpace. Inside a delegated context they are additionally intersected with the
-entire delegation chain. If the principal intends to broaden a parent
-authority, approval occurs at that parent/session level and the child is
-re-resolved; a child never becomes stronger than its current parent.
+CSpace, remain inside the requesting profile's capability ceiling, and cannot
+repair `CeilingExceeded`. Inside a delegated context they are additionally
+intersected with the entire delegation chain. If the principal intends to
+broaden a parent authority or profile ceiling, that change occurs explicitly at
+the parent/session level and the child is re-resolved; a child never becomes
+stronger than its current parent.
 
 Approval creates a new snapshot with a bounded, attributable, time-limited
 capability. Its capability ID, issuer, scope, and expiration are fingerprinted.

@@ -327,21 +327,21 @@ pub(crate) fn sanitize_event(event: &oxios_kernel::event_bus::KernelEvent) -> se
         "timestamp": now,
     });
     let payload = match event {
-        KernelEvent::AgentCreated { id, name } => serde_json::json!({
+        KernelEvent::AgentCreated { id, name, .. } => serde_json::json!({
             "type": "agent_created",
             "agent_id": id.to_string(),
             "name": name,
         }),
-        KernelEvent::AgentStarted { id } => serde_json::json!({
+        KernelEvent::AgentStarted { id, .. } => serde_json::json!({
             "type": "agent_started",
             "agent_id": id.to_string(),
         }),
-        KernelEvent::AgentStopped { id, success } => serde_json::json!({
+        KernelEvent::AgentStopped { id, success, .. } => serde_json::json!({
             "type": "agent_stopped",
             "agent_id": id.to_string(),
             "success": success,
         }),
-        KernelEvent::AgentFailed { id, error } => serde_json::json!({
+        KernelEvent::AgentFailed { id, error, .. } => serde_json::json!({
             "type": "agent_failed",
             "agent_id": id.to_string(),
             "error": error,

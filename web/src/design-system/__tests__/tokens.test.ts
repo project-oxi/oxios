@@ -192,3 +192,40 @@ describe('APCA contrast', () => {
     expect(meetsContrastThreshold(0.5, 0.55)).toBe(false)
   })
 })
+
+// ── Chat Component Token Compliance ──────────────────────────────────────────
+
+describe('chat component token compliance', () => {
+  it('chat components use tokens, not raw colors or dark: variants', async () => {
+    const { readdir, readFile } = await import('node:fs/promises')
+    const path = await import('node:path')
+    const chatDir = path.join(process.cwd(), 'src', 'components', 'chat')
+
+    const walk = async (dir: string): Promise<string[]> => {
+      const entries = await readdir(dir, { withFileTypes: true })
+      const files = await Promise.all(
+        entries.map(async (e) => {
+          const full = path.join(dir, e.name)
+          return e.isDirectory() ? walk(full) : [full]
+        }),
+      )
+      return files.flat()
+    }
+
+    const offenders: string[] = []
+    for (const f of await walk(chatDir)) {
+      if (!f.endsWith('.tsx') && !f.endsWith('.ts')) continue
+      const src = await readFile(f, 'utf8')
+      if (/\bdark:/.test(src)) offenders.push(`${path.relative(process.cwd(), f)}: dark: variant`)
+      if (/\b(bg|text|border)-(white|black)\b/.test(src))
+        offenders.push(`${path.relative(process.cwd(), f)}: raw color`)
+      // Hex color literals. `#` followed by a digit could be a GitHub issue
+      // number in a comment ("React #185") — only flag hex that could not be
+      // one (starts with a-f, or is 6-8 chars), keeping the check strict
+      // enough to catch `#fff` / `#ffffff` while ignoring issue refs.
+      if (/#[a-fA-F][0-9a-fA-F]{2,7}\b|#[0-9a-fA-F]{6,8}\b/.test(src))
+        offenders.push(`${path.relative(process.cwd(), f)}: hex literal`)
+    }
+    expect(offenders).toEqual([])
+  })
+})

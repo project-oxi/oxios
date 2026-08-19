@@ -2,9 +2,17 @@
 // before react-markdown invokes the `code` component. Flattening the React
 // children to a string dropped every highlighted token, so `fn main() {
 // println!("hi"); }` rendered as ` () { (); }` and Copy copied that corruption.
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string, opts?: { count?: number }) =>
+      opts && typeof opts.count === 'number' ? `${key}:${opts.count}` : key,
+    i18n: { language: 'en' },
+  }),
+}))
 
 describe('MarkdownMessage code blocks', () => {
   it('keeps every token of a language-tagged block', () => {
@@ -30,5 +38,18 @@ describe('MarkdownMessage code blocks', () => {
     const { container } = render(<MarkdownMessage>{'use `cargo test` now'}</MarkdownMessage>)
     expect(container.querySelector('pre')).toBeNull()
     expect(container.querySelector('p > code')?.textContent).toBe('cargo test')
+  })
+
+  it('emits highlight classes that the theme layer can style', () => {
+    const { container } = render(<MarkdownMessage>{'```rust\nfn main() {}\n```'}</MarkdownMessage>)
+    expect(container.querySelector('.hljs-keyword')).toBeTruthy()
+  })
+
+  it('collapses a very long block behind an expand control', () => {
+    const body = Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n')
+    const { container } = render(<MarkdownMessage>{`\`\`\`text\n${body}\n\`\`\``}</MarkdownMessage>)
+    expect(container.querySelector('[data-collapsed="true"]')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /expand/i }))
+    expect(container.querySelector('[data-collapsed="true"]')).toBeNull()
   })
 })

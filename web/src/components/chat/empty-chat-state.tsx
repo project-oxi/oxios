@@ -3,6 +3,7 @@ import { MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/shared/empty-state'
 import { api } from '@/lib/api-client'
+import { formatRelativeTime } from '@/lib/relative-time'
 import { useChatStore } from '@/stores/chat'
 import type { Session } from '@/types'
 
@@ -38,7 +39,7 @@ export function EmptyChatState() {
           </p>
           <div className="space-y-1">
             {sessions.map((s) => {
-              const timeStr = formatRelativeTime(s.created_at)
+              const timeStr = formatRelativeTime(s.created_at, t)
 
               return (
                 <button
@@ -62,19 +63,4 @@ export function EmptyChatState() {
       ) : null}
     </EmptyState>
   )
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime()
-  const minutes = Math.floor(diff / 60_000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(dateStr).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  })
 }

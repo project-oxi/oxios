@@ -1,4 +1,4 @@
-import type { ChatActivity, ChatBlock, ToolCallContext } from '@/types'
+import type { ChatBlock, ToolCallContext } from '@/types'
 
 /**
  * RFC-015 §4.3 — descriptor for the "current activity" header shown above the
@@ -41,37 +41,10 @@ export interface LiveActivityLabel {
   /** Concrete detail, e.g. the search query or a shortened file path. */
   detail?: string
 }
-
-export function deriveCurrentActivity(
-  activities: readonly ChatActivity[] | undefined,
-): LiveActivityDescriptor {
-  if (!activities || activities.length === 0) {
-    return { kind: 'thinking' }
-  }
-  // Walk backwards so the most recent in-flight activity wins.
-  for (let i = activities.length - 1; i >= 0; i--) {
-    const a = activities[i]
-    if (!a) continue
-    if (a.type === 'tool_call' && a.isRunning === true) {
-      return {
-        kind: 'tool_running',
-        toolName: a.toolName,
-        progress: a.progress,
-        context: a.context,
-        toolArgs: a.toolArgs,
-      }
-    }
-    if (a.type === 'reasoning') {
-      return { kind: 'reasoning' }
-    }
-  }
-  return { kind: 'thinking' }
-}
-
 /**
- * Block-stream variant of {@link deriveCurrentActivity}. Derives the live
- * descriptor from a message's `blocks[]` (the single source of truth) by
- * walking backwards for the most recent in-flight reasoning/tool block.
+ * Block-stream selector for the live activity header. Walks a message's
+ * `blocks[]` (the single source of truth) backwards and returns the
+ * descriptor for the most recent in-flight reasoning or tool block.
  * Falls back to `thinking` when blocks are absent or all settled.
  */
 export function deriveCurrentActivityFromBlocks(

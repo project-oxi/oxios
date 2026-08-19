@@ -67,7 +67,19 @@ export type ChatEvent =
       source?: string
       timestamp: string
     }
-  | { kind: 'phase'; messageId?: string; phase: string; evaluationPassed?: boolean }
+  | {
+      kind: 'subagent.start'
+      messageId: string
+      agentId: string
+      name: string
+    }
+  | {
+      kind: 'subagent.end'
+      messageId: string
+      agentId: string
+      success: boolean
+      error?: string
+    }
   | {
       kind: 'stream.stop'
       messageId?: string

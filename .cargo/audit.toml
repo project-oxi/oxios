@@ -11,4 +11,7 @@ ignore = [
     "RUSTSEC-2025-0118",
     "RUSTSEC-2025-0119",
     "RUSTSEC-2025-0141",
+    # Upstream-owned transitive via oxibrowser-render (oxicode-sdk): no in-repo fix.
+    "RUSTSEC-2026-0206", # rustybuzz unmaintained (usvg -> blitz)
+    "RUSTSEC-2026-0253", # lru pop() panic-safety UAF (azul-layout); fixed >= 0.18.2, unreachable via pinned graph
 ]

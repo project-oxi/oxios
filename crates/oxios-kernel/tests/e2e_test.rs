@@ -91,6 +91,7 @@ impl Supervisor for MockSupervisor {
         let _ = self.event_bus.publish(KernelEvent::AgentCreated {
             id,
             name: directive.goal.clone(),
+            session_id: None,
         });
         Ok(id)
     }
@@ -105,10 +106,15 @@ impl Supervisor for MockSupervisor {
         if let Some(a) = self.agents.write().get_mut(&id) {
             a.status = AgentStatus::Idle;
         }
-        let _ = self.event_bus.publish(KernelEvent::AgentStarted { id });
-        let _ = self
-            .event_bus
-            .publish(KernelEvent::AgentStopped { id, success: true });
+        let _ = self.event_bus.publish(KernelEvent::AgentStarted {
+            id,
+            session_id: None,
+        });
+        let _ = self.event_bus.publish(KernelEvent::AgentStopped {
+            id,
+            success: true,
+            session_id: None,
+        });
         Ok(ExecutionResult {
             output: "Mock agent completed successfully".into(),
             steps_completed: 5,

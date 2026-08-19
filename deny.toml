@@ -14,7 +14,9 @@ ignore = [
     { id = "RUSTSEC-2025-0119", reason = "Unmaintained transitive dependency owned by upstream." },
     { id = "RUSTSEC-2024-0436", reason = "Unmaintained transitive dependency owned by upstream." },
     { id = "RUSTSEC-2026-0192", reason = "Unmaintained transitive dependency owned by upstream." },
-    { crate = "spin@0.9.8", reason = "Yanked transitive dependency owned by upstream." },
+    { id = "RUSTSEC-2025-0141", reason = "Unmaintained transitive (build) dependency of azul-layout via hyphenation; pinned by oxibrowser-render (oxicode-sdk), no in-repo fix." },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; transitive via usvg -> blitz (oxibrowser-render, oxicode-sdk), no in-repo fix." },
+    { id = "RUSTSEC-2026-0253", reason = "lru pop() panic-safety UAF (INFO unsound); transitive via azul-layout (oxibrowser-render), fix (lru >= 0.18.2) unreachable through the pinned graph; requires oxicode-sdk bump." },
 ]
 
 [licenses]

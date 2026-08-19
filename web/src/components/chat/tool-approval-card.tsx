@@ -75,7 +75,7 @@ export function ToolApprovalCard({
                 }}
                 size="sm"
                 disabled={disabled}
-                className="bg-success/90 hover:bg-success text-white"
+                className="bg-success/90 hover:bg-success text-success-foreground"
               >
                 {t('chat.toolApproval.approve')}
               </Button>

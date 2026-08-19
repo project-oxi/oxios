@@ -17,7 +17,7 @@
   "portal": {
     "back": "뒤로",
     "close": "닫기",
-    "threadCreating": "스레드 생성 중…",
+    "panelLabel": "사이드 패널",
     "threadFrom": "스레드 출처:",
     "threadEmpty": "(아직 메시지가 없습니다)",
     "createThread": "이 메시지에서 스레드 만들기",
@@ -254,6 +254,10 @@
     "startConversationHint": "메시지를 보내 대화를 시작하세요.",
     "thinking": "생각 중...",
     "thought": "생각한 내용",
+    "subagent": "서브 에이전트: {{name}}",
+    "branchHere": "이 대화 지점에서 분기",
+    "rateUp": "좋은 응답",
+    "rateDown": "아쉬운 응답",
     "inputPlaceholder": "메시지를 입력하세요...",
     "mentionHint": "@로 지식·메모리·마운트 검색 — 검색어를 입력하세요",
     "noMentionResults": "일치하는 항목이 없습니다",
@@ -358,6 +362,10 @@
       "timelineHeader": "활동 {{count}}개",
       "toolCallCount": "도구 호출 {{count}}회"
     },
+    "code": {
+      "expand": "{{count}}줄 모두 보기",
+      "collapse": "접기"
+    },
     "liveActivity": {
       "thinking": "생각하는 중...",
       "working": "작업 중",
@@ -395,6 +403,7 @@
     "roleYou": "사용자",
     "interviewTitle": "인터뷰",
     "retry": "다시 시도",
+    "sessionLoadFailed": "대화를 불러오지 못했습니다",
     "scrollToBottom": "맨 아래로",
     "regenerate": "다시 생성",
     "compressedCollapsed": "이전 메시지 {{count}}개 (펼치기)",
@@ -416,11 +425,44 @@
     "compression.digest.assistantMessages": "{{count}}개 어시스턴트",
     "compression.digest.toolCalls": "{{count}}개 도구 호출",
     "error": {
-      "quotaExceeded": "선택한 프로바이더에 토큰이 남아있지 않습니다.",
-      "authFailed": "프로바이더 인증에 실패했습니다.",
-      "noRoute": "라우팅 가능한 프로바이더가 없습니다.",
-      "generateFailed": "응답을 생성하지 못했습니다."
+      "executionFailed": {
+        "title": "실행 실패",
+        "hint": "도구 호출 또는 명령이 실패했습니다. 자세한 내용은 이전 활동을 확인하세요."
+      },
+      "apiKeyMissing": {
+        "title": "API 키 없음",
+        "hint": "설정 → 프로바이더에서 해당 프로바이더의 API 키를 추가하세요."
+      },
+      "providerError": {
+        "title": "프로바이더 오류",
+        "hint": "모델 프로바이더가 오류를 반환했습니다. 다시 시도하거나 다른 모델을 선택하세요."
+      },
+      "timeout": {
+        "title": "응답 없음",
+        "hint": "모델이 응답을 멈췄습니다. 턴을 취소했습니다 — 다시 시도하거나 모델을 바꿔보세요."
+      },
+      "permissionDenied": {
+        "title": "권한 거부",
+        "hint": "현재 API 키에 이 모델 또는 엔드포인트에 대한 권한이 없습니다."
+      },
+      "validationError": {
+        "title": "잘못된 요청",
+        "hint": "요청이 모델에 도달하기 전에 거부되었습니다. 메시지를 수정한 뒤 다시 시도하세요."
+      },
+      "internal": {
+        "title": "내부 오류",
+        "hint": "서버 측에서 문제가 발생했습니다. 다시 시도해 주세요 — 계속되면 로그를 확인하세요."
+      },
+      "cancelled": {
+        "title": "턴 취소됨",
+        "hint": "턴이 취소되었습니다 — 부분 답변은 위에서 계속 볼 수 있습니다."
+      },
+      "unknown": {
+        "title": "문제가 발생했습니다",
+        "hint": "예기치 못한 오류가 발생했습니다. 다시 시도해 주세요."
+      }
     },
+    "connectionLost": "연결이 끊겼습니다 — 응답이 잘렸을 수 있습니다",
     "manageProjects": "프로젝트 관리",
     "manageMounts": "마운트 관리",
     "noSessionsInProject": "대화 없음",
@@ -429,6 +471,7 @@
     "sessionMoveFailed": "이동 실패",
     "sessionMoved": "세션이 이동되었습니다",
     "stop": "중지",
+    "interrupted": "사용자가 중단함",
     "queue": "큐",
     "queued": "{{count}}개 대기 중",
     "unfiled": "분류 안 됨",
@@ -477,7 +520,8 @@
       "mountBound": "이 세션에 연결됨"
     },
     "emptyHint": "아래 최근 대화를 선택하거나, 새 대화를 입력해 시작하세요.",
-    "knowledgeOpen": "문서 보기"
+    "knowledgeOpen": "문서 보기",
+    "dropToAttach": "파일을 놓아 첨부"
   },
   "commandPalette": {
     "placeholder": "명령 검색 또는 메모 입력…",
@@ -1118,6 +1162,8 @@
     "search": "검색",
     "newFile": "새 파일",
     "newFolder": "새 폴더",
+    "newFolderDialogTitle": "새 폴더",
+    "newFolderAtRoot": "루트에 새 폴더를 만듭니다.",
     "deleteFile": "파일 삭제",
     "moveFile": "파일 이동",
     "renameFile": "파일 이름 변경",
@@ -1859,6 +1905,7 @@
     "sectionSecrets": "시크릿",
     "secretsDescription": "API 키 및 자격 증명을 안전하게 관리",
     "sectionAppearance": "외관",
+    "appearanceDescription": "테마 모드와 강조 색상 맞춤 설정",
     "sectionSystemAgents": "시스템 에이전트",
     "sectionImage": "이미지 생성",
     "sectionStats": "통계",
@@ -2344,6 +2391,11 @@
     "dependencyGraph": "의존성 그래프"
   },
   "search": {
+    "sources": "출처 {{count}}개",
+    "sources_plural": "출처 {{count}}개",
+    "results": "검색 결과",
+    "images": "이미지 {{count}}개",
+    "images_plural": "이미지 {{count}}개",
     "panel": {
       "placeholder": "웹 검색…",
       "agentResults": "에이전트 검색 결과",
@@ -2359,6 +2411,56 @@
       "knowledgeNoResults": "'{{query}}'와 일치하는 노트가 없습니다",
       "openInKnowledge": "Knowledge에서 열기"
     }
+  },
+  "mention": {
+    "mount": "마운트",
+    "knowledge": "지식",
+    "agent": "에이전트",
+    "memory": "메모리",
+    "searchPlaceholder": "검색어 입력…",
+    "noResults": "결과 없음"
+  },
+  "slash": {
+    "compact": {
+      "description": "컨텍스트를 절약하기 위해 대화를 요약합니다"
+    },
+    "new-topic": {
+      "description": "새 주제 분기를 시작합니다"
+    },
+    "clear": {
+      "description": "현재 입력을 지웁니다"
+    },
+    "search-on": {
+      "description": "이 메시지에 웹 검색을 적용합니다"
+    },
+    "web": {
+      "description": "URL을 가져와 컨텍스트로 사용합니다"
+    },
+    "skill": {
+      "description": "이름으로 스킬을 호출합니다"
+    },
+    "persona": {
+      "description": "활성 페르소나를 전환합니다"
+    },
+    "save": {
+      "description": "현재 응답을 지식 베이스에 저장합니다"
+    },
+    "export": {
+      "description": "대화를 내보냅니다"
+    }
+  },
+  "pathAccess": {
+    "title": "경로 접근 권한",
+    "prompt": "{{toolName}} 도구가 이 경로에 접근하려고 합니다. 허용 방법을 선택하세요.",
+    "deny": "거부",
+    "allowOnce": "임시 허용",
+    "createMount": "마운트 생성"
+  },
+  "approvalMode": {
+    "buttonLabel": "승인 모드",
+    "manual": "수동 승인",
+    "allowList": "허용 목록",
+    "autoRun": "자동 실행"
   },
   "auth": {
     "title": "Oxios 로그인",

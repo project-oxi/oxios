@@ -90,6 +90,7 @@ impl Supervisor for MockSupervisor {
         let _ = self.event_bus.publish(KernelEvent::AgentCreated {
             id,
             name: directive.goal.clone(),
+            session_id: None,
         });
         Ok(id)
     }
@@ -107,10 +108,15 @@ impl Supervisor for MockSupervisor {
                 a.status = AgentStatus::Idle;
             }
         }
-        let _ = self.event_bus.publish(KernelEvent::AgentStarted { id });
-        let _ = self
-            .event_bus
-            .publish(KernelEvent::AgentStopped { id, success: true });
+        let _ = self.event_bus.publish(KernelEvent::AgentStarted {
+            id,
+            session_id: None,
+        });
+        let _ = self.event_bus.publish(KernelEvent::AgentStopped {
+            id,
+            success: true,
+            session_id: None,
+        });
         Ok(ExecutionResult {
             output: "Mock agent completed".into(),
             steps_completed: 3,
@@ -155,6 +161,7 @@ async fn test_event_bus_publish_subscribe() {
     bus.publish(KernelEvent::AgentCreated {
         id: uuid::Uuid::new_v4(),
         name: "test-agent".into(),
+        session_id: None,
     })
     .unwrap();
 
@@ -174,6 +181,7 @@ async fn test_event_bus_multiple_subscribers() {
     bus.publish(KernelEvent::AgentCreated {
         id: uuid::Uuid::new_v4(),
         name: "test-agent".into(),
+        session_id: None,
     })
     .unwrap();
 
@@ -191,6 +199,7 @@ async fn test_event_bus_no_subscribers_ok() {
     bus.publish(KernelEvent::AgentCreated {
         id: uuid::Uuid::new_v4(),
         name: "test-agent".into(),
+        session_id: None,
     })
     .unwrap();
 }
@@ -452,6 +461,7 @@ impl Supervisor for TrackingSupervisor {
         let _ = self.event_bus.publish(KernelEvent::AgentCreated {
             id,
             name: directive.goal.clone(),
+            session_id: None,
         });
         Ok(id)
     }
@@ -470,10 +480,15 @@ impl Supervisor for TrackingSupervisor {
                 a.status = AgentStatus::Idle;
             }
         }
-        let _ = self.event_bus.publish(KernelEvent::AgentStarted { id });
-        let _ = self
-            .event_bus
-            .publish(KernelEvent::AgentStopped { id, success: true });
+        let _ = self.event_bus.publish(KernelEvent::AgentStarted {
+            id,
+            session_id: None,
+        });
+        let _ = self.event_bus.publish(KernelEvent::AgentStopped {
+            id,
+            success: true,
+            session_id: None,
+        });
         Ok(ExecutionResult {
             output: "Task completed".into(),
             steps_completed: 1,

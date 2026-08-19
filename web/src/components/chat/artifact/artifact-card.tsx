@@ -2,12 +2,14 @@
 //
 // Clicking opens (or closes) the side preview panel. While the owning message
 // streams and this card is the active artifact, it pushes its live content to
-// the store so the panel preview updates in real time.
+// the store so the panel preview updates in real time. When the message
+// transitions from streaming to settled with a content change, the card pushes
+// a new version so the user can step back to the previous revision.
 //
 // LobeHub analogue: Conversation/Markdown/plugins/LobeArtifact/Render.
 
 import { Code, Component, Eye, Globe, Image as ImageIcon, Loader2, Workflow } from 'lucide-react'
-import { createContext, useContext, useEffect, useMemo } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { artifactKey, usePortalStore } from '@/stores/portal'
@@ -16,11 +18,17 @@ import { ArtifactType, parseArtifactCode } from '@/types/artifact'
 /** Context provided by MarkdownMessage so cards know their owning message. */
 export interface ArtifactContextValue {
   messageId: string
+  /** Owning block id (BlockStream passes its block id). Combined with the
+   *  document-order ordinal (stamped by the rehype plugin) this gives
+   *  collision-free identity even when one message has multiple text blocks
+   *  with same-type untitled artifacts (one MarkdownMessage per block). */
+  blockId: string
   isStreaming: boolean
 }
 
 export const ArtifactContext = createContext<ArtifactContextValue>({
   messageId: '',
+  blockId: '',
   isStreaming: false,
 })
 
@@ -42,11 +50,15 @@ interface ArtifactCardProps {
   type: ArtifactType
   language?: string
   source: 'language' | 'tag'
+  /** Document-order index within this message block, stamped by the rehype
+   *  plugin at parse time — stable across re-renders (a closure counter
+   *  drifted when cards re-rendered independently of MarkdownMessage). */
+  ordinal?: number
   /** Raw code (may include a leading title directive line). */
   children: string
 }
 
-export function ArtifactCard({ type, language, source, children }: ArtifactCardProps) {
+export function ArtifactCard({ type, language, source, ordinal = 0, children }: ArtifactCardProps) {
   const { t } = useTranslation()
   const ctx = useContext(ArtifactContext)
 
@@ -56,8 +68,17 @@ export function ArtifactCard({ type, language, source, children }: ArtifactCardP
 
   const toggleArtifact = usePortalStore((s) => s.toggleArtifact)
   const updateArtifactContent = usePortalStore((s) => s.updateArtifactContent)
+  const pushArtifactVersion = usePortalStore((s) => s.pushArtifactVersion)
 
-  const meta = { messageId: ctx.messageId, type, title, language, source }
+  const meta = {
+    messageId: ctx.messageId,
+    blockId: ctx.blockId,
+    type,
+    title,
+    language,
+    source,
+    ordinal,
+  }
   const key = artifactKey(meta)
   const top = usePortalStore((s) => s.stack[s.stack.length - 1])
   const isActive = top?.type === 'artifact' && top.key === key
@@ -67,6 +88,23 @@ export function ArtifactCard({ type, language, source, children }: ArtifactCardP
   useEffect(() => {
     if (isActive) updateArtifactContent(key, raw)
   }, [isActive, key, raw, updateArtifactContent])
+
+  // Streaming → settled transition. When the message flips from streaming to
+  // done and the latest content differs from the active version on the stack,
+  // push a new revision so the user can diff against what the agent replaced.
+  const prevStreamingRef = useRef(ctx.isStreaming)
+  useEffect(() => {
+    const wasStreaming = prevStreamingRef.current
+    prevStreamingRef.current = ctx.isStreaming
+    if (wasStreaming && !ctx.isStreaming) {
+      const view = usePortalStore
+        .getState()
+        .stack.find((v) => v.type === 'artifact' && v.key === key)
+      if (view && view.type === 'artifact' && view.versions[view.activeVersion] !== raw) {
+        pushArtifactVersion(key, raw)
+      }
+    }
+  }, [ctx.isStreaming, isActive, key, raw, pushArtifactVersion])
 
   const Icon = TYPE_ICON[type] ?? Code
   const label = title ?? TYPE_LABEL[type]

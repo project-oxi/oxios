@@ -16,6 +16,7 @@ import type {
   StreamChunk,
   ToolCallContext,
 } from '@/types'
+import { type ErrorKindValue, KNOWN_ERROR_KINDS } from '@/types/chat'
 import { useAuthStore } from './auth'
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,17 @@ interface ChatRuntimeState {
   interviewAmbiguity: number
   /** LLM compression summary for the active session. */
   compression: CompressionInfo | null
+  /** True while a session history fetch is in flight (Task 10). The UI shows
+   *  a shimmer placeholder during this window so the pane is not blank. */
+  isLoadingSession: boolean
+  /** Last load failure message (Task 10). Surfaced in the chat header so a
+   *  failed history fetch does not strand the tab on a blank pane. Cleared on
+   *  the next successful load. */
+  sessionLoadError: string | null
+  /** Session id from the most recent loadSession attempt (Task 10). Used by
+   *  retryLoadSession to re-fire the same fetch without remembering the id
+   *  outside the store. */
+  _lastLoadedSessionId: string | null
 
   // ── WebSocket lifecycle (encapsulated, not persisted) ──
   /** WebSocket instance managed by the store. */
@@ -134,6 +146,11 @@ interface ChatActions {
   connect: () => Promise<void>
   /** Close the WebSocket and reset connection state. */
   disconnect: () => void
+  /** RFC-049: ask the server to abort the in-flight turn. Unlike the old
+   *  disconnect+reconnect, this actually stops the agent — a reconnect
+   *  would replay the terminal message and the "cancelled" answer would
+   *  reappear while the provider kept billing. */
+  cancelTurn: () => void
   /** RFC-024 SP2 (B4): cancel the client-side keepalive interval. */
   stopPingTimer: () => void
   /** Send a message using the active session. */
@@ -143,8 +160,13 @@ interface ChatActions {
   _drainPendingQueue: () => void
   /** Load a previous session's message history from the API. */
   loadSession: (sessionId: string) => Promise<void>
-  /** Start a fresh session (clears messages). */
+  /** Re-run the last loadSession attempt (Task 10). No-op if no prior id. */
+  retryLoadSession: () => void
   newSession: () => void
+  /** Fork the conversation at `messageId` into a fresh session (Task 22). */
+  branchFrom: (messageId: string) => void
+  /** Rate an assistant answer: 1 (good) / -1 (bad); null clears the rating. */
+  rateMessage: (messageId: string, rating: 1 | -1 | null) => void
   /** Set the active project explicitly. */
   setActiveProject: (projectId: string | null) => void
   /** RFC-032: Set the active role hint. */
@@ -185,16 +207,24 @@ export type ChatStore = PersistedState & ChatRuntimeState & ChatActions
 // F6: known StreamChunk type values. Unknown types are coerced to an error
 // chunk so downstream handlers never operate on an unrecognised shape (which
 // could produce undefined activity IDs and React key collisions).
-const KNOWN_CHUNK_TYPES = new Set<StreamChunk['type']>([
+export const KNOWN_CHUNK_TYPES = new Set<StreamChunk['type']>([
   'token',
   'tool_call',
   'tool_result',
   'done',
   'error',
-  'phase',
-  'tool_start',
+  // Task 21: sub-agent fork lifecycle frames. Missing entries made parseChunk
+  // coerce agent_start/agent_end into a "Malformed chunk" error, which added
+  // a fake error message to EVERY turn.
+  'agent_start',
+  'agent_end',
+
   'tool_end',
   'tool_progress',
+  // f1538a369 dropped 'phase' (intentional) AND 'tool_start' (accidental).
+  // tool_start is still emitted by the server — without it, every tool-using
+  // turn got a fake "Malformed chunk" error message.
+  'tool_start',
   'tool_call_delta',
   'memory',
   'reasoning',
@@ -278,6 +308,9 @@ export function ensureLastAssistant(
     content: '',
     timestamp: new Date().toISOString(),
     model: ctx.placeholderModel ?? undefined,
+    // Every assistant message carries a blocks array — BlockStream maps over
+    // it unconditionally, so an undefined value crashes the whole chat page.
+    blocks: [],
   }
   return { messages: [...messages, placeholder], index: messages.length }
 }
@@ -587,6 +620,56 @@ export function __clearResolvedApprovalIdsForTesting(): void {
 // streamed text is never lost when a tool/done/error event arrives mid-stream.
 let _pendingTokens = ''
 let _tokenRafId: number | null = null
+/**
+ * RFC-049: client-generated id for the session's FIRST message (which has no
+ * session_id yet — the gateway keys the turn by msg.id in that case). Held so
+ * the cancel frame can address the turn; reset once the turn ends (later
+ * messages carry a session_id and cancel by it).
+ */
+let _activeRequestId: string | null = null
+/** Client-side ceiling for one turn. The POST path has a 120 s
+ *  `response_timeout` in `src/api/bridge.rs`; the WS path had none, so a
+ *  provider that hangs with the socket still OPEN left the composer disabled
+ *  and the spinner running forever. */
+export const TURN_WATCHDOG_MS = 180_000
+let _watchdogId: number | null = null
+
+function clearWatchdog(): void {
+  if (_watchdogId !== null) {
+    window.clearTimeout(_watchdogId)
+    _watchdogId = null
+  }
+}
+
+function armWatchdog(): void {
+  clearWatchdog()
+  _watchdogId = window.setTimeout(() => {
+    _watchdogId = null
+    const s = useChatStore.getState()
+    if (!s.isStreaming) return
+    // Tell the server first so the provider request stops.
+    s.cancelTurn()
+    _activeRequestId = null
+    flushPendingTokens()
+    useChatStore.setState((st) => {
+      const finalized = finalizeStreamingMessage(st.messages)
+      const timeoutMsg: ChatMessage = {
+        id: uuid(),
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+        metadata: { isError: true, errorKind: 'timeout' },
+        blocks: [],
+      }
+      return {
+        messages: [...finalized, timeoutMsg],
+        isStreaming: false,
+        pendingModel: null,
+      }
+    })
+    useChatStore.getState()._drainPendingQueue()
+  }, TURN_WATCHDOG_MS)
+}
 
 function flushPendingTokens(): void {
   if (_tokenRafId !== null) {
@@ -683,6 +766,7 @@ function applyProcessorResult(
       timestamp: new Date().toISOString(),
       model: ctx.placeholderModel ?? undefined,
       generating: true,
+      blocks: [],
     }
     next = messages.concat(placeholder)
   }
@@ -770,6 +854,10 @@ export const useChatStore = create<ChatStore>()(
       interviewRound: 0,
       interviewAmbiguity: 0,
       compression: null,
+      // Task 10 — session loading surface state.
+      isLoadingSession: false,
+      sessionLoadError: null as string | null,
+      _lastLoadedSessionId: null as string | null,
       activeToolApproval: null,
       activePathAccess: null,
       // WebSocket lifecycle
@@ -912,13 +1000,33 @@ export const useChatStore = create<ChatStore>()(
           // connect()).
           get().stopPingTimer()
 
-          set((s) => ({
-            connected: false,
-            isStreaming: false,
-            _ws: null,
-            _pendingQueue: [],
-            messages: finalizeStreamingMessage(s.messages),
-          }))
+          // Task 6: The rAF token buffer is module-scoped and is only drained
+          // by a scheduled frame or an explicit flush. An abrupt close
+          // delivers no done/error chunk, so without this the tail of the
+          // answer is silently dropped and the truncated message looks
+          // complete. disconnect() at :997 does the same — keep them in sync.
+          flushPendingTokens()
+
+          set((s) => {
+            const wasStreaming = s.isStreaming
+            const finalized = finalizeStreamingMessage(s.messages)
+            const last = finalized.at(-1)
+            const messages =
+              wasStreaming && last && last.role === 'assistant'
+                ? finalized.map((m, i) =>
+                    i === finalized.length - 1
+                      ? { ...m, metadata: { ...m.metadata, interrupted: true } }
+                      : m,
+                  )
+                : finalized
+            return {
+              connected: false,
+              isStreaming: false,
+              _ws: null,
+              _pendingQueue: [],
+              messages,
+            }
+          })
 
           // Auto-reconnect. Fast exponential backoff for the first
           // MAX_RECONNECT_ATTEMPTS tries, then a steady long-tail retry so a
@@ -956,7 +1064,25 @@ export const useChatStore = create<ChatStore>()(
         }
       },
 
+      /** RFC-049: ask the server to abort the in-flight turn. Unlike the old
+       *  disconnect+reconnect, this actually stops the agent — a reconnect
+       *  would replay the terminal message and the "cancelled" answer would
+       *  reappear while the provider kept billing. */
+      cancelTurn() {
+        const { _ws, isStreaming, activeSessionId } = get()
+        if (!isStreaming) return
+        if (!_ws || _ws.readyState !== WebSocket.OPEN) return
+        _ws.send(
+          JSON.stringify({
+            type: 'cancel',
+            session_id: activeSessionId ?? null,
+            request_id: _activeRequestId,
+          }),
+        )
+      },
+
       disconnect() {
+        clearWatchdog()
         const { _ws, _reconnectTimer } = get()
 
         // Stop any pending reconnect.
@@ -1040,6 +1166,7 @@ export const useChatStore = create<ChatStore>()(
           isStreaming: true,
           streamStartedAt: Date.now(),
         }))
+        armWatchdog()
 
         // Send via WebSocket with session context.
         // The backend WS handler reads `model` and writes it into
@@ -1059,6 +1186,13 @@ export const useChatStore = create<ChatStore>()(
         }
         if (temperature != null) payload.temperature = temperature
         if (maxTokens != null) payload.max_tokens = maxTokens
+        // RFC-049: a session's first message has no session_id, so the server
+        // keys the turn by msg.id. Send our own id so the cancel frame can
+        // address the turn by it (the server honours a client request_id).
+        if (!activeSessionId) {
+          _activeRequestId = uuid()
+          payload.request_id = _activeRequestId
+        }
         _ws.send(JSON.stringify(payload))
       },
 
@@ -1077,6 +1211,13 @@ export const useChatStore = create<ChatStore>()(
         if (!sessionId) return
         // F9: discard buffered tokens from any prior streaming session.
         discardPendingTokens()
+        // Task 10: surface the in-flight window (skeleton) and any failure
+        // (banner) so the chat pane never appears blank and stranded.
+        set({
+          isLoadingSession: true,
+          sessionLoadError: null,
+          _lastLoadedSessionId: sessionId,
+        })
         try {
           const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
             headers: {
@@ -1084,7 +1225,7 @@ export const useChatStore = create<ChatStore>()(
               'Content-Type': 'application/json',
             },
           })
-          if (!res.ok) return
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
           const data = await res.json()
 
@@ -1198,27 +1339,35 @@ export const useChatStore = create<ChatStore>()(
               }
               messages.push({
                 ...assistantMessage,
-                ...(blocks.length > 0 ? { blocks } : null),
+                blocks,
               })
             }
           }
-
           const projectId =
             data.project_id ?? data.metadata?.project_id ?? data.metadata?.project_ids ?? null
-
           set({
             messages,
             activeSessionId: sessionId,
             activeProjectId: projectId,
             isStreaming: false,
             _pendingQueue: [],
+            sessionLoadError: null,
             compression: (data.compression ?? null) as CompressionInfo | null,
           })
-        } catch {
-          // Silently fail — network issues shouldn't break the UI
+        } catch (e) {
+          // Task 10: was silently swallowed. A failed history fetch used to
+          // leave a permanently blank pane with no way to retry.
+          set({ sessionLoadError: e instanceof Error ? e.message : 'load failed' })
+        } finally {
+          set({ isLoadingSession: false })
         }
       },
+      retryLoadSession() {
+        const sid = get()._lastLoadedSessionId
+        if (sid) void get().loadSession(sid)
+      },
       newSession() {
+        clearWatchdog()
         // F9: discard any buffered tokens from the previous session so they
         // don't leak into the new session via a late rAF callback.
         discardPendingTokens()
@@ -1234,6 +1383,31 @@ export const useChatStore = create<ChatStore>()(
           interviewRound: 0,
           interviewAmbiguity: 0,
           compression: null,
+        }))
+      },
+
+      /** Fork the conversation at `messageId` into a fresh session. The
+       *  trailing messages stay in the original session — this is a branch,
+       *  not a trim. The new session is unpersisted until the next send. */
+      branchFrom(messageId: string) {
+        const { messages, activeProjectId } = get()
+        const idx = messages.findIndex((m) => m.id === messageId)
+        if (idx < 0) return
+        const kept = messages.slice(0, idx + 1)
+        get().newSession()
+        set({ messages: kept, activeProjectId })
+      },
+
+      rateMessage(messageId: string, rating: 1 | -1 | null) {
+        set((s) => ({
+          messages: s.messages.map((m) => {
+            if (m.id !== messageId) return m
+            if (rating === null) {
+              const { rating: _drop, ...rest } = m.metadata ?? {}
+              return { ...m, metadata: rest }
+            }
+            return { ...m, metadata: { ...m.metadata, rating } }
+          }),
         }))
       },
 
@@ -1361,6 +1535,7 @@ export const useChatStore = create<ChatStore>()(
           },
           _interviewQuestions: activeInterview,
           _interviewRound: interviewRound,
+          blocks: [],
         }
         // Send via WebSocket as interview_response
         if (_ws && _ws.readyState === WebSocket.OPEN) {
@@ -1393,9 +1568,11 @@ export const useChatStore = create<ChatStore>()(
           interviewAmbiguity: 0,
           isStreaming: true,
         }))
+        armWatchdog()
       },
 
       async resolveToolApproval(id: string, approved: boolean, remember?: boolean) {
+        clearWatchdog()
         const { activeToolApproval } = get()
         if (!activeToolApproval || activeToolApproval.id !== id) return
         // Record as resolved BEFORE the fetch so a concurrent WS replay of
@@ -1424,7 +1601,9 @@ export const useChatStore = create<ChatStore>()(
             const err = await res.text().catch(() => 'unknown error')
             throw new Error(`HTTP ${res.status}: ${err}`)
           }
+          armWatchdog()
         } catch (e) {
+          clearWatchdog()
           // Genuine error (network/5xx): forget the resolution and restore
           // the card so the user can retry. Swallowed — call sites are
           // fire-and-forget, so throwing would only surface as an unhandled
@@ -1436,6 +1615,7 @@ export const useChatStore = create<ChatStore>()(
         }
       },
       async resolvePathAccess(id: string, action: 'mount' | 'temp' | 'deny') {
+        clearWatchdog()
         const { activePathAccess } = get()
         if (!activePathAccess || activePathAccess.id !== id) return
         markApprovalResolved(id)
@@ -1454,7 +1634,9 @@ export const useChatStore = create<ChatStore>()(
             const err = await res.text().catch(() => 'unknown error')
             throw new Error(`HTTP ${res.status}: ${err}`)
           }
+          armWatchdog()
         } catch (e) {
+          clearWatchdog()
           _resolvedApprovalIds.delete(id)
           set({ activePathAccess, isStreaming: false })
           console.warn('[chat] path access resolve failed:', e)
@@ -1501,7 +1683,9 @@ export const useChatStore = create<ChatStore>()(
           case 'reasoning':
           case 'grounding':
           case 'memory':
-          case 'usage': {
+          case 'usage':
+          case 'agent_start':
+          case 'agent_end': {
             // Route through StreamProcessor so the single source of truth
             // (`blocks`) is built incrementally and the patch carries the
             // latest `blocks` for the message.
@@ -1546,6 +1730,7 @@ export const useChatStore = create<ChatStore>()(
           }
 
           case 'interview': {
+            clearWatchdog()
             if (chunk.questions && chunk.questions.length > 0) {
               set({
                 activeInterview: chunk.questions,
@@ -1558,6 +1743,7 @@ export const useChatStore = create<ChatStore>()(
           }
 
           case 'tool_approval': {
+            clearWatchdog()
             const approvalId = chunk.id as string | undefined
             // Dedup: a WS reconnect replay (RFC-024 SP2 C2) can re-deliver a
             // tool_approval chunk for an approval already resolved on the
@@ -1582,6 +1768,7 @@ export const useChatStore = create<ChatStore>()(
             break
           }
           case 'path_access': {
+            clearWatchdog()
             const reqId = chunk.id as string | undefined
             if (
               reqId &&
@@ -1604,6 +1791,7 @@ export const useChatStore = create<ChatStore>()(
           }
 
           case 'done': {
+            clearWatchdog()
             // Phase 1: route done through StreamProcessor first so reasoning.end
             // and stream.stop events fire (clearing isReasoning, generating).
             set((s) => ({
@@ -1663,6 +1851,7 @@ export const useChatStore = create<ChatStore>()(
                     duration_ms: durationMs,
                     tool_calls: Array.isArray(toolCalls) ? toolCalls : [],
                   },
+                  blocks: [],
                 }
                 return {
                   messages: [...updated, placeholder],
@@ -1714,10 +1903,12 @@ export const useChatStore = create<ChatStore>()(
             }
             // Queue drain: if the user queued follow-ups while this turn
             // streamed, dispatch the next one now that the turn is idle.
+            _activeRequestId = null
             get()._drainPendingQueue()
             break
           }
           case 'error': {
+            clearWatchdog()
             // Phase 1: route error through StreamProcessor first so stream.stop
             // fires (clearing generating state on the in-flight message).
             set((s) => ({
@@ -1725,20 +1916,51 @@ export const useChatStore = create<ChatStore>()(
                 placeholderModel: s.pendingModel ?? s.activeModelId,
               }).messages,
             }))
+            // RFC-032: narrow the chunk's `kind` to the gateway's ErrorKind
+            // wire values (snake_case — see KNOWN_ERROR_KINDS) so the bubble
+            // can render kind-specific copy. Anything unrecognized falls back
+            // to 'unknown' rather than an unchecked cast.
+            const rawKind = (chunk as unknown as Record<string, unknown>).kind
+            const errKind: ErrorKindValue = KNOWN_ERROR_KINDS.includes(
+              rawKind as (typeof KNOWN_ERROR_KINDS)[number],
+            )
+              ? (rawKind as ErrorKindValue)
+              : 'unknown'
+            // A user cancel is a terminal, but not a fault: keep whatever the
+            // agent already produced and flag it interrupted. Appending a red
+            // ErrorCard here would both lose the partial answer's framing and
+            // misreport a deliberate user action as a failure.
+            if (rawKind === 'cancelled') {
+              flushPendingTokens()
+              _activeRequestId = null
+              set((s) => {
+                const finalized = finalizeStreamingMessage(s.messages)
+                const last = finalized.at(-1)
+                const messages =
+                  last && last.role === 'assistant'
+                    ? finalized.map((m, i) =>
+                        i === finalized.length - 1
+                          ? { ...m, metadata: { ...m.metadata, cancelled: true } }
+                          : m,
+                      )
+                    : finalized
+                return {
+                  messages,
+                  isStreaming: false,
+                  pendingModel: null,
+                  activeToolApproval: null,
+                  activePathAccess: null,
+                }
+              })
+              get()._drainPendingQueue()
+              break
+            }
             // RFC-032: create an assistant message with the error text
             // so the user sees the failure inline rather than just a
             // loading spinner that silently stops.
             const errMsg = (chunk as unknown as Record<string, unknown>).message as
               | string
               | undefined
-            // RFC-032: narrow the chunk's `kind` to the errorKind union so the
-            // bubble can render kind-specific copy. Anything unrecognized
-            // falls back to 'unknown' rather than an unchecked cast.
-            const rawKind = (chunk as unknown as Record<string, unknown>).kind
-            const errKind: 'quota_exceeded' | 'auth' | 'routing' | 'unknown' =
-              rawKind === 'quota_exceeded' || rawKind === 'auth' || rawKind === 'routing'
-                ? rawKind
-                : 'unknown'
             const errSuggestion = (chunk as unknown as Record<string, unknown>).suggestion as
               | string
               | undefined
@@ -1758,6 +1980,7 @@ export const useChatStore = create<ChatStore>()(
                   isError: true,
                   errorKind: errKind,
                 },
+                blocks: [],
               }
               return {
                 messages: [...updated, errorMsg],
@@ -1768,6 +1991,7 @@ export const useChatStore = create<ChatStore>()(
               }
             })
             // Turn ended — advance the queue (same as done).
+            _activeRequestId = null
             get()._drainPendingQueue()
             break
           }

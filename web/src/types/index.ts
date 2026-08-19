@@ -5,6 +5,7 @@ import type {
   ChatFileChunk,
   ChatFileItem,
   ChatImageItem,
+  ErrorKindValue,
   GroundingSearch,
 } from './chat'
 
@@ -233,9 +234,16 @@ export interface ChatMessage {
     /// RFC-032: rendered as an inline error card with a retry action.
     isError?: boolean
     /// Optional error category.
-    errorKind?: 'quota_exceeded' | 'auth' | 'routing' | 'unknown'
+    errorKind?: ErrorKindValue
+    /// User cancelled the turn mid-stream; the partial answer is kept and
+    /// rendered with an InterruptedNotice instead of an error card.
+    cancelled?: boolean
+    /// Socket dropped mid-stream on this turn; the partial answer is kept
+    /// and rendered with the InterruptedNotice `reason="interrupted"` copy.
+    interrupted?: boolean
+    /// User's rating of the answer: 1 (good) / -1 (bad) (Task 22).
+    rating?: 1 | -1
   }
-
   totalInputTokens?: number
   totalOutputTokens?: number
   _interviewQuestions?: InterviewQuestion[]
@@ -378,7 +386,9 @@ export interface StreamChunk {
     | 'done'
     | 'error'
     // RFC-015 chat transparency chunks
-    | 'phase'
+    // No standalone 'phase' frame exists: post-RFC-027 the Ouroboros phase is a
+    // plain string that is only ever "execute" (orchestrator.rs:602), delivered
+    // as a field on `done`. Do not re-add a streaming phase event.
     | 'tool_start'
     | 'tool_end'
     | 'tool_progress'
@@ -395,6 +405,9 @@ export interface StreamChunk {
     | 'path_access'
     // RFC-015 model mark — one-shot announcement of the responding model.
     | 'model'
+    // Task 21: sub-agent forks in the turn timeline (session-correlated).
+    | 'agent_start'
+    | 'agent_end'
     // Context compression: LLM session summary streaming.
     | 'compression_delta'
     | 'compression_done'
@@ -428,6 +441,12 @@ export interface StreamChunk {
   /// Absent on legacy oxicode-agent versions; the frontend treats absence
   /// as "no badge".
   tab_id?: string
+  /// Sub-agent fork id (Task 21: agent_start/agent_end).
+  agent_id?: string
+  /// Sub-agent name/goal (Task 21: agent_start).
+  name?: string
+  /// Sub-agent terminal success (Task 21: agent_end).
+  success?: boolean
   action?: 'recall' | 'store'
   query?: string
   count?: number

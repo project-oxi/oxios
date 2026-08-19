@@ -64,6 +64,26 @@ export interface ChatFileItem {
   url?: string
 }
 
+/**
+ * Error kinds as serialized by the gateway (`crates/oxios-gateway/src/message.rs`,
+ * `ErrorKind`, `serde(rename_all = "snake_case")`). Renaming a backend variant
+ * is a wire-breaking change — keep this list in lock-step. `cancelled` is a
+ * user action, not a fault (RFC-049); the store renders it separately from
+ * error cards.
+ */
+export const KNOWN_ERROR_KINDS = [
+  'execution_failed',
+  'api_key_missing',
+  'provider_error',
+  'timeout',
+  'permission_denied',
+  'validation_error',
+  'cancelled',
+  'internal',
+] as const
+
+export type ErrorKindValue = (typeof KNOWN_ERROR_KINDS)[number] | 'unknown'
+
 // ── Tool call payload (LobeHub-aligned, replaces toolName/toolArgs/toolResult) ──
 
 export type ChatToolStatus = 'loading' | 'success' | 'error' | 'aborted'
@@ -147,7 +167,25 @@ export interface UsageBlock {
   outputTokens: number
 }
 
-export type ChatBlock = ReasoningBlock | ToolBlock | TextBlock | MemoryBlock | UsageBlock
+/** A sub-agent fork surfaced in the turn timeline (RFC-015 transparency). */
+export interface SubAgentBlockData {
+  type: 'subagent'
+  /** Stable id: `a-${agentId}` — one block per agent, reopened on start. */
+  id: string
+  /** The forked agent's id (correlates `agent_start`/`agent_end` frames). */
+  agentId: string
+  /** The agent's name/goal. */
+  name: string
+  status: 'running' | 'done' | 'failed'
+}
+
+export type ChatBlock =
+  | ReasoningBlock
+  | ToolBlock
+  | TextBlock
+  | MemoryBlock
+  | UsageBlock
+  | SubAgentBlockData
 
 // ── Tool render types ──
 

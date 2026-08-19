@@ -8,6 +8,8 @@
 
 import { Copy, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { useChatStore } from '@/stores/chat'
 import type { ChatMessage } from '@/types'
 import type { MessageAction } from './components/MessageActionBar'
@@ -26,7 +28,14 @@ export function useAssistantActions({
   message,
   onRetry,
 }: UseAssistantActionsArgs): AssistantActionsResult {
-  const { removeMessage, sendMessage, messages } = useChatStore()
+  const { t } = useTranslation()
+  // Subscribe only to the action functions — `messages` was pulled in just to
+  // locate the preceding user message for regenerate, and subscribing to it
+  // re-rendered every action bar on every streaming token. Read it
+  // imperatively inside the handler instead.
+  const { removeMessage, sendMessage } = useChatStore(
+    useShallow((s) => ({ removeMessage: s.removeMessage, sendMessage: s.sendMessage })),
+  )
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(() => {
@@ -40,6 +49,7 @@ export function useAssistantActions({
   }, [message.id, removeMessage])
 
   const handleRegenerate = useCallback(() => {
+    const { messages } = useChatStore.getState()
     const idx = messages.findIndex((m) => m.id === message.id)
     if (idx <= 0) return
     const precedingUser = messages[idx - 1]
@@ -47,7 +57,7 @@ export function useAssistantActions({
     removeMessage?.(message.id)
     removeMessage?.(precedingUser.id)
     sendMessage(precedingUser.content)
-  }, [message.id, messages, removeMessage, sendMessage])
+  }, [message.id, removeMessage, sendMessage])
 
   const isError = !!message.metadata?.isError
 
@@ -55,21 +65,21 @@ export function useAssistantActions({
     {
       id: 'copy',
       icon: <Copy className="w-3 h-3" />,
-      label: copied ? 'Copied!' : 'Copy',
+      label: copied ? t('common.copied') : t('common.copy'),
       onClick: handleCopy,
-      children: copied ? <span className="text-2xs">Copied</span> : undefined,
+      children: copied ? <span className="text-2xs">{t('common.copied')}</span> : undefined,
     },
     {
       id: 'regenerate',
       icon: <RefreshCw className="w-3 h-3" />,
-      label: 'Regenerate',
+      label: t('chat.regenerate'),
       onClick: handleRegenerate,
       hidden: isError,
     },
     {
       id: 'retry',
       icon: <RefreshCw className="w-3 h-3" />,
-      label: 'Retry',
+      label: t('chat.retry'),
       onClick: onRetry ?? (() => {}),
       hidden: !isError || !onRetry,
       danger: true,
@@ -77,7 +87,7 @@ export function useAssistantActions({
     {
       id: 'delete',
       icon: <Trash2 className="w-3 h-3" />,
-      label: 'Delete',
+      label: t('common.delete'),
       onClick: handleDelete,
       danger: true,
     },

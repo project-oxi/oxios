@@ -129,9 +129,7 @@ function SummaryContent({
 
   if (compression?.status === 'done' && compression.summary) {
     return (
-      <div className="prose prose-sm dark:prose-invert max-w-none whitespace-pre-wrap">
-        {compression.summary}
-      </div>
+      <div className="prose prose-sm max-w-none whitespace-pre-wrap">{compression.summary}</div>
     )
   }
 

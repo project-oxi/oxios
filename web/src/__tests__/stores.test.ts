@@ -1,3 +1,4 @@
+import { waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -7,12 +8,15 @@ import {
   appendTokenToMessages,
   ensureLastAssistant,
   finalizeStreamingMessage,
+  KNOWN_CHUNK_TYPES,
+  parseChunk,
   patchAssistantModel,
+  TURN_WATCHDOG_MS,
   useChatStore,
 } from '@/stores/chat'
 import { usePortalStore } from '@/stores/portal'
 import { useSidebarStore } from '@/stores/sidebar'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, StreamChunk } from '@/types'
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -499,7 +503,7 @@ describe('useChatStore handleChunk (RFC-015)', () => {
     const errorChunk = {
       type: 'error',
       message: 'rate limit exceeded',
-      kind: 'quota_exceeded',
+      kind: 'provider_error',
       suggestion: 'try a different model',
     }
     useChatStore
@@ -514,9 +518,48 @@ describe('useChatStore handleChunk (RFC-015)', () => {
     const errMsg = state.messages.at(-1)!
     expect(errMsg.role).toBe('assistant')
     expect(errMsg.metadata?.isError).toBe(true)
-    expect(errMsg.metadata?.errorKind).toBe('quota_exceeded')
+    expect(errMsg.metadata?.errorKind).toBe('provider_error')
     expect(errMsg.content).toContain('rate limit exceeded')
     expect(errMsg.content).toContain('try a different model')
+    // Regression: error messages must carry a blocks array — BlockStream maps
+    // over it unconditionally, so undefined crashed the whole chat page.
+    expect(Array.isArray(errMsg.blocks)).toBe(true)
+    expect(errMsg.blocks).toHaveLength(0)
+  })
+
+  it('a cancelled terminal keeps the partial answer and marks it interrupted', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'u1', role: 'user' as const, content: 'hi' },
+        { id: 'a1', role: 'assistant' as const, content: 'partial ans', generating: true },
+      ],
+      isStreaming: true,
+      activeToolApproval: { id: 'ap1', toolName: 'bash', reason: 'run ls' },
+      activePathAccess: {
+        id: 'pa1',
+        path: '/x',
+        mode: 'temp',
+        toolName: 'read_file',
+        reason: 'read',
+      },
+    })
+
+    useChatStore.getState().handleChunk({
+      type: 'error',
+      kind: 'cancelled',
+      message: 'Turn cancelled by user',
+    } as never)
+
+    const msgs = useChatStore.getState().messages
+    expect(msgs).toHaveLength(2)
+    expect(msgs[1]!.content).toBe('partial ans')
+    expect(msgs[1]!.generating).toBe(false)
+    expect(msgs[1]!.metadata?.cancelled).toBe(true)
+    expect(msgs[1]!.metadata?.isError).toBeFalsy()
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    expect(state.activeToolApproval).toBeNull()
+    expect(state.activePathAccess).toBeNull()
   })
 
   it('removeMessage drops a single message by id and leaves siblings intact', () => {
@@ -895,6 +938,22 @@ describe('useChatStore sendMessage turn start', () => {
     expect(msgs[0]!.role).toBe('user')
     expect(useChatStore.getState().isStreaming).toBe(false)
   })
+
+  it('stamps a request_id on the first message (no session yet) so cancel can address the turn', () => {
+    useChatStore.setState({ activeSessionId: null })
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.request_id).toBeTypeOf('string')
+    expect(payload.request_id!.length).toBeGreaterThan(0)
+    expect(payload.session_id).toBe('')
+  })
+
+  it('omits request_id once a session exists (cancel keys by session_id)', () => {
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.request_id).toBeUndefined()
+    expect(payload.session_id).toBe('s1')
+  })
 })
 
 // Tool approval (RFC-017): resolveToolApproval must treat a 404 "already
@@ -1143,5 +1202,436 @@ describe('usePortalStore pushDocument (saved-doc chip)', () => {
     const { stack } = usePortalStore.getState()
     expect(stack).toHaveLength(2)
     expect(stack[1]).toEqual({ type: 'document', path: 'b.md' })
+  })
+})
+
+describe('cancelTurn', () => {
+  it('sends a cancel frame and does not tear down the socket', () => {
+    const sent: string[] = []
+    const fakeWs = {
+      readyState: 1,
+      send: (d: string) => sent.push(d),
+      close: () => {
+        throw new Error('cancelTurn must not close the socket')
+      },
+    }
+    useChatStore.setState({
+      _ws: fakeWs as unknown as WebSocket,
+      connected: true,
+      isStreaming: true,
+      activeSessionId: 'sess-9',
+    })
+
+    useChatStore.getState().cancelTurn()
+
+    // session_id keys the cancel for an existing session; request_id may be
+    // null or a stale first-message id — either way the server resolves by
+    // session_id first.
+    const payload = JSON.parse(sent[0]!)
+    expect(payload.type).toBe('cancel')
+    expect(payload.session_id).toBe('sess-9')
+    expect(payload).toHaveProperty('request_id')
+  })
+
+  it('reuses the first message request_id in the cancel frame (no session yet)', () => {
+    const sent: string[] = []
+    const fakeWs = {
+      readyState: 1,
+      send: (d: string) => sent.push(d),
+      close: () => {
+        throw new Error('cancelTurn must not close the socket')
+      },
+    }
+    useChatStore.setState({
+      _ws: fakeWs as unknown as WebSocket,
+      connected: true,
+      isStreaming: false,
+      activeSessionId: null,
+    })
+
+    // First message with no session stamps the module-level request_id.
+    useChatStore.getState().sendMessage('hello')
+    const msgPayload = JSON.parse(sent[0]!)
+    expect(msgPayload.request_id).toBeTypeOf('string')
+    const requestId = msgPayload.request_id as string
+
+    // The in-flight turn is cancelled using THAT id — the only key the
+    // server knows (gateway keys first messages by msg.id).
+    sent.length = 0
+    useChatStore.setState({ isStreaming: true })
+    useChatStore.getState().cancelTurn()
+    const cancelPayload = JSON.parse(sent[0]!)
+    expect(cancelPayload.type).toBe('cancel')
+    expect(cancelPayload.session_id).toBeNull()
+    expect(cancelPayload.request_id).toBe(requestId)
+  })
+
+  it('is a no-op when no turn is in flight', () => {
+    const sent: string[] = []
+    useChatStore.setState({
+      _ws: { readyState: 1, send: (d: string) => sent.push(d) } as unknown as WebSocket,
+      connected: true,
+      isStreaming: false,
+    })
+    useChatStore.getState().cancelTurn()
+    expect(sent).toHaveLength(0)
+  })
+})
+
+describe('turn watchdog', () => {
+  it('a hung turn is finalized by the watchdog instead of spinning forever', () => {
+    vi.useFakeTimers()
+    const sent: string[] = []
+    useChatStore.setState({
+      _ws: { readyState: 1, send: (d: string) => sent.push(d) } as unknown as WebSocket,
+      connected: true,
+      activeSessionId: 'sess-hang',
+      messages: [],
+    })
+
+    useChatStore.getState().sendMessage('hello')
+    expect(useChatStore.getState().isStreaming).toBe(true)
+
+    vi.advanceTimersByTime(TURN_WATCHDOG_MS + 10)
+
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    const last = useChatStore.getState().messages.at(-1)!
+    expect(last.metadata?.isError).toBe(true)
+    expect(last.metadata?.errorKind).toBe('timeout')
+    expect(sent.some((s) => JSON.parse(s).type === 'cancel')).toBe(true)
+    vi.useRealTimers()
+  })
+})
+
+// Task 6: Loss-free socket close.
+//
+// When the WebSocket drops before the rAF token flush fires, the buffered
+// token tail is silently dropped and the partial answer looks complete.
+// The onclose handler must (a) flush the rAF-buffered tokens before
+// finalizing, and (b) flag the trailing assistant message as
+// `metadata.interrupted = true` so the UI can render a "connection lost"
+// notice (Task 4's InterruptedNotice, picked by the metadata flag).
+describe('useChatStore onclose (Task 6 — loss-free socket close)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    __clearAuthCacheForTesting()
+    __clearStreamProcessorsForTesting()
+    __clearResolvedApprovalIdsForTesting()
+    useChatStore.setState({
+      connected: false,
+      isStreaming: false,
+      _ws: null,
+      _sendQueue: [],
+      _pendingQueue: [],
+      _reconnectAttempts: 0,
+      _reconnectTimer: null,
+      _pingTimer: null,
+      activeSessionId: 's1',
+      activeProjectId: 'p1',
+      messages: [],
+    })
+  })
+
+  it('flushes buffered tokens and flags the turn interrupted when the socket drops', async () => {
+    vi.useFakeTimers()
+    let capturedOnClose: (() => void) | null = null
+    class FakeWebSocket {
+      static OPEN = 1
+      static CLOSED = 3
+      url: string
+      readyState = 0
+      onopen: (() => void) | null = null
+      onclose: (() => void) | null = null
+      onmessage: ((_e: { data: string }) => void) | null = null
+      onerror: (() => void) | null = null
+      constructor(url: string) {
+        this.url = url
+        // Open via the same setTimeout(0) schedule chat.ts uses so connect()
+        // completes its onopen handler; we capture the onclose ref so we can
+        // fire it manually from the test.
+        setTimeout(() => {
+          this.readyState = 1
+          this.onopen?.()
+        }, 0)
+        capturedOnClose = () => this.onclose?.()
+      }
+      close() {
+        this.readyState = 3
+      }
+      send() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ auth_enabled: false }),
+      })),
+    )
+
+    await useChatStore.getState().connect()
+    // Drive the FakeWebSocket opening setTimeout(0) without a real wait.
+    await vi.advanceTimersByTimeAsync(1)
+    expect(useChatStore.getState().connected).toBe(true)
+
+    // Buffer a token so the rAF holds a tail that has not been flushed yet.
+    // Pre-seed an in-flight streaming assistant so finalizeStreamingMessage
+    // has a target to clear `generating` on and the onclose branch routes
+    // the metadata.interrupted flag at it.
+    useChatStore.setState({
+      messages: [
+        {
+          id: 'a1',
+          role: 'assistant' as const,
+          content: '',
+          timestamp: new Date().toISOString(),
+          generating: true,
+        },
+      ],
+      isStreaming: true,
+    })
+    const tokenChunk = { type: 'token', content: 'Hello ' } as unknown as StreamChunk
+    useChatStore.getState().handleChunk(tokenChunk)
+
+    // Trigger the WS close BEFORE the rAF flush.
+    capturedOnClose!()
+    // Drain any scheduled rAF work.
+    await vi.advanceTimersByTimeAsync(1)
+
+    const last = useChatStore.getState().messages.at(-1)!
+    expect(last.role).toBe('assistant')
+    expect(last.content).toBe('Hello ')
+    expect(last.generating).toBe(false)
+    expect(last.metadata?.interrupted).toBe(true)
+    expect(useChatStore.getState().isStreaming).toBe(false)
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('does not flag interrupted when the socket closes while idle', async () => {
+    vi.useFakeTimers()
+    let capturedOnClose: (() => void) | null = null
+    class FakeWebSocket {
+      static OPEN = 1
+      static CLOSED = 3
+      url: string
+      readyState = 0
+      onopen: (() => void) | null = null
+      onclose: (() => void) | null = null
+      onmessage: ((_e: { data: string }) => void) | null = null
+      onerror: (() => void) | null = null
+      constructor(url: string) {
+        this.url = url
+        capturedOnClose = () => this.onclose?.()
+      }
+      close() {
+        this.readyState = 3
+      }
+      send() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ auth_enabled: false }),
+      })),
+    )
+    await useChatStore.getState().connect()
+    await vi.advanceTimersByTimeAsync(1)
+
+    useChatStore.setState({ isStreaming: false })
+    capturedOnClose!()
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    const last = useChatStore.getState().messages.at(-1)
+    expect(last?.metadata?.interrupted).toBeUndefined()
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})
+
+// Task 10: session loading surfaces failures instead of swallowing them.
+describe('useChatStore loadSession (Task 10 — surfacing load failures)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    // Reset the loading/error slots so a prior test's failure does not leak.
+    useChatStore.setState({
+      isLoadingSession: false,
+      sessionLoadError: null,
+      _lastLoadedSessionId: null,
+    } as Partial<typeof useChatStore.getState>)
+    // Wipe any WebSocket instance from a prior test so connect() inside
+    // loadSession's call chain stays inert.
+    useChatStore.getState().disconnect()
+  })
+
+  it('exposes loading state and surfaces a load failure instead of swallowing it', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+    try {
+      const p = useChatStore.getState().loadSession('sess-x')
+      expect(useChatStore.getState().isLoadingSession).toBe(true)
+      await p
+      const state = useChatStore.getState()
+      expect(state.isLoadingSession).toBe(false)
+      expect(state.sessionLoadError).toBeTruthy()
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('treats a non-OK HTTP response as a load failure', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async () => '',
+    } as Response)
+    try {
+      await useChatStore.getState().loadSession('sess-y')
+      const state = useChatStore.getState()
+      expect(state.isLoadingSession).toBe(false)
+      expect(state.sessionLoadError).toBeTruthy()
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('retryLoadSession re-runs the last load', async () => {
+    let calls = 0
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      calls++
+      if (calls === 1) throw new Error('offline')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          user_messages: [],
+          agent_responses: [],
+          trajectory_steps: [],
+          reasoning_records: [],
+        }),
+        text: async () => '',
+      } as Response
+    })
+    const loadSpy = vi.spyOn(useChatStore.getState(), 'loadSession')
+    try {
+      // First attempt fails.
+      await useChatStore.getState().loadSession('sess-retry')
+      expect(useChatStore.getState().sessionLoadError).toBeTruthy()
+      expect(useChatStore.getState()._lastLoadedSessionId).toBe('sess-retry')
+      // Snapshot spy counts BEFORE retry — the first load already counted itself.
+      const callsBeforeRetry = loadSpy.mock.calls.length
+      // Trigger the retry. retryLoadSession returns void; wait on the
+      // observable consequence (isLoadingSession false after second fetch).
+      useChatStore.getState().retryLoadSession()
+      await waitFor(() => expect(useChatStore.getState().isLoadingSession).toBe(false))
+      // Allow the post-finally set() to flush before reading sessionLoadError.
+      await waitFor(() => expect(useChatStore.getState().sessionLoadError).toBeNull())
+      expect(loadSpy.mock.calls.length).toBeGreaterThan(callsBeforeRetry)
+      expect(loadSpy).toHaveBeenCalledWith('sess-retry')
+      expect(calls).toBeGreaterThanOrEqual(2)
+    } finally {
+      loadSpy.mockRestore()
+      fetchMock.mockRestore()
+    }
+  })
+})
+
+describe('useChatStore branchFrom / rateMessage (Task 22)', () => {
+  beforeEach(() => {
+    useChatStore.setState({
+      activeSessionId: 'sess-a',
+      activeProjectId: null,
+      messages: [],
+    })
+  })
+
+  it('branching copies history up to the chosen message into a new session', () => {
+    useChatStore.setState({
+      activeSessionId: 'sess-a',
+      messages: [
+        { id: 'u1', role: 'user', content: 'one' },
+        { id: 'a1', role: 'assistant', content: 'two' },
+        { id: 'u2', role: 'user', content: 'three' },
+      ] as never,
+    })
+    useChatStore.getState().branchFrom('a1')
+    const s = useChatStore.getState()
+    expect(s.activeSessionId).not.toBe('sess-a')
+    expect(s.messages.map((m) => m.id)).toEqual(['u1', 'a1'])
+  })
+
+  it('branchFrom is a no-op for an unknown message id', () => {
+    useChatStore.setState({
+      activeSessionId: 'sess-a',
+      messages: [{ id: 'u1', role: 'user', content: 'one' }] as never,
+    })
+    useChatStore.getState().branchFrom('ghost')
+    const s = useChatStore.getState()
+    expect(s.activeSessionId).toBe('sess-a')
+    expect(s.messages.map((m) => m.id)).toEqual(['u1'])
+  })
+
+  it('rateMessage stores the rating in message metadata', () => {
+    useChatStore.setState({
+      messages: [{ id: 'a1', role: 'assistant', content: 'two' }] as never,
+    })
+    useChatStore.getState().rateMessage('a1', 1)
+    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: 1 } })
+    // Re-rating switches the value instead of stacking.
+    useChatStore.getState().rateMessage('a1', -1)
+    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: -1 } })
+  })
+
+  it('rateMessage clears an existing rating when passed null', () => {
+    useChatStore.setState({
+      messages: [{ id: 'a1', role: 'assistant', content: 'two', metadata: { rating: 1 } }] as never,
+    })
+    useChatStore.getState().rateMessage('a1', null)
+    expect(useChatStore.getState().messages[0]?.metadata?.rating).toBeUndefined()
+  })
+
+  it('rateMessage preserves other metadata fields', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'a1', role: 'assistant', content: 'two', metadata: { phase: 'execute' } },
+      ] as never,
+    })
+    useChatStore.getState().rateMessage('a1', 1)
+    expect(useChatStore.getState().messages[0]?.metadata).toMatchObject({
+      phase: 'execute',
+      rating: 1,
+    })
+  })
+})
+
+describe('parseChunk', () => {
+  it('accepts agent_start/agent_end/tool_start frames', () => {
+    // Regression 1 (T21): agent_start/agent_end were missing from
+    // KNOWN_CHUNK_TYPES, so parseChunk coerced the opening agent_start frame
+    // of EVERY turn into a "Malformed chunk" error.
+    // Regression 2 (f1538a369): tool_start was dropped together with the
+    // intentional 'phase' removal, so every tool-using turn got a fake error.
+    for (const type of ['agent_start', 'agent_end', 'tool_start'] as const) {
+      const chunk = parseChunk({ type })
+      expect(chunk.type).toBe(type)
+      expect(KNOWN_CHUNK_TYPES.has(type)).toBe(true)
+    }
+  })
+
+  it('still coerces unknown types to an error chunk', () => {
+    const chunk = parseChunk({ type: 'not_a_real_chunk_type' })
+    expect(chunk.type).toBe('error')
+    expect('error' in chunk).toBe(true)
   })
 })

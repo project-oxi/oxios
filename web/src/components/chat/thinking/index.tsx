@@ -31,6 +31,8 @@ export interface ThinkingProps {
   duration?: number
   /** Owning message id — forwarded to MarkdownMessage for artifact context. */
   messageId?: string
+  /** Owning block id — scopes artifact identity within the message. */
+  blockId?: string
   /** Extra class on the outer wrapper. */
   className?: string
 }
@@ -42,6 +44,7 @@ export const Thinking = memo(function Thinking({
   thinking = false,
   duration,
   messageId = '',
+  blockId = '',
   className,
 }: ThinkingProps) {
   const [open, setOpen] = useState(thinking)
@@ -67,7 +70,12 @@ export const Thinking = memo(function Thinking({
           <ThinkingTitle thinking={thinking} duration={duration} />
         </AccordionTrigger>
         <AccordionContent className="pb-2 pl-3">
-          <MarkdownMessage messageId={messageId} isStreaming={thinking} className="text-xs">
+          <MarkdownMessage
+            messageId={messageId}
+            blockId={blockId}
+            isStreaming={thinking}
+            className="text-xs"
+          >
             {content ?? ''}
           </MarkdownMessage>
         </AccordionContent>

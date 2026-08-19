@@ -557,6 +557,31 @@ impl TurnTextStreamTracker {
     fn reset(&mut self) {
         self.text_delivered = false;
     }
+
+    /// Reset at the start of a turn. The terminal `done`/`error` reset is
+    /// the normal path; this guards the case where a turn ends without one
+    /// (an abrupt disconnect, or the RFC-049 cancel path), which would
+    /// otherwise suppress the NEXT turn's terminal text on the same
+    /// connection.
+    fn begin_turn(&mut self) {
+        self.text_delivered = false;
+    }
+}
+
+/// RFC-049: resolve the turn key for a `cancel` frame. The frame's
+/// `session_id` wins; an empty value counts as absent (matching the recv
+/// task's `incoming_session_id` filtering); otherwise fall back to the
+/// connection's active session; neither → `None` (the arm no-ops).
+fn resolve_cancel_key(
+    frame_session: Option<&str>,
+    frame_request: Option<&str>,
+    active_session: Option<&str>,
+) -> Option<String> {
+    frame_session
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| frame_request.filter(|s| !s.is_empty()).map(str::to_string))
+        .or_else(|| active_session.filter(|s| !s.is_empty()).map(str::to_string))
 }
 
 /// Handles a WebSocket connection for chat streaming.
@@ -589,6 +614,14 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
     // held only across the actual `send` call (microseconds), and ping
     // frequency is 20 s so contention with token streams is negligible.
     let ws_tx = std::sync::Arc::new(tokio::sync::Mutex::new(ws_tx));
+    // RFC-049: connection-scoped "active session" shared between the
+    // forwarder task (which writes it whenever it adopts a session id) and
+    // the recv task (which reads it in the `cancel` arm to resolve the turn
+    // key when the client's cancel frame carries no session id). The
+    // forwarder keeps its own local copy for event filtering; this handle is
+    // a write-through mirror.
+    let active_session_shared: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
     // RFC-024 SP2 (B3): keepalive wiring. The send_task notifies this on
     // every `Message::Pong` it reads, extending the keepalive deadline.
     // The keepalive task (spawned below) sends a `Ping` every 20 s and
@@ -665,6 +698,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
     set.spawn({
         let ws_tx = ws_tx.clone();
         let state = state.clone();
+        let active_session_shared = active_session_shared.clone();
         async move {
             // Track the active session so we only forward events tagged with it.
             // Multi-turn conversations keep the same session_id across messages.
@@ -715,6 +749,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                         // (some events are system-wide).
                         if session_id.is_some() {
                             active_session_id = session_id.clone();
+                            // RFC-049: write through to the shared copy so the
+                            // recv task's `cancel` arm can fall back to it.
+                            *active_session_shared.lock().await = session_id.clone();
                         }
                         if msg.partial == Some(true) || msg.metadata.contains_key("stream_kind") {
                             active_message_id = Some(msg_id);
@@ -768,6 +805,12 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                         // the token path (empty token), or the terminal `done`
                         // (would terminate the stream before any text).
                         if msg.metadata.get("stream_kind").map(|v| v.as_str()) == Some("model") {
+                            // Reset per-turn text-dedup state: the `model` mark is
+                            // the first frame of every turn, so this is the safest
+                            // place to guard against a prior turn that ended
+                            // without a terminal `done`/`error` (abrupt
+                            // disconnect, RFC-049 cancel path).
+                            turn_text.begin_turn();
                             let model_id = msg
                                 .metadata
                                 .get("model")
@@ -1078,6 +1121,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
         let pong_signal = pong_signal.clone();
         let state = state.clone();
         let ws_tx = ws_tx.clone();
+        let active_session_shared = active_session_shared.clone();
         async move {
             while let Some(Ok(msg)) = FuturesStreamExt::next(&mut ws_rx).await {
                 match msg {
@@ -1094,6 +1138,16 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
 
                         let incoming_session_id = parsed
                             .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+
+                        // RFC-049: the client may supply its own request_id for
+                        // the session's FIRST message (no session_id yet). The
+                        // gateway keys the turn by msg.id in that case, so a
+                        // client-known id lets the cancel frame address the turn.
+                        let incoming_request_id = parsed
+                            .get("request_id")
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.is_empty())
                             .map(String::from);
@@ -1261,6 +1315,32 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     break;
                                 }
                             }
+                            // RFC-049: user pressed Stop. Resolve the turn key
+                            // (frame session id, falling back to the
+                            // connection's active session) and cancel the turn,
+                            // killing the bound agent so the provider request
+                            // actually stops. The client-visible terminal
+                            // frame is the gateway's cancelled turn path — no
+                            // reply chunk is sent here, and a missing key or a
+                            // failed kill must never fail the frame.
+                            "cancel" => {
+                                let key = resolve_cancel_key(
+                                    parsed.get("session_id").and_then(|v| v.as_str()),
+                                    parsed.get("request_id").and_then(|v| v.as_str()),
+                                    active_session_shared.lock().await.as_deref(),
+                                );
+                                let Some(key) = key else { continue };
+                                if let Some(agent_id) = state.kernel.turns.cancel(&key)
+                                    && let Err(e) =
+                                        state.kernel.agents.kill(&agent_id.to_string()).await
+                                {
+                                    tracing::warn!(
+                                        agent_id = %agent_id,
+                                        error = %e,
+                                        "cancel: agent kill failed"
+                                    );
+                                }
+                            }
                             // Default: regular chat message
                             _ => {
                                 let content = parsed
@@ -1275,6 +1355,18 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
 
                                 let mut incoming =
                                     IncomingMessage::new("web", "default", content.clone());
+
+                                // RFC-049: honour a client-supplied request_id
+                                // (first message, no session yet) so the turn
+                                // key — `msg.id` when session_id is absent —
+                                // is known to the client and cancel can address
+                                // it. Only valid UUIDs are accepted; anything
+                                // else keeps the server-generated id.
+                                if let Some(ref rid) = incoming_request_id
+                                    && let Ok(rid) = uuid::Uuid::parse_str(rid)
+                                {
+                                    incoming.id = rid;
+                                }
 
                                 if let Some(ref sid) = incoming_session_id {
                                     incoming.metadata.insert("session_id".into(), sid.clone());
@@ -1658,6 +1750,10 @@ fn kernel_event_to_ws_chunk(
         KernelEvent::CompressionDelta { session_id, .. } => Some(session_id),
         KernelEvent::CompressionDone { session_id } => Some(session_id),
         KernelEvent::CompressionFailed { session_id, .. } => Some(session_id),
+        KernelEvent::AgentCreated { session_id, .. } => session_id.as_deref(),
+        KernelEvent::AgentStarted { session_id, .. } => session_id.as_deref(),
+        KernelEvent::AgentStopped { session_id, .. } => session_id.as_deref(),
+        KernelEvent::AgentFailed { session_id, .. } => session_id.as_deref(),
         _ => None,
     };
     if let (Some(eid), Some(active)) = (event_session_id, active_session_id.as_ref())
@@ -1667,6 +1763,42 @@ fn kernel_event_to_ws_chunk(
     }
 
     let chunk = match event {
+        // Sub-agent forks inside a chat turn surface as timeline blocks.
+        // Background/cron forks carry `session_id: None` and stay off the
+        // chat stream.
+        KernelEvent::AgentCreated {
+            id,
+            name,
+            session_id: Some(_),
+        } => Some(serde_json::json!({
+            "type": "agent_start",
+            "agent_id": id.to_string(),
+            "name": name,
+        })),
+        KernelEvent::AgentCreated { .. } => None,
+        KernelEvent::AgentStopped {
+            id,
+            success,
+            session_id: Some(_),
+        } => Some(serde_json::json!({
+            "type": "agent_end",
+            "agent_id": id.to_string(),
+            "success": success,
+        })),
+        KernelEvent::AgentStopped { .. } => None,
+        KernelEvent::AgentFailed {
+            id,
+            error,
+            session_id: Some(_),
+        } => Some(serde_json::json!({
+            "type": "agent_end",
+            "agent_id": id.to_string(),
+            "success": false,
+            "error": error,
+        })),
+        KernelEvent::AgentFailed { .. } => None,
+        // AgentStarted is intentionally unmapped — AgentCreated already
+        // opens the block and a second frame adds nothing.
         KernelEvent::ToolExecutionStarted {
             tool_name,
             tool_call_id,
@@ -2143,7 +2275,6 @@ pub(crate) struct AskUserResponseBody {
 #[cfg(test)]
 mod rfc015_tests {
     use super::*;
-    use oxios_kernel::AgentId;
     use oxios_kernel::event_bus::KernelEvent;
 
     /// Every RFC-015 KernelEvent should map to the documented WS chunk type
@@ -2317,16 +2448,73 @@ mod rfc015_tests {
         assert_eq!(chunk.unwrap()["type"], "usage");
     }
 
-    /// Lifecycle events (AgentStarted, …) should not be forwarded as
-    /// RFC-015 chunks — the global /api/events SSE handles them.
-    /// Returning None keeps the WS stream clean.
+    /// Lifecycle events now carry the owning `session_id` (Task 21): a fork
+    /// inside a chat turn surfaces as an `agent_start`/`agent_end` timeline
+    /// block on that session's WS stream, while uncorrelated events —
+    /// background/cron forks with `session_id: None` or events belonging to
+    /// another session — are still dropped.
     #[test]
-    fn lifecycle_events_are_skipped() {
-        let event = KernelEvent::AgentStarted {
-            id: AgentId::new_v4(),
+    fn agent_lifecycle_events_reach_the_owning_session_only() {
+        let ev = KernelEvent::AgentCreated {
+            id: uuid::Uuid::new_v4(),
+            name: "researcher".to_string(),
+            session_id: Some("sess-a".to_string()),
+        };
+        let chunk = kernel_event_to_ws_chunk(&ev, &Some("sess-a".to_string()), &None);
+        assert!(chunk.is_some(), "the owning session must see its sub-agent");
+        assert_eq!(chunk.unwrap()["type"], "agent_start");
+        assert!(
+            kernel_event_to_ws_chunk(&ev, &Some("sess-b".to_string()), &None).is_none(),
+            "another session must not"
+        );
+    }
+
+    #[test]
+    fn background_agent_lifecycle_events_are_skipped() {
+        // `session_id: None` = background/cron fork — never a chat block.
+        let event = KernelEvent::AgentCreated {
+            id: uuid::Uuid::new_v4(),
+            name: "cron".to_string(),
+            session_id: None,
         };
         let chunk = kernel_event_to_ws_chunk(&event, &None, &None);
         assert!(chunk.is_none());
+        let event = KernelEvent::AgentStopped {
+            id: uuid::Uuid::new_v4(),
+            success: true,
+            session_id: None,
+        };
+        let chunk = kernel_event_to_ws_chunk(&event, &None, &None);
+        assert!(chunk.is_none());
+        let event = KernelEvent::AgentFailed {
+            id: uuid::Uuid::new_v4(),
+            error: "boom".to_string(),
+            session_id: None,
+        };
+        let chunk = kernel_event_to_ws_chunk(&event, &None, &None);
+        assert!(chunk.is_none());
+    }
+
+    #[test]
+    fn agent_stop_and_fail_emit_terminal_blocks() {
+        let stopped = KernelEvent::AgentStopped {
+            id: uuid::Uuid::new_v4(),
+            success: true,
+            session_id: Some("s1".to_string()),
+        };
+        let chunk = kernel_event_to_ws_chunk(&stopped, &Some("s1".to_string()), &None).unwrap();
+        assert_eq!(chunk["type"], "agent_end");
+        assert_eq!(chunk["success"], true);
+
+        let failed = KernelEvent::AgentFailed {
+            id: uuid::Uuid::new_v4(),
+            error: "timeout".to_string(),
+            session_id: Some("s1".to_string()),
+        };
+        let chunk = kernel_event_to_ws_chunk(&failed, &Some("s1".to_string()), &None).unwrap();
+        assert_eq!(chunk["type"], "agent_end");
+        assert_eq!(chunk["success"], false);
+        assert_eq!(chunk["error"], "timeout");
     }
 
     /// RFC-015 P2: after non-empty text partials were forwarded, the
@@ -2365,6 +2553,21 @@ mod rfc015_tests {
         let mut t = TurnTextStreamTracker::default();
         t.note_text_partial("answer");
         t.reset();
+        assert!(!t.terminal_token_redundant());
+    }
+
+    /// The terminal `done`/`error` reset is the normal path, but a turn may
+    /// end without one (abrupt disconnect, or the RFC-049 cancel path).
+    /// Resetting at the start of the next turn keeps the next terminal text
+    /// from being suppressed on the same connection.
+    #[test]
+    fn tracker_resets_on_new_turn_not_only_on_terminal() {
+        let mut t = TurnTextStreamTracker::default();
+        t.note_text_partial("answer");
+        assert!(t.terminal_token_redundant());
+        // A new turn begins (model chunk) without a preceding done/error —
+        // the next turn's terminal text must NOT be suppressed.
+        t.begin_turn();
         assert!(!t.terminal_token_redundant());
     }
 }
@@ -2590,4 +2793,68 @@ pub(crate) async fn handle_remove_knowledge_save(
         });
 
     Ok(Json(serde_json::json!({ "deleted_path": path })))
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+
+    /// RFC-049: the gateway-side terminal for a cancelled turn is keyed by
+    /// `session_id.unwrap_or(request_id)`; this is the registry-level half of
+    /// the WS `cancel` frame: marking the turn cancels its token and returns
+    /// the bound agent id so the recv arm can kill the agent.
+    #[tokio::test]
+    async fn cancel_frame_marks_turn_and_returns_agent_id() {
+        let turns = oxios_kernel::turn_registry::TurnRegistry::new();
+        let token = turns.open("sess-cancel");
+        let agent = uuid::Uuid::new_v4();
+        turns.bind_agent("sess-cancel", agent);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(r#"{"type":"cancel","session_id":"sess-cancel"}"#).unwrap();
+        let key = parsed
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .expect("cancel frame carries the turn key");
+
+        assert_eq!(turns.cancel(key), Some(agent));
+        assert!(token.is_cancelled());
+    }
+
+    /// RFC-049: the cancel arm resolves the turn key with the frame's
+    /// session_id winning over request_id and the connection's active session.
+    #[test]
+    fn resolve_cancel_key_frame_wins_over_shared() {
+        assert_eq!(
+            resolve_cancel_key(Some("frame-sess"), Some("frame-rid"), Some("active-sess")),
+            Some("frame-sess".to_string())
+        );
+        // An empty frame value is treated as absent (matches the recv
+        // task's `incoming_session_id` filtering).
+        assert_eq!(
+            resolve_cancel_key(Some(""), Some("frame-rid"), Some("active-sess")),
+            Some("frame-rid".to_string())
+        );
+    }
+
+    /// RFC-049: with no frame session_id, the frame request_id (first-message
+    /// cancel) wins over the connection's active session.
+    #[test]
+    fn resolve_cancel_key_request_id_falls_back_to_active_session() {
+        assert_eq!(
+            resolve_cancel_key(None, Some("frame-rid"), Some("active-sess")),
+            Some("frame-rid".to_string())
+        );
+        assert_eq!(
+            resolve_cancel_key(None, None, Some("active-sess")),
+            Some("active-sess".to_string())
+        );
+    }
+
+    /// RFC-049: no key present → None, so the arm no-ops.
+    #[test]
+    fn resolve_cancel_key_none_when_all_absent() {
+        assert_eq!(resolve_cancel_key(None, None, None), None);
+        assert_eq!(resolve_cancel_key(Some(""), None, None), None);
+    }
 }

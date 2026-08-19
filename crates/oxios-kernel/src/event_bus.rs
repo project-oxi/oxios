@@ -35,11 +35,21 @@ pub enum KernelEvent {
         id: AgentId,
         /// The agent's name/goal.
         name: String,
+        /// Owning chat turn key (`ExecEnv.session_id`), when the fork happened
+        /// inside a chat turn. `None` for background/cron forks — those stay
+        /// off the chat stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// An agent has started executing.
     AgentStarted {
         /// The agent's ID.
         id: AgentId,
+        /// Owning chat turn key (`ExecEnv.session_id`), when the fork happened
+        /// inside a chat turn. `None` for background/cron forks — those stay
+        /// off the chat stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// An agent has been stopped.
     ///
@@ -55,6 +65,11 @@ pub enum KernelEvent {
         /// kill/terminate path (user-initiated stop).
         #[serde(default)]
         success: bool,
+        /// Owning chat turn key (`ExecEnv.session_id`), when the fork happened
+        /// inside a chat turn. `None` for background/cron forks — those stay
+        /// off the chat stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// An agent has encountered a failure.
     AgentFailed {
@@ -62,6 +77,11 @@ pub enum KernelEvent {
         id: AgentId,
         /// Description of the error.
         error: String,
+        /// Owning chat turn key (`ExecEnv.session_id`), when the fork happened
+        /// inside a chat turn. `None` for background/cron forks — those stay
+        /// off the chat stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// A message has been received from an agent.
     MessageReceived {
@@ -711,6 +731,7 @@ mod tests {
         KernelEvent::AgentCreated {
             id: AgentId::new_v4(),
             name: name.to_string(),
+            session_id: None,
         }
     }
 
@@ -763,6 +784,7 @@ mod tests {
         let event = KernelEvent::AgentFailed {
             id: AgentId::new_v4(),
             error: "boom".to_string(),
+            session_id: None,
         };
         let action = kernel_event_to_audit_action(&event);
         match action {

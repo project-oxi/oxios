@@ -78,6 +78,7 @@ pub fn build_test_orchestrator(
         vec![],
         true,
         "/tmp/oxios-test-workspace".to_string(),
+        Arc::new(oxios_kernel::turn_registry::TurnRegistry::new()),
     );
 
     let mock = Arc::new(MockIntentEngine::new());

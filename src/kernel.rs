@@ -9,12 +9,11 @@ use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
     A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
-    BrainConnection, BrainSupervisor, BudgetManager, ClawHubClient, ClawHubInstaller,
-    CronScheduler, EngineHandle, EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge,
-    McpServer, Orchestrator, OxiosConfig, OxiosEngine, PersonaManager, ProjectManager,
-    ResourceMonitor, SkillManager, SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor,
-    SupervisorConfig, access_manager::AccessManager, auth::AuthManager, config::load_config,
-    mcp::validate_mcp_command,
+    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
+    EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
+    OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
+    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
+    auth::AuthManager, config::load_config, mcp::validate_mcp_command,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
@@ -86,6 +85,16 @@ pub struct Kernel {
     config_path: PathBuf,
     /// Cached KernelHandle — created once, reused forever.
     handle_cache: OnceLock<Arc<oxios_kernel::KernelHandle>>,
+    /// RFC-049: shared turn registry — the SAME Arc must back the gateway's
+    /// dispatch (which opens turns) and the cached control-plane handle (whose
+    /// WS cancel arm resolves the turn key). Without sharing, the gateway
+    /// opens a turn in one registry while the cancel arm looks it up in
+    /// another → Stop never stops the stream.
+    turns: std::sync::Arc<oxios_kernel::turn_registry::TurnRegistry>,
+    /// RFC-015 P1: shared streaming-sink registry — the gateway registers a
+    /// strong sender per active chat session, the runtime callback looks it up
+    /// by session_id. Same cross-handle sharing rule as `turns`.
+    streaming_sinks: std::sync::Arc<oxios_kernel::streaming_sink::StreamingSinkRegistry>,
     /// A2A protocol for inter-agent communication.
     a2a_protocol: Arc<A2AProtocol>,
     /// Hot-swappable engine reference — shared between EngineApi and AgentRuntime.
@@ -277,6 +286,14 @@ impl Kernel {
                 // task auto-run) and the HTTP task-run handler share one
                 // execution primitive via KernelHandle::run_goal.
                 let kh = kh.with_orchestrator(self.orchestrator.clone());
+                // RFC-015 P1 / RFC-049: the cached control-plane handle must
+                // share the SAME streaming-sink + turn registries as the
+                // gateway. The preliminary handle (AgentRuntime) is already
+                // wired in `build()`; without this, the WS cancel arm looks up
+                // turns in an empty registry while the gateway opens them in
+                // the shared one → Stop never stops the stream.
+                let kh = kh.with_streaming_sinks(self.streaming_sinks.clone());
+                let kh = kh.with_turns(self.turns.clone());
                 // RFC-025: attach MountApi to the handle the HTTP API and CLI
                 // actually use. The orchestrator gets its own Arc directly; this
                 // facade is what `/api/mounts` reads (`state.kernel.mounts`).
@@ -1067,6 +1084,7 @@ impl KernelBuilder {
         // is attached to KernelHandle (for runtime lookup) and to the
         // Gateway (for registration).
         let streaming_sinks = Arc::new(oxios_kernel::streaming_sink::StreamingSinkRegistry::new());
+        let turns = Arc::new(oxios_kernel::turn_registry::TurnRegistry::new());
         let state_store = Arc::new(oxios_kernel::state_store::StateStore::new(PathBuf::from(
             &config.kernel.workspace,
         ))?);
@@ -1569,6 +1587,7 @@ impl KernelBuilder {
             // collector sender. Wired before `Arc::new(kh)` so we can use
             // the consuming builder.
             let kh = kh.with_streaming_sinks(streaming_sinks.clone());
+            let kh = kh.with_turns(turns.clone());
             // Attach the Mount facade (RFC-025). Set before Arc so the handle
             // carries it from construction.
             let kh = if let Some(mm) = mount_manager.clone() {
@@ -1718,6 +1737,7 @@ impl KernelBuilder {
             config.security.allowed_tools.clone(),
             config.security.network_access,
             config.kernel.workspace.clone(),
+            turns.clone(),
         );
 
         // Register the A2A dispatch handler.
@@ -1799,7 +1819,8 @@ impl KernelBuilder {
         // KernelHandle so the runtime callback can find the gateway's
         // collector sender for live text deltas.
         let gateway = Gateway::with_apis(orchestrator.clone(), engine_api, persona_api)
-            .with_streaming_sinks(streaming_sinks);
+            .with_streaming_sinks(streaming_sinks.clone())
+            .with_turns(turns.clone());
         let gateway = Arc::new(gateway);
 
         // Initialize metrics and observability singletons.
@@ -1843,6 +1864,8 @@ impl KernelBuilder {
             // supervisor kept persisting rows. The fully-wired handle is
             // assembled lazily by `handle()` and cached just below.
             handle_cache: std::sync::OnceLock::new(),
+            turns,
+            streaming_sinks,
             a2a_protocol,
             engine_handle,
             agent_log_db,

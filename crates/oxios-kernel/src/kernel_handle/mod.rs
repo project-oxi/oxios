@@ -221,7 +221,6 @@ impl KernelHandle {
             turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
-            streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
             orchestrator: None,
             asset_store: None,
             task_store: None,
@@ -314,11 +313,6 @@ impl KernelHandle {
         self
     }
 
-    /// Attach the shared turn registry (the gateway holds the same `Arc`).
-    pub fn with_turns(mut self, registry: Arc<crate::turn_registry::TurnRegistry>) -> Self {
-        self.turns = registry;
-        self
-    }
     /// Attach the shared turn registry (the gateway holds the same `Arc`).
     pub fn with_turns(mut self, registry: Arc<crate::turn_registry::TurnRegistry>) -> Self {
         self.turns = registry;

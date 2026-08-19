@@ -81,6 +81,10 @@ fn user_message_and_suggestion(kind: &ErrorKind, _raw_msg: &str) -> (String, Opt
         ),
         ErrorKind::ValidationError => ("Invalid input.".to_string(), None),
         ErrorKind::Internal => ("An internal error occurred.".to_string(), None),
+        // RFC-049: never produced by the classify path — the gateway emits
+        // the cancelled terminal directly with its own message. Included
+        // only to satisfy the exhaustive match.
+        ErrorKind::Cancelled => ("Turn cancelled by user.".to_string(), None),
     }
 }
 
@@ -202,6 +206,7 @@ mod tests {
             ErrorKind::PermissionDenied,
             ErrorKind::ValidationError,
             ErrorKind::Internal,
+            ErrorKind::Cancelled,
         ] {
             let (msg, _) = user_message_and_suggestion(kind, "");
             assert!(

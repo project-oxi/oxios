@@ -14,20 +14,21 @@ import { create } from 'zustand'
 import type { ArtifactDisplayMode, ArtifactMeta } from '@/types/artifact'
 
 /** A single view pushed onto the portal navigation stack. */
+export type PortalView =
   | {
-    type: 'artifact'
-    /** Stable identity: `${messageId}::${type}::${ordinal}::${title}`. */
-    key: string
-    meta: ArtifactMeta
-    content: string
-    displayMode: ArtifactDisplayMode
-    /** Full revision history. Index 0 is the first version; `activeVersion`
-     *  points at the one currently shown in the panel. Streaming updates
-     *  mutate `activeVersion` in place; a completed rewrite pushes a new
-     *  entry so the user can diff against what the agent replaced. */
-    versions: string[]
-    activeVersion: number
-  }
+      type: 'artifact'
+      /** Stable identity: `${messageId}::${type}::${ordinal}::${title}`. */
+      key: string
+      meta: ArtifactMeta
+      content: string
+      displayMode: ArtifactDisplayMode
+      /** Full revision history. Index 0 is the first version; `activeVersion`
+       *  points at the one currently shown in the panel. Streaming updates
+       *  mutate `activeVersion` in place; a completed rewrite pushes a new
+       *  entry so the user can diff against what the agent replaced. */
+      versions: string[]
+      activeVersion: number
+    }
   | {
       type: 'filePreview'
       /** Absolute path of the file being previewed. */
@@ -81,10 +82,19 @@ export interface PortalState {
 
   /** Toggle an artifact: if it is the current top view, pop it; else push. */
   toggleArtifact: (meta: ArtifactMeta, content: string) => void
-  /** Update the content of the artifact view with `key` (live streaming push). */
+  /** Update the content of the artifact view with `key` (live streaming push).
+   *  Also mirrors the patch into `versions[activeVersion]` so the version
+   *  history stays consistent with the live content. */
   updateArtifactContent: (key: string, content: string) => void
   /** Update the display mode of the artifact view with `key`. */
   setArtifactDisplayMode: (key: string, mode: ArtifactDisplayMode) => void
+  /** Append a new revision to the artifact view with `key`. The just-appended
+   *  version becomes the active one (mirrors a completed rewrite — the user
+   *  can step back to the previous revision via the version switcher). */
+  pushArtifactVersion: (key: string, content: string) => void
+  /** Switch the active version of the artifact view with `key` to `index`,
+   *  repointing the live `content` at that revision. */
+  setActiveVersion: (key: string, index: number) => void
 
   // ── File preview convenience ──────────────────────────────────────
 
@@ -105,9 +115,12 @@ export interface PortalState {
   pushDocument: (path: string) => void
 }
 
-/** Stable identity key for an artifact within a message. */
+/** Stable identity key for an artifact within a message. `blockId` scopes it
+ *  to a MarkdownMessage instance and `ordinal` disambiguates two untitled
+ *  artifacts of the same type in one block — previously same-type untitled
+ *  artifacts collapsed into a single panel entry. */
 export function artifactKey(meta: ArtifactMeta): string {
-  return `${meta.messageId}::${meta.type}::${meta.title ?? ''}`
+  return `${meta.messageId}::${meta.blockId ?? ''}::${meta.type}::${meta.ordinal}::${meta.title ?? ''}`
 }
 
 export const usePortalStore = create<PortalState>((set, get) => ({
@@ -134,7 +147,18 @@ export const usePortalStore = create<PortalState>((set, get) => ({
         set({ stack: stack.slice(0, existing + 1) })
       } else {
         set({
-          stack: [...stack, { type: 'artifact', key, meta, content, displayMode: 'preview' }],
+          stack: [
+            ...stack,
+            {
+              type: 'artifact',
+              key,
+              meta,
+              content,
+              displayMode: 'preview',
+              versions: [content],
+              activeVersion: 0,
+            },
+          ],
         })
       }
     }
@@ -142,7 +166,17 @@ export const usePortalStore = create<PortalState>((set, get) => ({
 
   updateArtifactContent: (key, content) =>
     set((s) => ({
-      stack: s.stack.map((v) => (v.type === 'artifact' && v.key === key ? { ...v, content } : v)),
+      stack: s.stack.map((v) => {
+        if (v.type !== 'artifact' || v.key !== key) return v
+        // Live updates always land on the LAST (live-tip) slot so stepping
+        // back to an older revision is not clobbered by an ongoing stream.
+        // The visible `content` follows activeVersion: only advance it when
+        // the user is already viewing the tip.
+        const last = v.versions.length - 1
+        const versions = v.versions.with(last, content)
+        const isLive = v.activeVersion === last
+        return isLive ? { ...v, content, versions } : { ...v, versions }
+      }),
     })),
 
   setArtifactDisplayMode: (key, mode) =>
@@ -150,6 +184,29 @@ export const usePortalStore = create<PortalState>((set, get) => ({
       stack: s.stack.map((v) =>
         v.type === 'artifact' && v.key === key ? { ...v, displayMode: mode } : v,
       ),
+    })),
+
+  pushArtifactVersion: (key, content) =>
+    set((s) => ({
+      stack: s.stack.map((v) => {
+        if (v.type !== 'artifact' || v.key !== key) return v
+        const nextIndex = v.versions.length
+        return {
+          ...v,
+          versions: [...v.versions, content],
+          activeVersion: nextIndex,
+          content,
+        }
+      }),
+    })),
+
+  setActiveVersion: (key, index) =>
+    set((s) => ({
+      stack: s.stack.map((v) => {
+        if (v.type !== 'artifact' || v.key !== key) return v
+        if (index < 0 || index >= v.versions.length) return v
+        return { ...v, activeVersion: index, content: v.versions[index] ?? v.content }
+      }),
     })),
 
   pushFilePreview: (path, content) => {

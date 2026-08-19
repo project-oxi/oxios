@@ -1,7 +1,7 @@
 // adapter — Oxios WS chunk (StreamChunk) → ChatEvent[] (+ optional passthrough).
 //
 // Strategy (advisory 2026-07-21): split chunks by concern.
-//   • Content streaming (token/reasoning/tool_*/usage/phase/done/error) → ChatEvent[]
+//   • Content streaming (token/reasoning/tool_*/usage/done/error) → ChatEvent[]
 //     consumed by StreamProcessor.
 //   • Oxios-semantic (model/memory/interview_question/tool_approval/mount_detected)
 //     → passthrough as raw StreamChunk; the store's existing reducer arms handle
@@ -199,20 +199,6 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
         passthrough: raw,
       }
 
-    case 'phase':
-      return {
-        events: [
-          {
-            kind: 'phase',
-            messageId: mid,
-            phase: raw.phase ?? '',
-            evaluationPassed:
-              typeof raw.evaluation_passed === 'boolean' ? raw.evaluation_passed : undefined,
-          },
-        ],
-        passthrough: raw,
-      }
-
     // Web-search citations (backend: chat.rs grounding_from_event). Without
     // this arm the chunk fell through to `default` and every citation was
     // dropped, leaving the SearchGrounding panel permanently unrendered.
@@ -248,6 +234,34 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
         ],
       }
     }
+
+    // Sub-agent forks in the turn's own timeline (Task 21): the backend
+    // correlates lifecycle events to the chat session and forwards only the
+    // owning session's forks.
+    case 'agent_start':
+      return {
+        events: [
+          {
+            kind: 'subagent.start',
+            messageId: mid,
+            agentId: raw.agent_id ?? cryptoFallbackId(),
+            name: raw.name ?? '',
+          },
+        ],
+      }
+
+    case 'agent_end':
+      return {
+        events: [
+          {
+            kind: 'subagent.end',
+            messageId: mid,
+            agentId: raw.agent_id ?? '',
+            success: raw.success !== false,
+            error: raw.error,
+          },
+        ],
+      }
     default:
       return { events: [] }
   }

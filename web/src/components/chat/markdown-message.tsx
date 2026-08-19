@@ -20,6 +20,7 @@ import type { Element, ElementContent, Root, RootContent } from 'hast'
 import type { Schema } from 'hast-util-sanitize'
 import { Check, Copy } from 'lucide-react'
 import { type ComponentPropsWithoutRef, memo, type ReactNode, useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeRaw from 'rehype-raw'
@@ -27,12 +28,16 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { ArtifactCard, ArtifactContext } from '@/components/chat/artifact/artifact-card'
 import { rehypeLinkCard } from '@/components/chat/markdown-plugins/rehype-link-card'
+import { rehypeStampArtifactOrdinal } from '@/components/chat/markdown-plugins/rehype-stamp-artifact-ordinal'
 import { rehypeThinking } from '@/components/chat/markdown-plugins/rehype-thinking'
+import { healStreamingMarkdown, inOpenFence } from '@/lib/markdown/heal-streaming'
 import { cn } from '@/lib/utils'
 import { languageToArtifactType } from '@/types/artifact'
 import { preprocessArtifacts } from './markdown-plugins/preprocess-artifacts'
 
 // ── Code block with language label + copy button ──────────────────
+/** Fenced blocks render this many lines inline; anything longer gets a collapse control. */
+const COLLAPSE_LINES = 24
 
 function CodeBlock({
   language,
@@ -45,7 +50,13 @@ function CodeBlock({
   /** Highlighted hast children as rendered by react-markdown. */
   children: ReactNode
 }) {
+  const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  const lineCount = code.split('\n').length
+  const collapsible = lineCount > COLLAPSE_LINES
+  const collapsed = collapsible && !expanded
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code).then(() => {
@@ -66,19 +77,34 @@ function CodeBlock({
           {copied ? (
             <>
               <Check className="w-3 h-3" />
-              Copied
+              {t('common.copied')}
             </>
           ) : (
             <>
               <Copy className="w-3 h-3" />
-              Copy
+              {t('common.copy')}
             </>
           )}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 text-xs leading-relaxed">
+      <pre
+        data-collapsed={collapsed || undefined}
+        className={cn(
+          'overflow-x-auto p-3 text-xs leading-relaxed',
+          collapsed && 'max-h-96 overflow-y-hidden',
+        )}
+      >
         <code className={`language-${language ?? 'text'} font-mono`}>{children}</code>
       </pre>
+      {collapsible && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full border-t px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {expanded ? t('chat.code.collapse') : t('chat.code.expand', { count: lineCount })}
+        </button>
+      )}
     </div>
   )
 }
@@ -176,8 +202,9 @@ const markdownComponents = {
       // Read raw text from the hast node so syntax-highlight spans never
       // corrupt the artifact content.
       const raw = hastToText(node) || extractText(children)
+      const ordinal = Number(node?.properties?.dataArtifactOrdinal ?? 0)
       return (
-        <ArtifactCard type={artifactType} language={language} source="language">
+        <ArtifactCard type={artifactType} language={language} source="language" ordinal={ordinal}>
           {raw}
         </ArtifactCard>
       )
@@ -202,67 +229,110 @@ interface MarkdownMessageProps {
   className?: string
   /** Owning message id — lets artifact cards coordinate with the panel store. */
   messageId?: string
+  /** Owning block id (BlockStream passes its block id). Scopes artifact
+   *  identity so same-type untitled artifacts in different blocks of one
+   *  message do not collide. */
+  blockId?: string
   /** Whether the owning message is still streaming (drives live preview). */
   isStreaming?: boolean
+  /** Test hook: fired once per ReactMarkdown parse of the settled prefix. */
+  onParse?: (src: string) => void
+}
+
+/** Shared parse/render pipeline. */
+function MarkdownCore({
+  children,
+  isStreaming = false,
+}: {
+  children: string
+  isStreaming?: boolean
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[
+        [rehypeRaw, { allowDangerousHtml: true }],
+        [rehypeSanitize, sanitizeSchema],
+        // After sanitize — defaultSchema strips unknown properties.
+        rehypeMarkInlineCode,
+        // Also after sanitize: stamps artifact ordinals onto code nodes.
+        rehypeStampArtifactOrdinal,
+        rehypeHighlight,
+        rehypeThinking,
+        rehypeLinkCard,
+      ]}
+      components={markdownComponents}
+    >
+      {preprocessArtifacts(isStreaming ? healStreamingMarkdown(children) : children)}
+    </ReactMarkdown>
+  )
+}
+
+/** Settled (completed) prefix of a streaming block. Memoized so it is only
+ *  re-parsed when the prefix actually grows — the live tail re-parses per
+ *  frame, the settled prefix must not. */
+const SettledMarkdown = memo(
+  function SettledMarkdown({ src, onParse }: { src: string; onParse?: (src: string) => void }) {
+    onParse?.(src)
+    return <MarkdownCore>{src}</MarkdownCore>
+  },
+  // The props that matter for identity: src only. A per-render onParse
+  // closure (test hook) must not defeat the memo.
+  (prev, next) => prev.src === next.src,
+)
+
+/** Split a streaming buffer at the last blank-line boundary: everything
+ *  before it is a completed block-level construct, everything after is the
+ *  live tail. Returns null when splitting would be unsound:
+ *  - buffer ends inside an open fence (split point would land mid-code)
+ *  - the tail carries artifact-eligible code — it renders through a separate
+ *    pipeline whose artifact ordinal counter restarts at 0, which would
+ *    collide with the settled subtree's ordinals (same defect class as the
+ *    pre-blockId key collision). */
+function splitStreaming(
+  src: string,
+  isStreaming: boolean,
+): { settled: string; tail: string } | null {
+  if (!isStreaming) return null
+  if (inOpenFence(src.split('\n'))) return null
+  const splitAt = src.lastIndexOf('\n\n')
+  if (splitAt <= 0) return null
+  const tail = src.slice(splitAt)
+  if (tailHasArtifactCode(tail)) return null
+  return { settled: src.slice(0, splitAt), tail }
+}
+
+/** True when the buffer contains a fenced code block whose language maps to
+ *  a renderable artifact type, or a <lobeArtifact> tag. */
+function tailHasArtifactCode(src: string): boolean {
+  if (src.includes('<lobeArtifact')) return true
+  for (const line of src.split('\n')) {
+    const m = /^\s{0,3}```(\w+)/.exec(line)
+    if (m && languageToArtifactType(m[1]) != null) return true
+  }
+  return false
 }
 
 export const MarkdownMessage = memo(function MarkdownMessage({
   children,
   className,
   messageId = '',
+  blockId = '',
   isStreaming = false,
+  onParse,
 }: MarkdownMessageProps) {
+  const split = splitStreaming(children, isStreaming)
   return (
-    <ArtifactContext.Provider value={{ messageId, isStreaming }}>
-      <div className={cn('prose prose-sm dark:prose-invert max-w-none', className)}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[
-            [rehypeRaw, { allowDangerousHtml: true }],
-            [rehypeSanitize, sanitizeSchema],
-            // After sanitize — defaultSchema strips unknown properties.
-            rehypeMarkInlineCode,
-            rehypeHighlight,
-            rehypeThinking,
-            rehypeLinkCard,
-          ]}
-          components={markdownComponents}
-        >
-          {preprocessArtifacts(children)}
-        </ReactMarkdown>
-      </div>
-export const MarkdownMessage = memo(function MarkdownMessage({
-  children,
-  className,
-  messageId = '',
-  isStreaming = false,
-}: MarkdownMessageProps) {
-  // Per-render counter for artifact ordinals. react-markdown renders
-  // components in document order within one render pass, so a plain
-  // `let` + closure mutated by ArtifactCard yields 0,1,2,… deterministically
-  // per pass. The closure resets every render, so the ordinals track
-  // document position even after streaming re-renders.
-  let artifactOrdinal = 0
-  return (
-    <ArtifactContext.Provider
-      value={{ messageId, isStreaming, nextOrdinal: () => artifactOrdinal++ }}
-    >
-      <div className={cn('prose prose-sm dark:prose-invert max-w-none', className)}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[
-            [rehypeRaw, { allowDangerousHtml: true }],
-            [rehypeSanitize, sanitizeSchema],
-            // After sanitize — defaultSchema strips unknown properties.
-            rehypeMarkInlineCode,
-            rehypeHighlight,
-            rehypeThinking,
-            rehypeLinkCard,
-          ]}
-          components={markdownComponents}
-        >
-          {preprocessArtifacts(isStreaming ? healStreamingMarkdown(children) : children)}
-        </ReactMarkdown>
+    <ArtifactContext.Provider value={{ messageId, blockId, isStreaming }}>
+      <div className={cn('prose prose-sm max-w-none', className)}>
+        {split ? (
+          <>
+            <SettledMarkdown src={split.settled} onParse={onParse} />
+            <MarkdownCore isStreaming>{split.tail}</MarkdownCore>
+          </>
+        ) : (
+          <MarkdownCore isStreaming={isStreaming}>{children}</MarkdownCore>
+        )}
       </div>
     </ArtifactContext.Provider>
   )

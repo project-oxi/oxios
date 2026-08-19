@@ -119,6 +119,10 @@ pub struct Gateway {
     /// for the active session. The kernel assembler wires both sides to the
     /// same `Arc<StreamingSinkRegistry>` at boot.
     streaming_sinks: Arc<oxios_kernel::streaming_sink::StreamingSinkRegistry>,
+    /// RFC-049: shared with `KernelHandle.turns` — same `Arc`, same key space
+    /// as `streaming_sinks`. Lets the gateway open/cancel the dispatch task
+    /// for an incoming turn so the user can actually stop the agent.
+    turns: Arc<oxios_kernel::turn_registry::TurnRegistry>,
 }
 
 /// F21: deliver a message through a channel with bounded retries and linear
@@ -185,6 +189,7 @@ impl Gateway {
             in_flight: Arc::new(Mutex::new(Vec::new())),
             reliability: Arc::new(ReliabilityLayer::new(Default::default())),
             streaming_sinks: Arc::new(oxios_kernel::streaming_sink::StreamingSinkRegistry::new()),
+            turns: Arc::new(oxios_kernel::turn_registry::TurnRegistry::new()),
         }
     }
 
@@ -209,6 +214,7 @@ impl Gateway {
             in_flight: Arc::new(Mutex::new(Vec::new())),
             reliability: Arc::new(ReliabilityLayer::new(Default::default())),
             streaming_sinks: Arc::new(oxios_kernel::streaming_sink::StreamingSinkRegistry::new()),
+            turns: Arc::new(oxios_kernel::turn_registry::TurnRegistry::new()),
         }
     }
 
@@ -222,6 +228,17 @@ impl Gateway {
         self
     }
 
+    /// Attach the shared turn registry (RFC-049).
+    ///
+    /// Both sides must point at the same `Arc` — `KernelHandle.turns` and
+    /// `Gateway.turns` are the SAME registry, keyed by the same string the
+    /// streaming sink uses (D1 in the design doc). The chat WS cancel arm
+    /// looks the agent up in this registry; the gateway opens/closes the
+    /// dispatch task's entry here.
+    pub fn with_turns(mut self, registry: Arc<oxios_kernel::turn_registry::TurnRegistry>) -> Self {
+        self.turns = registry;
+        self
+    }
     /// Signal the gateway to stop its event loop.
     pub fn signal_shutdown(&self) {
         self.shutdown_flag
@@ -421,6 +438,7 @@ impl Gateway {
         let reliability = self.reliability.clone();
         let in_flight = self.in_flight.clone();
         let streaming_sinks = self.streaming_sinks.clone();
+        let turns = self.turns.clone();
 
         // F20: track the handle so shutdown can await it. Reap finished
         // handles to keep the vec bounded.
@@ -473,26 +491,25 @@ impl Gateway {
                     .map(|e| e.channel.clone())
                     .filter(|c| c.supports_streaming())
             };
+            // RFC-049: the turn key is the SAME string the streaming sink
+            // the orchestrator `select!` below and the cancelled-branch
+            // cleanup can both reach it without threading through the
+            // collector closure.
+            let sink_session_key = session_id.clone().unwrap_or_else(|| request_id.clone());
+            let turn_token = turns.open(&sink_session_key);
             let collector = channel_for_collector.map(|channel| {
                 let (tx, mut rx) =
                     tokio::sync::mpsc::channel::<oxios_kernel::agent_runtime::StreamDelta>(
                         oxios_kernel::streaming_sink::STREAMING_CHANNEL_CAPACITY,
                     );
                 let sender_arc: oxios_kernel::streaming_sink::StreamingSinkSender = Arc::new(tx);
-                // RFC-033: register under the same key the agent runtime will
-                // look up — the chat session id, or the request id for a
-                // session's first message (the WS client sends no session_id
-                // until the server returns one). The orchestrator sets
-                // ExecEnv.session_id to ctx.session_id (the same value), so
-                // token/tool/thinking deltas reach this collector.
-                let sink_session_key = session_id.clone().unwrap_or_else(|| request_id.clone());
                 streaming_sinks.register(&sink_session_key, &sender_arc);
+                // Shadow for the inner collector task — the outer `channel`
+                // and `conn_id` remain usable by the cancelled branch and
+                // the terminal match below.
                 let channel = channel.clone();
                 let conn_id = conn_id.clone();
-                // RFC-033: partial token messages + unregister use the same
-                // resolved key as registration, so the runtime's sink lookup
-                // and the chat.rs event filter (active_session_id) all agree.
-                let session_id_for_collector = sink_session_key;
+                let session_id_for_collector = sink_session_key.clone();
                 let channel_name_for_collector = channel_name.clone();
                 let user_id = msg.user_id.clone();
                 let streaming_sinks_for_unregister = streaming_sinks.clone();
@@ -710,8 +727,10 @@ impl Gateway {
             } else {
                 None
             };
-            let result = orchestrator
-                .handle_unified(
+            let outcome = tokio::select! {
+                biased;
+                _ = turn_token.cancelled() => None,
+                res = orchestrator.handle_unified(
                     &msg.user_id,
                     &msg.content,
                     session_id.as_deref(),
@@ -721,8 +740,47 @@ impl Gateway {
                     model_override,
                     model_params,
                     &request_id,
-                )
-                .await;
+                ) => Some(res),
+            };
+
+            // RFC-049: the turn was cancelled mid-flight. Drop the strong
+            // sender so the inner collector task drains, unregister the
+            // streaming sink, close the turn, and emit one terminal
+            // `Cancelled` chunk so the client sees a single terminal frame.
+            if outcome.is_none() {
+                if let Some((sender, handle)) = collector {
+                    drop(sender);
+                    let _ = handle.await;
+                }
+                streaming_sinks.unregister(&sink_session_key);
+                turns.close(&sink_session_key);
+                let channel = {
+                    let guard = channels.read().await;
+                    guard.get(&channel_name).map(|e| e.channel.clone())
+                };
+                if let Some(channel) = channel {
+                    let mut cancelled =
+                        OutgoingMessage::new(&msg.channel, &msg.user_id, String::new());
+                    // Preserve the request id: chat.rs keys pending_user_msg by
+                    // it and removes the slot on the terminal; a fresh id would
+                    // orphan the slot and skip persisting the user's message.
+                    cancelled.id = msg.id;
+                    cancelled.target_conn_id = conn_id.clone();
+                    cancelled.meta = Some(ResponseMeta {
+                        session_id: session_id.clone(),
+                        phase: "cancelled".to_string(),
+                        error: Some(UserFacingError {
+                            message: "Turn cancelled by user".to_string(),
+                            kind: ErrorKind::Cancelled,
+                            suggestion: None,
+                        }),
+                        ..Default::default()
+                    });
+                    let _ = send_with_retry(&channel, cancelled).await;
+                }
+                return;
+            }
+            let result = outcome.expect("cancelled branch returned");
 
             // RFC-015 P1: drop the strong sender and await the collector.
             // This is load-bearing for ordering — when the runtime callback
@@ -860,8 +918,12 @@ impl Gateway {
                     );
                 }
             }
+            // RFC-049: every non-cancelled exit path of the dispatch task
+            // closes the turn. The cancelled branch above closes + returns;
+            // close is idempotent, so calling it here unconditionally is
+            // safe (it is a no-op on an already-closed key).
+            turns.close(&sink_session_key);
         });
-
         // Track + reap in one pass.
         if let Ok(mut in_flight) = in_flight.try_lock() {
             in_flight.retain(|h| !h.is_finished());

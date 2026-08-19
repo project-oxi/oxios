@@ -32,8 +32,7 @@ export function PathAccessCard({
   onDeny,
   disabled,
 }: PathAccessCardProps) {
-  const { i18n } = useTranslation()
-  const isKo = i18n.language?.startsWith('ko')
+  const { t } = useTranslation()
 
   return (
     <div className="flex gap-3 my-1.5">
@@ -44,7 +43,7 @@ export function PathAccessCard({
         <div className="rounded-xl border bg-card shadow-sm">
           <div className="flex items-center gap-2 px-4 py-3 border-b">
             <ShieldCheck className="h-4 w-4 text-warning shrink-0" />
-            <span className="text-sm font-medium">{isKo ? '경로 접근 권한' : 'Path Access'}</span>
+            <span className="text-sm font-medium">{t('pathAccess.title')}</span>
             <span className="ml-auto px-2 py-0.5 rounded bg-muted text-xs font-mono">
               {mode === 'write' ? 'write' : 'read'}
             </span>
@@ -53,27 +52,25 @@ export function PathAccessCard({
             <p className="text-sm text-muted-foreground break-all font-mono text-xs">{path}</p>
             {reason && <p className="text-xs text-muted-foreground mt-2">{reason}</p>}
             <p className="text-xs text-muted-foreground mt-1">
-              {isKo
-                ? `${toolName} 도구가 이 경로에 접근하려고 합니다. 허용 방법을 선택하세요.`
-                : `The ${toolName} tool wants to access this path. Choose how to proceed.`}
+              {t('pathAccess.prompt', { toolName })}
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 px-4 py-3 border-t">
             <Button onClick={onDeny} variant="ghost" size="sm" disabled={disabled}>
               <X className="h-3.5 w-3.5 mr-1" />
-              {isKo ? '거부' : 'Deny'}
+              {t('pathAccess.deny')}
             </Button>
             <Button onClick={onTempAllow} variant="outline" size="sm" disabled={disabled}>
-              {isKo ? '임시 허용' : 'Allow once'}
+              {t('pathAccess.allowOnce')}
             </Button>
             <Button
               onClick={onMount}
               size="sm"
               disabled={disabled}
-              className="bg-success/90 hover:bg-success text-white"
+              className="bg-success/90 hover:bg-success text-success-foreground"
             >
               <FolderPlus className="h-3.5 w-3.5 mr-1" />
-              {isKo ? '마운트 생성' : 'Create Mount'}
+              {t('pathAccess.createMount')}
             </Button>
           </div>
         </div>

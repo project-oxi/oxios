@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RFC-049: real turn cancellation** — `TurnRegistry` binds each in-flight
+  turn key to its agent `AgentId`; the gateway's dispatch task `select!`s on
+  cancellation, the WS `cancel` frame aborts the backend turn (killing the
+  agent so the provider request actually stops), and cancelled turns render
+  as an *interrupted* notice instead of an error. Client-side turn watchdog
+  prevents a hung provider from spinning forever. Streaming contract
+  documented in `docs/rfc-049-turn-cancellation.md`.
+- **Sub-agent forks in the chat timeline** — agent lifecycle events carry
+  their turn's `session_id`; fork/join events render as `SubAgentBlock`s
+  inside the owning turn.
+- **Branch a conversation and rate assistant answers** — message context
+  menu can fork the turn; assistant answers carry a 👍/👎 reactions bar.
+- **Session loading skeleton** — shimmer rows while a session loads, with
+  surfaced load failures and retry instead of a silent empty chat.
+- **Artifact panel** — dialog semantics + focus trap; collision-free
+  artifact identity (`messageId::type::ordinal::title`); full version
+  history with active-version diffing.
 - **oxibrain is now a first-party managed dependency (RFC-047)** — the
   kernel's `BrainSupervisor` installs, starts, watches, and stops the daemon
   instead of assuming it runs. Boot auto-installs from GitHub Releases
@@ -24,6 +41,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state (installing/starting/failed) alongside daemon health.
 
 ### Fixed
+- **Stop button did nothing** — it only dropped the WS connection and
+  reconnected, leaving the backend turn running and replaying its terminal
+  "cancelled" message while the provider kept billing. Now a real
+  server-side cancellation (RFC-049, see Added).
+- **Truncated answers looked clean** — the terminal `error` chunk after an
+  abort rendered as a normal assistant message. Cancelled turns now show an
+  explicit interrupted notice.
+- **Tokens dropped on socket close** — a mid-stream disconnect discarded
+  buffered partials; the close handler now flushes them and error-kind
+  narrowing matches the gateway's snake_case wire.
+- **Dead streaming paths removed** — the never-emitted `phase` chunk path
+  and the pre-BlockStream activity renderer are deleted; the turn text
+  tracker resets on turn start so a new turn can't suppress its own text.
+- **Streaming markdown healed** — partial GFM tables and unterminated
+  inline markers are closed while streaming (`healStreamingMarkdown`), so
+  tables snap into shape instead of rendering mangled until the turn ends.
+- **Syntax highlighting followed the OS theme** — highlight tokens now use
+  the app theme; long code blocks collapse with keyboard-reachable copy.
+- **Artifact identity collisions** — untitled same-type artifacts in one
+  message collapsed into one panel entry; ordinals are stamped at parse
+  time (`rehypeStampArtifactOrdinal`) so identity is stable across
+  streaming re-renders.
+- **Whole-store re-renders on every chat keystroke** — chat store
+  subscriptions scoped to used fields; scroll state only committed when the
+  at-bottom flag flips; settled markdown prefixes memoized (only the live
+  tail re-parses).
+- **Every chat string hardcoded English** — routed through i18n (en/ko);
+  one shared relative-time util replaces two divergent copies; raw colors
+  and `dark:` variants replaced with design tokens.
 - **Telegram/CLI token-spam on streaming turns** — the gateway's
   streaming-sink collector spawned for *every* channel, so each LLM
   delta (reasoning fragments, answer tokens, empty stream markers)

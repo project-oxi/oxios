@@ -104,7 +104,7 @@ function ImagePreview({ url }: { url: string }) {
         className="h-full w-full object-cover transition-opacity"
         style={{ opacity: loaded ? 1 : 0 }}
       />
-      <span className="absolute bottom-1 right-1 rounded bg-black/60 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100">
+      <span className="absolute bottom-1 right-1 rounded bg-scrim p-1 text-scrim-foreground opacity-0 transition-opacity group-hover:opacity-100">
         <Download className="h-3 w-3" />
       </span>
     </a>

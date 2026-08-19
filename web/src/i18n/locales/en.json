@@ -17,7 +17,7 @@
   "portal": {
     "back": "Back",
     "close": "Close",
-    "threadCreating": "Creating thread…",
+    "panelLabel": "Side panel",
     "threadFrom": "Thread from",
     "threadEmpty": "(no messages yet)",
     "createThread": "Create thread from this message",
@@ -254,6 +254,10 @@
     "startConversationHint": "Send a message to start a conversation.",
     "thinking": "Thinking...",
     "thought": "Thought",
+    "subagent": "Sub-agent: {{name}}",
+    "branchHere": "Branch from here",
+    "rateUp": "Good response",
+    "rateDown": "Bad response",
     "inputPlaceholder": "Type a message...",
     "mentionHint": "Search knowledge, memory, mounts with @ — type to filter",
     "noMentionResults": "No matching items",
@@ -358,6 +362,10 @@
       "timelineHeader": "{{count}} activities",
       "toolCallCount": "{{count}} tool calls"
     },
+    "code": {
+      "expand": "Show all {{count}} lines",
+      "collapse": "Collapse"
+    },
     "liveActivity": {
       "thinking": "Thinking...",
       "working": "Working",
@@ -396,6 +404,7 @@
     "roleYou": "You",
     "interviewTitle": "Interview",
     "retry": "Retry",
+    "sessionLoadFailed": "Could not load this conversation",
     "scrollToBottom": "Scroll to bottom",
     "regenerate": "Regenerate",
     "compressedCollapsed": "{{count}} earlier messages (click to expand)",
@@ -417,11 +426,44 @@
     "compression.digest.assistantMessages": "{{count}} assistant",
     "compression.digest.toolCalls": "{{count}} tool calls",
     "error": {
-      "quotaExceeded": "The selected provider has no remaining tokens.",
-      "authFailed": "Provider authentication failed.",
-      "noRoute": "No routable provider available.",
-      "generateFailed": "Failed to generate a response."
+      "executionFailed": {
+        "title": "Execution failed",
+        "hint": "The tool call or command failed. Check the previous activity for details."
+      },
+      "apiKeyMissing": {
+        "title": "API key missing",
+        "hint": "Add the provider's API key in Settings → Providers to enable this model."
+      },
+      "providerError": {
+        "title": "Provider error",
+        "hint": "The model provider returned an error. Try again, or pick a different model."
+      },
+      "timeout": {
+        "title": "No response",
+        "hint": "The model stopped responding. The turn was cancelled — try again or switch models."
+      },
+      "permissionDenied": {
+        "title": "Permission denied",
+        "hint": "The current API key is not authorized for this model or endpoint."
+      },
+      "validationError": {
+        "title": "Invalid request",
+        "hint": "The request was rejected before reaching the model. Adjust the message and try again."
+      },
+      "internal": {
+        "title": "Internal error",
+        "hint": "Something went wrong on our side. Try again — if it persists, check the logs."
+      },
+      "cancelled": {
+        "title": "Turn cancelled",
+        "hint": "The turn was cancelled — the partial answer is still visible above."
+      },
+      "unknown": {
+        "title": "Something went wrong",
+        "hint": "An unexpected error occurred. Try again."
+      }
     },
+    "connectionLost": "Connection lost — response may be incomplete",
     "manageProjects": "Project management",
     "manageMounts": "Mount management",
     "noSessionsInProject": "No conversations",
@@ -430,6 +472,7 @@
     "sessionMoveFailed": "Move failed",
     "sessionMoved": "Session moved",
     "stop": "Stop",
+    "interrupted": "Stopped by you",
     "queue": "Queue",
     "queued": "{{count}} queued",
     "unfiled": "Unfiled",
@@ -477,7 +520,8 @@
       "newline": "new line",
       "mountBound": "Bound to this session"
     },
-    "knowledgeOpen": "View document"
+    "knowledgeOpen": "View document",
+    "dropToAttach": "Drop files to attach"
   },
   "commandPalette": {
     "placeholder": "Search commands or type a memo…",
@@ -2347,6 +2391,11 @@
     "dependencyGraph": "Dependency graph"
   },
   "search": {
+    "sources": "{{count}} source",
+    "sources_plural": "{{count}} sources",
+    "results": "Search results",
+    "images": "{{count}} image",
+    "images_plural": "{{count}} images",
     "panel": {
       "placeholder": "Search the web…",
       "agentResults": "Agent search results",
@@ -2362,6 +2411,56 @@
       "knowledgeNoResults": "No notes matching '{{query}}'",
       "openInKnowledge": "Open in Knowledge"
     }
+  },
+  "mention": {
+    "mount": "Mount",
+    "knowledge": "Knowledge",
+    "agent": "Agent",
+    "memory": "Memory",
+    "searchPlaceholder": "Type to search…",
+    "noResults": "No results"
+  },
+  "slash": {
+    "compact": {
+      "description": "Summarize the conversation to save context"
+    },
+    "new-topic": {
+      "description": "Start a new topic branch"
+    },
+    "clear": {
+      "description": "Clear the current input"
+    },
+    "search-on": {
+      "description": "Toggle web search for this message"
+    },
+    "web": {
+      "description": "Fetch a URL and use it as context"
+    },
+    "skill": {
+      "description": "Invoke a skill by name"
+    },
+    "persona": {
+      "description": "Switch active persona"
+    },
+    "save": {
+      "description": "Save the current response to knowledge base"
+    },
+    "export": {
+      "description": "Export the conversation"
+    }
+  },
+  "pathAccess": {
+    "title": "Path Access",
+    "prompt": "The {{toolName}} tool wants to access this path. Choose how to proceed.",
+    "deny": "Deny",
+    "allowOnce": "Allow once",
+    "createMount": "Create Mount"
+  },
+  "approvalMode": {
+    "buttonLabel": "Approval mode",
+    "manual": "Manual approval",
+    "allowList": "Allow list",
+    "autoRun": "Auto-run"
   },
   "auth": {
     "title": "Sign in to Oxios",

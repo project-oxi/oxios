@@ -178,6 +178,7 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
       role: 'assistant',
       content: '',
       timestamp: now,
+      blocks: [],
     }
     const baseMessages = [...messages, userMsg, assistantMsg]
     set({ messages: baseMessages, isStreaming: true, pendingModel: null })

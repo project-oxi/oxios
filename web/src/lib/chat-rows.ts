@@ -21,6 +21,9 @@ export type ChatRow =
   | { kind: 'interview' }
   | { kind: 'tool-approval' }
   | { kind: 'path-access' }
+  /** Loading shimmer placeholder (Task 10) — emitted while a session history
+   *  fetch is in flight and no messages have arrived yet. */
+  | { kind: 'skeleton' }
 
 export interface BuildChatRowsOptions {
   messages: ChatMessage[]
@@ -35,13 +38,23 @@ export interface BuildChatRowsOptions {
   hasPathAccess: boolean
   /** LLM compression summary for the session (null = not generated yet). */
   compression: CompressionInfo | null
+  /** True while a session history fetch is in flight (Task 10). When true and
+   *  `messages` is empty, the row list collapses to a single `skeleton` row so
+   *  the UI can render its shimmer placeholder instead of an empty pane. */
+  isLoadingSession?: boolean
 }
 
 export function buildChatRows(opts: BuildChatRowsOptions): ChatRow[] {
   const { messages, expanded, collapseThreshold, visibleTail, compression } = opts
   const hasCard = opts.hasInterview || opts.hasToolApproval || opts.hasPathAccess
 
-  if (messages.length === 0 && !hasCard) return [{ kind: 'empty' }]
+  // Task 10: while the session history fetch is in flight and nothing has
+  // arrived yet, show the shimmer skeleton instead of the "empty" hint. Once
+  // any message lands (or the fetch fails), the normal empty/message path
+  // takes over.
+  if (messages.length === 0 && !hasCard) {
+    return opts.isLoadingSession ? [{ kind: 'skeleton' }] : [{ kind: 'empty' }]
+  }
 
   const rows: ChatRow[] = []
   const collapseCount = messages.length > collapseThreshold ? messages.length - visibleTail : 0

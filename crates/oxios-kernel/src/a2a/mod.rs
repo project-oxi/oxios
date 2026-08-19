@@ -338,6 +338,7 @@ impl AgentCardRegistry {
         self.event_bus.publish(KernelEvent::AgentCreated {
             id: agent_id,
             name: card.name.clone(),
+            session_id: None,
         })?;
 
         tracing::info!(agent_id = %agent_id, name = %card.name, "Agent registered in A2A registry");
@@ -354,6 +355,7 @@ impl AgentCardRegistry {
             self.event_bus.publish(KernelEvent::AgentStopped {
                 id: agent_id,
                 success: false,
+                session_id: None,
             })?;
         }
         Ok(())

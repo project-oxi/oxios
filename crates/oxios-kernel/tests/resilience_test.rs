@@ -142,6 +142,7 @@ fn build_parts(
         vec![],
         false,
         tmp.path().to_str().unwrap().to_string(),
+        Arc::new(oxios_kernel::turn_registry::TurnRegistry::new()),
     );
     let routing_stats = Arc::new(RoutingStats::new());
     (supervisor, lifecycle, routing_stats)

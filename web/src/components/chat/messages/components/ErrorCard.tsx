@@ -3,8 +3,14 @@
 // LobeHub analogue: Conversation/Messages/Error/.
 // Replaces ChatItem's ErrorBlock for assistant-role errors that benefit from
 // richer presentation (retry button, errorKind-specific copy + suggestion).
+//
+// All copy is i18n-driven. The lookup table maps every backend `errorKind`
+// (snake_case, from KNOWN_ERROR_KINDS in src/types/chat.ts) to a locale
+// key under `chat.error.<key>.title` / `.hint`. An unknown kind falls back
+// to the `chat.error.unknown` entry rather than a hardcoded English string.
 
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import type { ChatError } from '@/types/chat'
 
@@ -14,34 +20,28 @@ interface ErrorCardProps {
   className?: string
 }
 
-interface KindCopy {
-  title: string
-  hint?: string
+/** Map backend `errorKind` (snake_case wire format) to an i18n key stem.
+ *  Unknown backend kinds fall through to the `'unknown'` stem. The map
+ *  covers every entry in KNOWN_ERROR_KINDS so renaming a variant on the
+ *  wire becomes a build-time miss instead of a silent fallback. */
+const KIND_KEYS: Record<string, string> = {
+  execution_failed: 'executionFailed',
+  api_key_missing: 'apiKeyMissing',
+  provider_error: 'providerError',
+  timeout: 'timeout',
+  permission_denied: 'permissionDenied',
+  validation_error: 'validationError',
+  cancelled: 'cancelled',
+  internal: 'internal',
+  unknown: 'unknown',
 }
-
-const KIND_COPY: Record<string, KindCopy> = {
-  quota_exceeded: {
-    title: 'Quota exceeded',
-    hint: 'Provider rate limit or monthly quota hit. Try a different model or wait for reset.',
-  },
-  auth: {
-    title: 'Authentication failed',
-    hint: 'Check the provider API key in Settings → Providers.',
-  },
-  routing: {
-    title: 'Routing failed',
-    hint: 'No provider available for this model. Check provider config.',
-  },
-  unknown: {
-    title: 'Something went wrong',
-  },
-}
-
-const FALLBACK_COPY: KindCopy = { title: 'Something went wrong' }
 
 export function ErrorCard({ error, onRetry, className }: ErrorCardProps) {
-  const kind = (error.category ?? error.type ?? 'unknown') as string
-  const copy: KindCopy = KIND_COPY[kind] ?? FALLBACK_COPY
+  const { t } = useTranslation()
+  const rawKind = (error.category ?? error.type ?? 'unknown') as string
+  const key = KIND_KEYS[rawKind] ?? 'unknown'
+  const title = t(`chat.error.${key}.title`)
+  const hint = t(`chat.error.${key}.hint`, { defaultValue: '' })
   const severity = error.severity ?? 'error'
   const isCritical = severity === 'critical'
 
@@ -58,9 +58,9 @@ export function ErrorCard({ error, onRetry, className }: ErrorCardProps) {
     >
       <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="font-medium">{copy.title}</div>
+        <div className="font-medium">{title}</div>
         {error.message && <div className="text-xs mt-0.5 opacity-90">{error.message}</div>}
-        {copy.hint && <div className="text-xs mt-1 opacity-75 italic">{copy.hint}</div>}
+        {hint && <div className="text-xs mt-1 opacity-75 italic">{hint}</div>}
       </div>
       {onRetry && (
         <button
@@ -69,7 +69,7 @@ export function ErrorCard({ error, onRetry, className }: ErrorCardProps) {
           className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity shrink-0"
         >
           <RefreshCw className="w-3 h-3" />
-          Retry
+          {t('chat.retry')}
         </button>
       )}
     </div>

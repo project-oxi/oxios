@@ -31,8 +31,7 @@ pub struct AgentLifecycleManager {
     network_access: bool,
     /// Workspace path for path sandbox.
     workspace_path: String,
-    /// Workspace path for path sandbox.
-    workspace_path: String,
+
     /// RFC-049: shared turn registry, used to bind forks to their turn key.
     turns: Arc<crate::turn_registry::TurnRegistry>,
 }
@@ -51,6 +50,7 @@ impl Clone for AgentLifecycleManager {
             allowed_tools: self.allowed_tools.clone(),
             network_access: self.network_access,
             workspace_path: self.workspace_path.clone(),
+            turns: self.turns.clone(),
         }
     }
 }
@@ -67,6 +67,7 @@ impl AgentLifecycleManager {
         allowed_tools: Vec<String>,
         network_access: bool,
         workspace_path: String,
+        turns: Arc<crate::turn_registry::TurnRegistry>,
     ) -> Self {
         Self {
             supervisor,
@@ -77,6 +78,7 @@ impl AgentLifecycleManager {
             allowed_tools,
             network_access,
             workspace_path,
+            turns,
         }
     }
 
@@ -99,6 +101,28 @@ impl AgentLifecycleManager {
     ) -> Result<ExecutionResult> {
         // 1. Fork
         let agent_id = self.supervisor.fork_directive(directive, env).await?;
+        // RFC-049: bind the fork to its turn so a WS `cancel` can kill the
+        // agent, not just drop the gateway future. `env.session_id` is the
+        // gateway's turn key (orchestrator.rs sets it from ctx.session_id).
+        // If a cancel landed during the fork, `bind_agent` returns true and
+        // we kill the just-forked agent — otherwise the supervisor-spawned
+        // task keeps burning tokens while the gateway has already torn down
+        // its dispatch future.
+        if let Some(key) = env.session_id.as_deref() {
+            let cancelled_during_fork = self.turns.bind_agent(key, agent_id);
+            if cancelled_during_fork {
+                if let Err(e) = self.supervisor.kill(agent_id).await {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        error = %e,
+                        "Failed to kill agent whose turn was cancelled during fork"
+                    );
+                }
+                get_metrics().agents_forked.inc();
+                self.cleanup(agent_id, &ExecutionResult::default()).await;
+                bail!("turn cancelled during fork");
+            }
+        }
         let agent_name = format!("agent-{agent_id}");
         tracing::info!(agent_id = %agent_id, "Agent forked from directive");
 
@@ -211,6 +235,7 @@ impl AgentLifecycleManager {
         let _ = self.event_bus.publish(KernelEvent::AgentStopped {
             id: agent_id,
             success: false,
+            session_id: None,
         });
         Ok(())
     }

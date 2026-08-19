@@ -2,6 +2,7 @@
 
 import { Pencil, Trash2 } from 'lucide-react'
 import { memo, useCallback, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChatItem } from '@/components/chat/chat-item'
 import { useChatStore } from '@/stores/chat'
 import type { ChatMessage } from '@/types'
@@ -13,6 +14,7 @@ interface UserMessageProps {
 }
 
 function UserMessageImpl({ message }: UserMessageProps) {
+  const { t } = useTranslation()
   const { removeMessage, sendMessage } = useChatStore()
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -35,11 +37,16 @@ function UserMessageImpl({ message }: UserMessageProps) {
   }, [message.id, removeMessage])
 
   const actions: MessageAction[] = [
-    { id: 'edit', icon: <Pencil className="w-3 h-3" />, label: 'Edit', onClick: startEdit },
+    {
+      id: 'edit',
+      icon: <Pencil className="w-3 h-3" />,
+      label: t('common.edit'),
+      onClick: startEdit,
+    },
     {
       id: 'delete',
       icon: <Trash2 className="w-3 h-3" />,
-      label: 'Delete',
+      label: t('common.delete'),
       onClick: handleDelete,
       danger: true,
     },

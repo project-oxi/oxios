@@ -29,6 +29,8 @@ export type ArtifactSource = 'language' | 'tag'
 export interface ArtifactMeta {
   /** Owning chat message id (for streaming/live-content coordination). */
   messageId: string
+  /** Owning block id (scopes identity to a MarkdownMessage instance). */
+  blockId?: string
   /** Render category. */
   type: ArtifactType
   /** Human title (from tag attr or a leading comment line). */
@@ -37,10 +39,10 @@ export interface ArtifactMeta {
   language?: string
   /** Detection path. */
   source: ArtifactSource
-  /** Zero-based index of this artifact within its owning message. Assigned
-   *  by `ArtifactCard` from a per-message counter in `ArtifactContext`, so
-   *  two untitled artifacts of the same type in one message get distinct
-   *  identity keys (and therefore distinct panel entries). */
+  /** Zero-based document-order index of this artifact within its block,
+   *  stamped by `rehypeStampArtifactOrdinal` at parse time. Combined with
+   *  `blockId` this gives collision-free identity keys — two untitled
+   *  artifacts of the same type in one message get distinct panel entries. */
   ordinal: number
 }
 

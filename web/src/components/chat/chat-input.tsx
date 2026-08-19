@@ -81,7 +81,6 @@ interface ChatInputProps {
 interface SlashCommand {
   id: string
   label: string
-  description: string
   icon: string
   action: (editor: ReturnType<typeof useEditor>) => void
 }
@@ -91,21 +90,18 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'compact',
     label: '/compact',
-    description: 'Summarize the conversation to save context',
     icon: '📝',
     action: (ed) => ed?.commands.insertContent('/compact '),
   },
   {
     id: 'new-topic',
     label: '/new-topic',
-    description: 'Start a new topic branch',
     icon: '🆕',
     action: (ed) => ed?.commands.insertContent('/new-topic '),
   },
   {
     id: 'clear',
     label: '/clear',
-    description: 'Clear the current input',
     icon: '🗑️',
     action: (ed) => ed?.commands.clearContent(),
   },
@@ -113,14 +109,12 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'search-on',
     label: '/search',
-    description: 'Toggle web search for this message',
     icon: '🌐',
     action: (ed) => ed?.commands.insertContent('/search '),
   },
   {
     id: 'web',
     label: '/web',
-    description: 'Fetch a URL and use it as context',
     icon: '🔗',
     action: (ed) => ed?.commands.insertContent('/web '),
   },
@@ -128,14 +122,12 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'skill',
     label: '/skill',
-    description: 'Invoke a skill by name',
     icon: '⚡',
     action: (ed) => ed?.commands.insertContent('/skill '),
   },
   {
     id: 'persona',
     label: '/persona',
-    description: 'Switch active persona',
     icon: '🎭',
     action: (ed) => ed?.commands.insertContent('/persona '),
   },
@@ -143,14 +135,12 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'save',
     label: '/save',
-    description: 'Save the current response to knowledge base',
     icon: '📌',
     action: (ed) => ed?.commands.insertContent('/save '),
   },
   {
     id: 'export',
     label: '/export',
-    description: 'Export the conversation',
     icon: '📤',
     action: (ed) => ed?.commands.insertContent('/export '),
   },
@@ -704,18 +694,18 @@ export function ChatInput({
                   </div>
                   <span className="text-2xs text-muted-foreground/60 shrink-0 mt-0.5">
                     {result.type === 'mount'
-                      ? 'Mount'
+                      ? t('mention.mount')
                       : result.type === 'knowledge'
-                        ? 'KB'
+                        ? t('mention.knowledge')
                         : result.type === 'role'
-                          ? 'Agent'
-                          : 'Memory'}
+                          ? t('mention.agent')
+                          : t('mention.memory')}
                   </span>
                 </button>
               ))
             ) : (
               <p className="px-2.5 py-3 text-xs text-muted-foreground text-center">
-                {mentionQuery === '' ? 'Type to search...' : 'No results'}
+                {mentionQuery === '' ? t('mention.searchPlaceholder') : t('mention.noResults')}
               </p>
             )}
           </div>
@@ -738,7 +728,9 @@ export function ChatInput({
                 <span className="text-sm">{cmd.icon}</span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{cmd.label}</p>
-                  <p className="text-xs text-muted-foreground">{cmd.description}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t(`slash.${cmd.id}.description`)}
+                  </p>
                 </div>
               </button>
             ))}
@@ -761,7 +753,7 @@ export function ChatInput({
       >
         {isDragOver && (
           <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary/5 backdrop-blur-[1px] pointer-events-none">
-            <span className="text-sm text-primary font-medium">Drop files to attach</span>
+            <span className="text-sm text-primary font-medium">{t('chat.dropToAttach')}</span>
           </div>
         )}
         {historyPopup && (
@@ -786,7 +778,7 @@ export function ChatInput({
         <div className="px-4 pt-3 pb-2.5">
           <EditorContent
             editor={editor}
-            className="prose prose-sm dark:prose-invert max-w-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[1.5em] [&_.ProseMirror]:max-h-[280px] [&_.ProseMirror]:overflow-y-auto [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground/70 [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0"
+            className="prose prose-sm max-w-none [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[1.5em] [&_.ProseMirror]:max-h-[280px] [&_.ProseMirror]:overflow-y-auto [&_.ProseMirror_p.is-editor-empty:first-child::before]:text-muted-foreground/70 [&_.ProseMirror_p.is-editor-empty:first-child::before]:content-[attr(data-placeholder)] [&_.ProseMirror_p.is-editor-empty:first-child::before]:float-left [&_.ProseMirror_p.is-editor-empty:first-child::before]:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child::before]:h-0"
           />
         </div>
         <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-1">

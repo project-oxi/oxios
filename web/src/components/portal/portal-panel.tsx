@@ -11,6 +11,7 @@ import { ArrowLeft, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { useFocusTrap } from '@/hooks/use-focus-trap'
 import { cn } from '@/lib/utils'
 import { type PortalView, usePortalStore } from '@/stores/portal'
 import { ArtifactView } from './views/artifact-view'
@@ -140,12 +141,21 @@ interface PortalPanelProps {
 }
 
 export function PortalPanel({ className }: PortalPanelProps) {
+  const { t } = useTranslation()
   const stack = usePortalStore((s) => s.stack)
+  const clearStack = usePortalStore((s) => s.clearStack)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(panelRef, stack.length > 0, clearStack)
   const { width, onPointerDown } = useResizableWidth()
   if (stack.length === 0) return null
 
   return (
     <div
+      ref={panelRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('portal.panelLabel')}
+      tabIndex={-1}
       className={cn('relative flex h-full flex-col border-l bg-background', className)}
       style={{ width }}
     >

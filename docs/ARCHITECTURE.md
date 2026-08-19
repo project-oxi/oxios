@@ -1597,6 +1597,68 @@ Instead of crate splitting, the kernel manages complexity through:
 
 ---
 
+## 11. Chat Streaming Contract
+
+The chat WebSocket (RFC-015 transparency over the RFC-024 reliability
+channel) is the single live path for turn progress. This section pins the
+boundaries that implementers keep tripping over. See
+`docs/rfc-049-turn-cancellation.md` for the cancellation half.
+
+### Turn identity (D1)
+
+One turn key — `session_id`, or `request_id` for a session's first message —
+is shared by `StreamingSinkRegistry`, `TurnRegistry`, and
+`ExecEnv.session_id`. Never introduce a second identifier for a turn.
+
+### WS chunk table
+
+| type | seq | partial | content | source |
+|---|---|---|---|---|
+| `token` (delta) | — | yes | text fragment | `StreamDelta::Text` collector |
+| `token` (terminal) | yes | no | full response text (suppressed when partials delivered this turn) | terminal `OutgoingMessage` |
+| `reasoning.start` / `reasoning.end` | — | yes | lifecycle markers | collector |
+| `reasoning` (delta) | — | yes | thinking fragment | `StreamDelta::ThinkingDelta` |
+| `model` | — | no | one-shot model announcement | `StreamDelta::Model` |
+| `tool_start` / `tool_end` / `tool_progress` / `tool_call_delta` | — | no | tool call lifecycle | `KernelEvent` → chat.rs |
+| `memory` | — | no | recall/store transparency | `KernelEvent` → chat.rs |
+| `usage` | — | no | cumulative token usage | `KernelEvent` → chat.rs |
+| `grounding` | — | no | web-search citations | `KernelEvent` → chat.rs |
+| `agent_start` / `agent_end` | — | no | sub-agent fork timeline | `KernelEvent` → chat.rs |
+| `compression_delta` / `compression_done` / `compression_failed` | — | no | context compaction | `KernelEvent` → chat.rs |
+| `interview` / `tool_approval` / `path_access` | — | no | interactive features | passthrough raw chunk |
+| `done` / `error` | yes | no | terminal — seq'd, replayed on reconnect | terminal `OutgoingMessage` |
+
+Partials carry no `seq` and are absent from the replay buffer: FIFO order
+comes from the mpsc, each frame has a unique `Uuid` for the frontend's
+seen-id ring, and reconnect recovery uses the terminal instead.
+
+### The phase decision (D3)
+
+There is no multi-phase lifecycle to visualize. Post-RFC-027 the Ouroboros
+phase is a plain `String` and the only literal ever assigned is `"execute"`.
+`phase` and `evaluation_passed` live purely as fields on the `done` chunk,
+rendered by `chat-metadata.tsx`. Do not re-add a standalone phase streaming
+path — it would be UI for state that does not exist.
+
+### The replay-gap decision (D5)
+
+Partial deltas skip `assign_seq` so they are absent from the 512-entry replay
+buffer. A mid-stream reconnect therefore recovers the terminal full-text
+message rather than resuming token flow. This is intentional: the terminal
+carries complete text, and buffering partials would multiply the buffer's
+memory by the token count. **Do not** assign seq to partials "for
+robustness" — it re-breaks the reconnect merge.
+
+### The SSE/WS overlap (D6)
+
+Both `/api/events` (SSE) and the chat WS carry `KernelEvent`s. SSE is the
+global dashboard feed (every agent, every session); the WS is per-turn chat
+transparency filtered to the active session. Consumers dedupe by context —
+SSE never drives the chat timeline and the WS never drives the dashboard.
+This overlap is legitimate; do not merge the two surfaces.
+
+---
+
 ## Appendix: Quick Reference
 
 ### Key File Locations

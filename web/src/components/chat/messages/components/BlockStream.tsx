@@ -21,6 +21,7 @@ import { MarkdownMessage } from '@/components/chat/markdown-message'
 import { Thinking } from '@/components/chat/thinking'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import type { ChatBlock, ChatToolPayload } from '@/types'
+import { SubAgentBlock } from './SubAgentBlock'
 import { ToolCallCard } from './ToolCallList'
 
 interface BlockStreamProps {
@@ -58,6 +59,7 @@ function isBlockStreaming(b: ChatBlock): boolean {
   if (b.type === 'reasoning') return b.status === 'streaming'
   if (b.type === 'tool') return b.status === 'loading'
   if (b.type === 'text') return !!b.streaming
+  if (b.type === 'subagent') return b.status === 'running'
   return false
 }
 
@@ -107,6 +109,7 @@ export const BlockStream = memo(function BlockStream({
           node = (
             <Thinking
               messageId={messageId}
+              blockId={b.id}
               content={b.text}
               thinking={b.status === 'streaming'}
               duration={b.status === 'streaming' ? Date.now() - b.startedAt : b.durationMs}
@@ -116,7 +119,12 @@ export const BlockStream = memo(function BlockStream({
           node = renderToolBlock(b, showDiffViewer)
         } else if (b.type === 'text') {
           node = (
-            <MarkdownMessage key={b.id} messageId={messageId} isStreaming={!!b.streaming}>
+            <MarkdownMessage
+              key={b.id}
+              messageId={messageId}
+              blockId={b.id}
+              isStreaming={!!b.streaming}
+            >
               {b.text}
             </MarkdownMessage>
           )
@@ -134,6 +142,8 @@ export const BlockStream = memo(function BlockStream({
                 : `Memory recall${b.query ? `: ${b.query}` : ''}${b.count != null ? ` (${b.count})` : ''}`}
             </div>
           )
+        } else if (b.type === 'subagent') {
+          node = <SubAgentBlock block={b} />
         }
         // Non-visual blocks (usage) render nothing in-timeline — bail before
         // the wrapper so they don't add a spurious gap at the turn's tail.

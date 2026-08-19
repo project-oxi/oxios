@@ -104,6 +104,14 @@ export function MessageContextMenu({ message, onRetry, children }: MessageContex
           />
           <ContextItem
             icon={GitBranch}
+            label={t('chat.branchHere')}
+            onClick={() => {
+              useChatStore.getState().branchFrom(message.id)
+              close()
+            }}
+          />
+          <ContextItem
+            icon={GitBranch}
             label={t('portal.createThread')}
             onClick={() => {
               usePortalStore

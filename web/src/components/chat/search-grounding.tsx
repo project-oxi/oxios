@@ -6,6 +6,7 @@
 
 import { ChevronDown, Globe, Image } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 // ── Types ──
@@ -39,6 +40,7 @@ interface SearchGroundingProps {
 }
 
 export function SearchGrounding({ search, className }: SearchGroundingProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(true)
   const hasCitations = search.citations && search.citations.length > 0
   const hasImages = search.imageResults && search.imageResults.length > 0
@@ -56,8 +58,8 @@ export function SearchGrounding({ search, className }: SearchGroundingProps) {
         <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <span className="font-medium text-muted-foreground">
           {hasCitations
-            ? `${search.citations!.length} source${search.citations!.length > 1 ? 's' : ''}`
-            : 'Search results'}
+            ? t('search.sources', { count: search.citations!.length })
+            : t('search.results')}
         </span>
         {search.searchQueries && search.searchQueries.length > 0 && (
           <span className="text-xs text-muted-foreground/60 ml-2 truncate">
@@ -126,7 +128,7 @@ export function SearchGrounding({ search, className }: SearchGroundingProps) {
               <div className="flex items-center gap-1.5 mb-1.5">
                 <Image className="w-3.5 h-3.5 text-muted-foreground" />
                 <span className="text-xs font-medium text-muted-foreground">
-                  {search.imageResults!.length} image{search.imageResults!.length > 1 ? 's' : ''}
+                  {t('search.images', { count: search.imageResults!.length })}
                 </span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
@@ -151,7 +153,7 @@ export function SearchGrounding({ search, className }: SearchGroundingProps) {
                       </div>
                     )}
                     {img.domain && (
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[9px] text-white truncate opacity-0 group-hover/img:opacity-100 transition-opacity">
+                      <div className="absolute bottom-0 left-0 right-0 bg-scrim px-1 py-0.5 text-[9px] text-scrim-foreground truncate opacity-0 group-hover/img:opacity-100 transition-opacity">
                         {img.domain}
                       </div>
                     )}

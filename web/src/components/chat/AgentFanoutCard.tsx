@@ -12,6 +12,8 @@
 // at a glance which agents are still alive.
 
 import { CircleAlert, GitBranch, Loader2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { formatRelativeTime } from '@/lib/relative-time'
 import { cn } from '@/lib/utils'
 
 export type AgentFanoutStatus = 'working' | 'done' | 'failed'
@@ -31,22 +33,6 @@ export interface AgentFanoutCardProps {
   updatedAt?: number
   /** Optional click handler — wire up to "open agent detail" later. */
   onSelect?: (agentId: string) => void
-}
-
-/** Relative time string ("just now", "12s ago", "3m ago"). */
-function timeAgo(ts: number | undefined): string {
-  if (ts == null || !Number.isFinite(ts)) return ''
-  const deltaMs = Date.now() - ts
-  if (deltaMs < 0) return ''
-  const sec = Math.floor(deltaMs / 1000)
-  if (sec < 5) return 'just now'
-  if (sec < 60) return `${sec}s ago`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.floor(hr / 24)
-  return `${day}d ago`
 }
 
 /** Color token + icon for each status. */
@@ -80,10 +66,14 @@ export function AgentFanoutCard({
   updatedAt,
   onSelect,
 }: AgentFanoutCardProps) {
+  const { t } = useTranslation()
   const pres = STATUS_PRESENTATION[status]
   const StatusIcon = pres.Icon
   const displayName = name ?? agentId.slice(0, 8)
-  const ago = timeAgo(updatedAt)
+  const ago =
+    updatedAt == null || !Number.isFinite(updatedAt)
+      ? ''
+      : formatRelativeTime(new Date(updatedAt).toISOString(), t)
 
   return (
     <button

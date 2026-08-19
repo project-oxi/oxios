@@ -255,6 +255,7 @@ impl Supervisor for BasicSupervisor {
             .publish(crate::event_bus::KernelEvent::AgentCreated {
                 id,
                 name: directive.goal.clone(),
+                session_id: env.session_id.clone(),
             });
 
         tracing::info!(agent_id = %id, "Forked new agent from directive");
@@ -276,7 +277,10 @@ impl Supervisor for BasicSupervisor {
 
         let _ = self
             .event_bus
-            .publish(crate::event_bus::KernelEvent::AgentStarted { id });
+            .publish(crate::event_bus::KernelEvent::AgentStarted {
+                id,
+                session_id: None,
+            });
         tracing::info!(agent_id = %id, "Agent execution started");
 
         Ok(())
@@ -302,7 +306,10 @@ impl Supervisor for BasicSupervisor {
 
         let _ = self
             .event_bus
-            .publish(crate::event_bus::KernelEvent::AgentStarted { id });
+            .publish(crate::event_bus::KernelEvent::AgentStarted {
+                id,
+                session_id: env.session_id.clone(),
+            });
 
         tracing::info!(agent_id = %id, "Running agent task from directive");
 
@@ -310,6 +317,7 @@ impl Supervisor for BasicSupervisor {
         let cancelled = Arc::new(AtomicBool::new(false));
         let runtime = Arc::clone(&self.runtime);
         let directive = directive.clone();
+        let session_id = env.session_id.clone();
         let env = env.clone();
 
         // Share the session context so RecallTiming persists across directives.
@@ -450,6 +458,7 @@ impl Supervisor for BasicSupervisor {
                     .publish(crate::event_bus::KernelEvent::AgentStopped {
                         id,
                         success: result.success,
+                        session_id: session_id.clone(),
                     });
                 self.update_agent_count();
 
@@ -475,6 +484,7 @@ impl Supervisor for BasicSupervisor {
                     .publish(crate::event_bus::KernelEvent::AgentFailed {
                         id,
                         error: e.to_string(),
+                        session_id: session_id.clone(),
                     });
                 self.update_agent_count();
 
@@ -536,7 +546,11 @@ impl Supervisor for BasicSupervisor {
 
         let _ = self
             .event_bus
-            .publish(crate::event_bus::KernelEvent::AgentStopped { id, success: false });
+            .publish(crate::event_bus::KernelEvent::AgentStopped {
+                id,
+                success: false,
+                session_id: None,
+            });
         self.update_agent_count();
 
         // Persist to agent history log (async, non-blocking)

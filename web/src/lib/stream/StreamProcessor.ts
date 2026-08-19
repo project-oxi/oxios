@@ -27,6 +27,7 @@ import type {
   CitationItem,
   GroundingSearch,
   ReasoningBlock,
+  SubAgentBlockData,
   TextBlock,
 } from '@/types/chat'
 import type { ChatEvent } from './ChatEvent'
@@ -244,6 +245,34 @@ export class StreamProcessor {
         })
         return { patch: {} }
       }
+
+      // Sub-agent forks: `agent_start` opens a block keyed by agent_id, the
+      // matching `agent_end` flips it to done/failed. Same shape as tool
+      // blocks — one block per fork, never a sibling per frame.
+      case 'subagent.start': {
+        this.closeReasoningBlock()
+        this.upsertSubAgentBlock({
+          type: 'subagent',
+          id: `a-${ev.agentId}`,
+          agentId: ev.agentId,
+          name: ev.name,
+          status: 'running',
+        })
+        return { patch: { isToolCallGenerating: true } }
+      }
+
+      case 'subagent.end': {
+        const i = this.blocks.findIndex((b) => b.type === 'subagent' && b.agentId === ev.agentId)
+        if (i < 0) return { patch: {} }
+        const cur = this.blocks[i]
+        if (cur && cur.type === 'subagent') {
+          this.blocks[i] = {
+            ...cur,
+            status: ev.success ? 'done' : 'failed',
+          }
+        }
+        return { patch: {} }
+      }
       // A turn can search several times; each chunk carries only that call's
       // hits. Accumulate and dedupe by url so later searches never erase
       // earlier citations.
@@ -265,9 +294,6 @@ export class StreamProcessor {
 
       case 'file_chunks':
         return { patch: { chunksList: ev.chunks } }
-
-      case 'phase':
-        return { patch: {} }
 
       case 'stream.stop':
         this.stopped = true
@@ -410,6 +436,13 @@ export class StreamProcessor {
     else this.blocks.push(block)
   }
 
+  /** Insert or replace the sub-agent block for `agentId`, preserving position. */
+  private upsertSubAgentBlock(block: SubAgentBlockData): void {
+    const i = this.blocks.findIndex((b) => b.type === 'subagent' && b.agentId === block.agentId)
+    if (i >= 0) this.blocks[i] = block
+    else this.blocks.push(block)
+  }
+
   /** Mark every open block as done (called on stream.stop). */
   private closeAllBlocks(): void {
     for (let i = 0; i < this.blocks.length; i++) {
@@ -418,6 +451,9 @@ export class StreamProcessor {
         this.blocks[i] = { ...b, streaming: false }
       } else if (b.type === 'reasoning' && b.status === 'streaming') {
         this.blocks[i] = { ...b, status: 'done', durationMs: Date.now() - b.startedAt }
+      } else if (b.type === 'subagent' && b.status === 'running') {
+        // Stream ended without an agent_end (cancelled turn) — close it.
+        this.blocks[i] = { ...b, status: 'done' }
       }
     }
   }

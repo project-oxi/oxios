@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import 'highlight.js/styles/github-dark.css';
+@import 'highlight.js/styles/github.css';
 /* Geist Mono — bundled via Fontsource (no runtime CDN dependency).
    Registered family name is 'Geist Mono Variable'. */
 @import '@fontsource-variable/geist-mono';
@@ -66,9 +66,19 @@
   --color-modified-row-bg: var(--modified-row-bg);
   /* Legacy status tokens */
   --color-success: var(--success);
+  /* Foreground for solid `bg-success` surfaces. `--color-success` existed
+     without a paired foreground, which is why two buttons hardcoded
+     `text-white`. Theme-specific value in :root/.dark (the success fill is
+     dark in light mode, light in dark mode). */
+  --color-success-foreground: var(--success-foreground);
   --color-success-subtle: var(--success-subtle);
   --color-success-muted: var(--success-muted);
   --color-success-subtle-border: var(--success-subtle-border);
+  /* Image/media scrim. Deliberately theme-INVARIANT: the scrim sits over
+     arbitrary user imagery, so it must stay dark with light text in both
+     themes. Tokenised rather than hardcoded so the value has one home. */
+  --color-scrim: oklch(0% 0 0 / 60%);
+  --color-scrim-foreground: oklch(100% 0 0);
   --color-warning: var(--warning);
   --color-warning-subtle: var(--warning-subtle);
   --color-warning-muted: var(--warning-muted);
@@ -290,6 +300,8 @@
   --ring: var(--color-focus-ring);
   /* Status aliases */
   --success: var(--color-status-success);
+  /* Solid success fill (L≈0.60) needs light text in light mode. */
+  --success-foreground: oklch(0.985 0 0);
   --warning: var(--color-status-warning);
   --error:   var(--color-status-error);
   --info:    var(--color-status-info);
@@ -408,6 +420,8 @@
 
   /* Status muted (dark) */
   --success-muted: oklch(0.723 0.219 149.579 / 0.15);
+  /* Solid success fill is LIGHT (L≈0.72) in dark mode — needs dark text. */
+  --success-foreground: oklch(0.15 0.02 265);
   --warning-muted: oklch(0.769 0.188 70.08 / 0.15);
   --error-muted:   oklch(0.704 0.191 22.216 / 0.15);
   --info-muted:    oklch(0.685 0.196 259 / 0.15);
@@ -648,4 +662,126 @@
   .thinking-shiny {
     animation: none;
   }
+}
+
+/* ============================================================================
+   highlight.js dark re-scope.
+   The package ships one flat theme per stylesheet. We load the light theme
+   globally (line 3) and re-scope the github-dark palette rules under `.dark`,
+   so code blocks follow the app theme instead of being permanently dark.
+
+   Approach: copy every COLOR rule from
+   `node_modules/highlight.js/styles/github-dark.css` and prefix each
+   selector with `.dark ` (each selector in multi-selector lists). `.dark
+   .hljs-…` is strictly more specific than the package's `.hljs-…`, so the
+   dark palette wins under `.dark` and the light palette wins elsewhere.
+   No `!important`, no cascade layers — one `.dark` trigger per DESIGN.md.
+   The hex literals live here in the token layer (index.css) only; DESIGN.md's
+   no-hex rule targets components.
+   ============================================================================ */
+.dark .hljs {
+  color: #c9d1d9;
+  background: #0d1117;
+}
+.dark .hljs-doctag,
+.dark .hljs-keyword,
+.dark .hljs-meta .hljs-keyword,
+.dark .hljs-template-tag,
+.dark .hljs-template-variable,
+.dark .hljs-type,
+.dark .hljs-variable.language_ {
+  /* prettylights-syntax-keyword */
+  color: #ff7b72;
+}
+.dark .hljs-title,
+.dark .hljs-title.class_,
+.dark .hljs-title.class_.inherited__,
+.dark .hljs-title.function_ {
+  /* prettylights-syntax-entity */
+  color: #d2a8ff;
+}
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-literal,
+.dark .hljs-meta,
+.dark .hljs-number,
+.dark .hljs-operator,
+.dark .hljs-variable,
+.dark .hljs-selector-attr,
+.dark .hljs-selector-class,
+.dark .hljs-selector-id {
+  /* prettylights-syntax-constant */
+  color: #79c0ff;
+}
+.dark .hljs-regexp,
+.dark .hljs-string,
+.dark .hljs-meta .hljs-string {
+  /* prettylights-syntax-string */
+  color: #a5d6ff;
+}
+.dark .hljs-built_in,
+.dark .hljs-symbol {
+  /* prettylights-syntax-variable */
+  color: #ffa657;
+}
+.dark .hljs-comment,
+.dark .hljs-code,
+.dark .hljs-formula {
+  /* prettylights-syntax-comment */
+  color: #8b949e;
+}
+.dark .hljs-name,
+.dark .hljs-quote,
+.dark .hljs-selector-tag,
+.dark .hljs-selector-pseudo {
+  /* prettylights-syntax-entity-tag */
+  color: #7ee787;
+}
+.dark .hljs-subst {
+  /* prettylights-syntax-storage-modifier-import */
+  color: #c9d1d9;
+}
+.dark .hljs-section {
+  /* prettylights-syntax-markup-heading */
+  color: #1f6feb;
+  font-weight: bold;
+}
+.dark .hljs-bullet {
+  /* prettylights-syntax-markup-list */
+  color: #f2cc60;
+}
+.dark .hljs-emphasis {
+  /* prettylights-syntax-markup-italic */
+  color: #c9d1d9;
+  font-style: italic;
+}
+.dark .hljs-strong {
+  /* prettylights-syntax-markup-bold */
+  color: #c9d1d9;
+  font-weight: bold;
+}
+.dark .hljs-addition {
+  /* prettylights-syntax-markup-inserted */
+  color: #aff5b4;
+  background-color: #033a16;
+}
+.dark .hljs-deletion {
+  /* prettylights-syntax-markup-deleted */
+  color: #ffdcd7;
+  background-color: #67060c;
+}
+
+/* ── Prose token bridge ────────────────────────────────────────────────
+   @tailwindcss/typography ships its own palette. Bind it to the oxi token
+   layer so `.dark` alone flips prose, with no per-component dark: variant. */
+.prose {
+  --tw-prose-body: var(--color-foreground);
+  --tw-prose-headings: var(--color-foreground);
+  --tw-prose-links: var(--color-primary);
+  --tw-prose-bold: var(--color-foreground);
+  --tw-prose-code: var(--color-foreground);
+  --tw-prose-quotes: var(--color-muted-foreground);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-th-borders: var(--color-border);
+  --tw-prose-td-borders: var(--color-border);
 }

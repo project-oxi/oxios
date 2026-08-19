@@ -36,7 +36,7 @@ export const HtmlRenderer = memo(function HtmlRenderer({ content }: HtmlRenderer
       title="artifact-html-preview"
       sandbox="allow-scripts allow-popups"
       srcDoc={srcDoc}
-      className="h-full w-full border-0 bg-white"
+      className="h-full w-full border-0 bg-background"
     />
   )
 })

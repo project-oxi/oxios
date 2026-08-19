@@ -545,3 +545,29 @@ keep_old_dist_gens = 1                # 이전 dist 보존 세대수
 - [ ] 메트릭 7종 추가
 - [ ] 통합 테스트 (C1~C4)
 - [ ] config 스키마 + 마이그레이션
+
+---
+
+## Addendum (2026-08-19): The partial-replay gap is intentional
+
+During the chat-UI defect remediation (design doc D5) the question "why are
+streaming partials missing from the replay buffer?" was audited. The answer is
+a deliberate boundary, now pinned so no future change re-breaks it:
+
+**Partials (`partial: true` — per-delta `token` fragments, `reasoning`
+deltas, `reasoning.start`/`reasoning.end` markers) skip `assign_seq`
+(`gateway.rs` collector) and are therefore absent from the 512-entry replay
+buffer.** A mid-stream reconnect recovers the terminal full-text message
+(`done`/`error`, seq'd, terminal `token`) rather than resuming token flow.
+
+This is correct because:
+
+- the terminal carries complete text — no data is lost on reconnect;
+- buffering partials would multiply the buffer's memory by the token count;
+- FIFO order during live streaming comes from the mpsc channel, and each
+  partial carries a unique `Uuid` for the frontend's seen-id ring, so live
+  ordering needs no seq.
+
+**Do not** assign seq to partials "for robustness" — the frontend re-merges
+replayed deltas into the assistant message, which would duplicate/garbled
+streamed text.

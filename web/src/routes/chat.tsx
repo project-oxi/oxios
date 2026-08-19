@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { ArrowDown, GitPullRequest, RefreshCw, Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type UIEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { VList, type VListHandle } from 'virtua'
+import { useShallow } from 'zustand/react/shallow'
 import { AgentFanoutCardGrid } from '@/components/chat/AgentFanoutCard'
 import type { AttachedFile, ContextAttachment } from '@/components/chat/chat-input'
 import { ChatInput } from '@/components/chat/chat-input'
@@ -12,6 +12,7 @@ import { EmptyChatState } from '@/components/chat/empty-chat-state'
 import { InterviewWizard } from '@/components/chat/interview-wizard'
 import { MessageBubble } from '@/components/chat/message-bubble'
 import { PathAccessCard } from '@/components/chat/path-access-card'
+import { SessionSkeleton } from '@/components/chat/session-skeleton'
 import { TerminalToggle } from '@/components/chat/TerminalToggle'
 import { TextSelectionBar } from '@/components/chat/text-selection-bar'
 import { ToolApprovalCard } from '@/components/chat/tool-approval-card'
@@ -37,6 +38,10 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 // ---------------------------------------------------------------------------
 function ChatPage() {
   const { t } = useTranslation()
+  // Scope the subscription to exactly the fields the page renders — the
+  // whole-store destructure re-rendered ChatPage on every store write (e.g.
+  // tool state, approval bookkeeping) regardless of relevance. Actions are
+  // stable references, so useShallow keeps them without extra re-renders.
   const {
     messages,
     isStreaming,
@@ -63,9 +68,46 @@ function ChatPage() {
     resolvePathAccess,
     compression,
     disconnect,
+    // Task 10 — session loading surface state.
+    isLoadingSession,
+    sessionLoadError,
+    retryLoadSession,
     connect,
     newSession,
-  } = useChatStore()
+  } = useChatStore(
+    useShallow((s) => ({
+      messages: s.messages,
+      isStreaming: s.isStreaming,
+      connected: s.connected,
+      activeSessionId: s.activeSessionId,
+      activeProjectId: s.activeProjectId,
+      detectedProject: s.detectedProject,
+      activeInterview: s.activeInterview,
+      interviewRound: s.interviewRound,
+      interviewAmbiguity: s.interviewAmbiguity,
+      activeRole: s.activeRole,
+      activeModelId: s.activeModelId,
+      activeMountIds: s.activeMountIds,
+      setActiveMountIds: s.setActiveMountIds,
+      sendMessage: s.sendMessage,
+      setActiveProject: s.setActiveProject,
+      setActiveRole: s.setActiveRole,
+      setActiveModelId: s.setActiveModelId,
+      dismissDetection: s.dismissDetection,
+      submitInterviewResponse: s.submitInterviewResponse,
+      activeToolApproval: s.activeToolApproval,
+      resolveToolApproval: s.resolveToolApproval,
+      activePathAccess: s.activePathAccess,
+      resolvePathAccess: s.resolvePathAccess,
+      compression: s.compression,
+      disconnect: s.disconnect,
+      isLoadingSession: s.isLoadingSession,
+      sessionLoadError: s.sessionLoadError,
+      retryLoadSession: s.retryLoadSession,
+      connect: s.connect,
+      newSession: s.newSession,
+    })),
+  )
   const queuedCount = useChatStore((s) => s._pendingQueue.length)
   const stackOpen = usePortalStore((s) => s.stack.length > 0)
   // RFC-044 Phase 3/4: persona capabilities + fan-out agent tracking.
@@ -96,12 +138,11 @@ function ChatPage() {
   const [input, setInput] = useState('')
   useDraftPersistence(activeSessionId, input, setInput)
   const [userScrolledUp, setUserScrolledUp] = useState(false)
-  const vListRef = useRef<VListHandle>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   /** Session key that has been anchored to the bottom at least once. The
    *  session-switch effect fires before the async session fetch resolves, so
-   *  `rows` is still empty and `scrollToIndex` is a no-op. The initial VList
+   *  `rows` is still empty and an anchor scroll is a no-op. The initial list
    *  layout then emits a scroll event at `scrollTop: 0`, which flips
    *  `atBottomRef` to false — permanently disarming the auto-scroll above.
    *  The first non-empty row render for a session force-anchors once. */
@@ -112,7 +153,19 @@ function ChatPage() {
   const COLLAPSE_THRESHOLD = 40
   const VISIBLE_TAIL = 20
 
-  // Virtualized row model (LobeHub borrow): the VList renders this flat array.
+  // Anchor the message list to its bottom (used on session switch, streaming
+  // growth, and the scroll-to-bottom affordance). The list is a plain
+  // scrolling div — rows are always ≤ collapseThreshold + cards, so the
+  // previous virtua <VList> virtualization bought nothing and its initial
+  // layout could leave the pane empty (rows rendered `visibility: hidden`
+  // until a forced remeasure).
+  const scrollToBottom = () => {
+    const el = messagesContainerRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }
+
+  // Virtualized row model (LobeHub borrow): the list renders this flat array.
   const rows = useMemo(
     () =>
       buildChatRows({
@@ -124,8 +177,17 @@ function ChatPage() {
         hasToolApproval: !!activeToolApproval,
         hasPathAccess: !!activePathAccess,
         compression,
+        isLoadingSession,
       }),
-    [messages, expanded, activeInterview, activeToolApproval, activePathAccess, compression],
+    [
+      messages,
+      expanded,
+      activeInterview,
+      activeToolApproval,
+      activePathAccess,
+      compression,
+      isLoadingSession,
+    ],
   )
 
   // Signature of the trailing message: content length + block count + streaming
@@ -146,11 +208,11 @@ function ChatPage() {
       // the poisoned at-bottom flag, and re-arm auto-scrolling.
       anchoredSessionRef.current = sessionKey
       atBottomRef.current = true
-      vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
+      scrollToBottom()
       return
     }
     if (atBottomRef.current) {
-      vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
+      scrollToBottom()
     }
   }, [rows.length, lastSig, activeSessionId])
 
@@ -159,7 +221,7 @@ function ChatPage() {
   // loadSession, independent of the current at-bottom state).
   useEffect(() => {
     anchoredSessionRef.current = null
-    vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
+    scrollToBottom()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])
 
@@ -209,19 +271,18 @@ function ChatPage() {
     }
   }, [activeSessionId, messages.length, compression])
 
-  const handleVListScroll = (offset: number) => {
-    const vl = vListRef.current
-    if (!vl) return
-    const atBottom = vl.scrollSize - offset - vl.viewportSize < 80
+  const handleListScroll = (e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
     atBottomRef.current = atBottom
-    setUserScrolledUp(!atBottom)
+    // Only commit when the boolean actually flips — the raw handler fires per
+    // scroll frame and each setState re-rendered the whole page.
+    setUserScrolledUp((prev) => (prev === !atBottom ? prev : !atBottom))
   }
 
   const handleMiniMapJump = (index: number) => {
-    const rowIndex = rows.findIndex((r) => r.kind === 'message' && r.index === index)
-    if (rowIndex >= 0) {
-      vListRef.current?.scrollToIndex(rowIndex, { align: 'center', smooth: true })
-    }
+    const el = messagesContainerRef.current?.querySelector(`[data-msg-index="${index}"]`)
+    el?.scrollIntoView({ block: 'center' })
   }
 
   const handleSend = (
@@ -267,9 +328,11 @@ function ChatPage() {
     setUserScrolledUp(false)
   }
 
+  // RFC-049: real cancellation. The previous implementation dropped the
+  // socket and reconnected, which left the backend turn running and then
+  // replayed its terminal message — the "cancelled" answer came back.
   const handleCancel = () => {
-    disconnect()
-    setTimeout(() => connect(), 100)
+    useChatStore.getState().cancelTurn()
   }
 
   // RFC-032: retry the message that produced an error card. Pop the error
@@ -312,6 +375,18 @@ function ChatPage() {
           </div>
         )}
 
+        {/* Task 10: surfaced load failure with retry (sits beside the
+            reconnect banner so the user can see WHY the pane is empty). */}
+        {sessionLoadError && (
+          <div className="flex items-center gap-2 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
+            <span className="flex-1">{t('chat.sessionLoadFailed')}</span>
+            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={retryLoadSession}>
+              <RefreshCw className="mr-1 h-3 w-3" />
+              {t('chat.retry')}
+            </Button>
+          </div>
+        )}
+
         {/* AI Detection Badge */}
         {detectedProject && !activeProjectId && (
           <AiDetectionBadge
@@ -335,123 +410,128 @@ function ChatPage() {
             onClick={() => usePortalStore.getState().pushView({ type: 'search' })}
           >
             <Search className="w-3.5 h-3.5" />
-            Search
+            {t('common.search')}
           </button>
         </div>
 
         {/* ── Messages area ── */}
-        <div ref={messagesContainerRef} className="relative flex-1 min-h-0">
-          <VList
-            ref={vListRef}
-            onScroll={handleVListScroll}
-            keepMounted={rows.length > 0 ? [rows.length - 1] : []}
-            className="h-full"
-            role="log"
-            aria-label={t('common.chatMessages')}
-          >
-            {rows.map((row) => {
-              if (row.kind === 'empty') {
-                return (
-                  <div key="empty" className="mx-auto max-w-3xl px-4 py-6">
-                    <EmptyChatState />
-                  </div>
-                )
-              }
-              if (row.kind === 'collapse-bar') {
-                return (
-                  <div key="collapse-bar" className="mx-auto max-w-3xl px-4 pt-6">
-                    <CompressedGroup
-                      count={row.count}
-                      expanded={expanded}
-                      onToggle={() => setExpanded((v) => !v)}
-                      foldedMessages={row.foldedMessages}
-                      compression={row.compression}
-                    />
-                  </div>
-                )
-              }
-              if (row.kind === 'message') {
-                const m = row.message
-                const assistantIndex =
-                  m.role === 'assistant'
-                    ? messages.slice(0, row.index).filter((x) => x.role === 'assistant').length
-                    : undefined
-                return (
-                  <div
-                    key={m.id}
-                    data-msg-index={row.index}
-                    className="mx-auto max-w-3xl px-4 py-0.5"
-                  >
-                    <MessageBubble
-                      message={m}
-                      sessionId={activeSessionId ?? undefined}
-                      assistantIndex={assistantIndex}
-                      onRetry={m.metadata?.isError ? () => handleRetry(m.id) : undefined}
-                    />
-                  </div>
-                )
-              }
-              if (row.kind === 'interview') {
-                return (
-                  <div key="interview" className="mx-auto max-w-3xl px-4 py-2">
-                    <InterviewWizard
-                      questions={activeInterview!}
-                      round={interviewRound}
-                      ambiguity={interviewAmbiguity}
-                      onSubmit={submitInterviewResponse}
-                      disabled={isStreaming}
-                    />
-                  </div>
-                )
-              }
-              if (row.kind === 'tool-approval') {
-                return (
-                  <div key="tool-approval" className="mx-auto max-w-3xl px-4 py-2">
-                    <ToolApprovalCard
-                      toolName={activeToolApproval!.toolName}
-                      reason={activeToolApproval!.reason}
-                      onApprove={(remember) =>
-                        resolveToolApproval(activeToolApproval!.id, true, remember)
-                      }
-                      onDeny={() => resolveToolApproval(activeToolApproval!.id, false)}
-                      disabled={isStreaming}
-                    />
-                  </div>
-                )
-              }
-              // path-access
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleListScroll}
+          className="relative flex-1 min-h-0 overflow-y-auto"
+          role="log"
+          aria-label={t('common.chatMessages')}
+        >
+          {rows.map((row) => {
+            if (row.kind === 'empty') {
               return (
-                <div key="path-access" className="mx-auto max-w-3xl px-4 py-2">
-                  <PathAccessCard
-                    path={activePathAccess!.path}
-                    mode={activePathAccess!.mode}
-                    toolName={activePathAccess!.toolName}
-                    reason={activePathAccess!.reason}
-                    onMount={() => resolvePathAccess(activePathAccess!.id, 'mount')}
-                    onTempAllow={() => resolvePathAccess(activePathAccess!.id, 'temp')}
-                    onDeny={() => resolvePathAccess(activePathAccess!.id, 'deny')}
+                <div key="empty" className="mx-auto max-w-3xl px-4 py-6">
+                  <EmptyChatState />
+                </div>
+              )
+            }
+            if (row.kind === 'collapse-bar') {
+              return (
+                <div key="collapse-bar" className="mx-auto max-w-3xl px-4 pt-6">
+                  <CompressedGroup
+                    count={row.count}
+                    expanded={expanded}
+                    onToggle={() => setExpanded((v) => !v)}
+                    foldedMessages={row.foldedMessages}
+                    compression={row.compression}
+                  />
+                </div>
+              )
+            }
+            if (row.kind === 'message') {
+              const m = row.message
+              const assistantIndex =
+                m.role === 'assistant'
+                  ? messages.slice(0, row.index).filter((x) => x.role === 'assistant').length
+                  : undefined
+              return (
+                <div
+                  key={m.id}
+                  data-msg-index={row.index}
+                  className="mx-auto max-w-3xl px-4 py-0.5"
+                >
+                  <MessageBubble
+                    message={m}
+                    sessionId={activeSessionId ?? undefined}
+                    assistantIndex={assistantIndex}
+                    onRetry={m.metadata?.isError ? () => handleRetry(m.id) : undefined}
+                  />
+                </div>
+              )
+            }
+            if (row.kind === 'interview') {
+              return (
+                <div key="interview" className="mx-auto max-w-3xl px-4 py-2">
+                  <InterviewWizard
+                    questions={activeInterview!}
+                    round={interviewRound}
+                    ambiguity={interviewAmbiguity}
+                    onSubmit={submitInterviewResponse}
                     disabled={isStreaming}
                   />
                 </div>
               )
-            })}
-          </VList>
-          {userScrolledUp && (
-            <button
-              type="button"
-              onClick={() => {
-                vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end', smooth: true })
-                setUserScrolledUp(false)
-              }}
-              className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border bg-background shadow-lg transition-all hover:bg-accent"
-              aria-label={t('chat.scrollToBottom')}
-            >
-              <ArrowDown className="h-4 w-4" />
-            </button>
-          )}
-          <ChatMiniMap messages={messages} onJump={handleMiniMapJump} />
-          <TextSelectionBar containerRef={messagesContainerRef} />
+            }
+            if (row.kind === 'tool-approval') {
+              return (
+                <div key="tool-approval" className="mx-auto max-w-3xl px-4 py-2">
+                  <ToolApprovalCard
+                    toolName={activeToolApproval!.toolName}
+                    reason={activeToolApproval!.reason}
+                    onApprove={(remember) =>
+                      resolveToolApproval(activeToolApproval!.id, true, remember)
+                    }
+                    onDeny={() => resolveToolApproval(activeToolApproval!.id, false)}
+                    disabled={isStreaming}
+                  />
+                </div>
+              )
+            }
+            // Task 10: loading shimmer placeholder.
+            if (row.kind === 'skeleton') {
+              return (
+                <div key="skeleton">
+                  <SessionSkeleton />
+                </div>
+              )
+            }
+            // path-access
+            return (
+              <div key="path-access" className="mx-auto max-w-3xl px-4 py-2">
+                <PathAccessCard
+                  path={activePathAccess!.path}
+                  mode={activePathAccess!.mode}
+                  toolName={activePathAccess!.toolName}
+                  reason={activePathAccess!.reason}
+                  onMount={() => resolvePathAccess(activePathAccess!.id, 'mount')}
+                  onTempAllow={() => resolvePathAccess(activePathAccess!.id, 'temp')}
+                  onDeny={() => resolvePathAccess(activePathAccess!.id, 'deny')}
+                  disabled={isStreaming}
+                />
+              </div>
+            )
+          })}
         </div>
+        {userScrolledUp && (
+          <button
+            type="button"
+            onClick={() => {
+              scrollToBottom()
+              setUserScrolledUp(false)
+            }}
+            className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border bg-background shadow-lg transition-all hover:bg-accent"
+            aria-label={t('chat.scrollToBottom')}
+          >
+            <ArrowDown className="h-4 w-4" />
+          </button>
+        )}
+        <ChatMiniMap messages={messages} onJump={handleMiniMapJump} />
+        <TextSelectionBar containerRef={messagesContainerRef} />
         {/* RFC-044 Phase 4: fan-out agent status grid + compare/merge */}
         {fanoutGroups.length > 0 && (
           <div className="shrink-0 border-t bg-background/95 px-4 py-2">

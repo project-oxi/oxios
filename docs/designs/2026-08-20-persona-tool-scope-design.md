@@ -66,13 +66,17 @@ The implementation must preserve these invariants:
 2. **Bounded issuance:** an effective CSpace is minted only by the kernel from a
    trusted authority context.
 3. **Monotone delegation:** `child_authority ⊆ parent_authority` for local
-   delegation. Remote A2A additionally intersects the target principal policy.
+   delegation. Remote A2A additionally intersects the delegating principal's
+   permitted A2A delegation scope, the target's accepted delegation authority,
+   and both deployments' trust policies.
 4. **One resolution result:** registry, prompt, UI, access context, and pool
    identity consume the same `ResolvedExecutionProfile`.
 5. **Immutable execution identity:** a running turn never re-reads the global
    active persona or mutable profile records.
 6. **Explicit promotion:** installing a tool or publishing a new profile
-   revision does not alter an existing pinned profile.
+   revision does not alter an existing pinned profile, except through an
+   explicitly declared dynamic provider contract bounded by its capability
+   ceiling and recorded catalog dependency digest.
 7. **Fail closed:** invalid, unknown, or unavailable profile requirements never
    disappear silently.
 8. **No hidden tools:** every model-callable tool has a catalog descriptor and
@@ -112,7 +116,7 @@ pub struct ToolProfileSpec {
     pub id: ToolProfileId,
     pub revision: ProfileRevision,
     pub extends: Vec<ToolProfileRef>,
-    pub requests: Vec<CapabilityRequest>,
+    pub capability_ceiling: Vec<CapabilityRequest>,
     pub include: Vec<ToolSelector>,
     pub exclude: Vec<ToolSelector>,
     pub activation: ToolActivationPolicy,
@@ -138,9 +142,18 @@ expand the bounding authority.
 There is no raw `domains: Vec<String>` escape hatch. Long-tail tools use typed
 capability requests or namespaced tool selectors.
 
-### 4.3 Capability request
+### 4.3 Capability ceiling
 
-A request describes desired access without claiming authority:
+Tool selection and authority requirements have one join rule. A profile's
+`include` selectors choose tools. Each selected `ToolDescriptor` supplies the
+exact capability requirements for that tool. `capability_ceiling` only narrows
+the maximum resource scopes and rights those descriptor requirements may
+request; a ceiling entry never issues a capability by itself.
+
+Publishing a fixed profile revision fails when any selected tool requirement is
+not representable within its capability ceiling. For an explicit dynamic
+provider contract, a newly resolved tool that exceeds the declared ceiling is
+classified unavailable and cannot enter the effective CSpace.
 
 ```rust
 pub struct CapabilityRequest {
@@ -159,12 +172,15 @@ pub enum ResourceSelector {
     Mcp(McpSelector),
     Fs(FsScope),
     WebSearch,
+    Memory(MemorySelector),
+    Knowledge(KnowledgeSelector),
 }
 ```
 
-Resource selectors compile to existing typed `ResourceRef` values only after
-policy resolution. `KernelDomain` is reserved for kernel resources that do not
-have a more specific variant.
+Resource selectors compile to typed `ResourceRef` values only after policy
+resolution. `ResourceRef` is extended with `Fs`, `WebSearch`, `Memory`, and
+`Knowledge` variants. `KernelDomain` remains only for kernel resources that do
+not have a more specific variant.
 
 ### 4.4 Tool descriptor and catalog
 
@@ -269,20 +285,28 @@ Resolution is deterministic for identical inputs.
 1. Load the exact pinned persona and profile revisions.
 2. Expand profile inheritance and reject cycles.
 3. Resolve tool selectors against the runtime catalog.
-4. Convert capability requests into requested resource/right pairs.
-5. Intersect requested capabilities with the bounding authority.
-6. Apply RBAC, AgentPermissions, ExecConfig, runtime feature availability, and
+4. Read capability requirements from the selected tool descriptors and verify
+   that every requirement fits the profile's capability ceiling.
+5. Form the requested capability set as the union of selected descriptor
+   requirements constrained by that ceiling. Ceiling entries unused by a
+   selected tool do not enter the requested set.
+6. Intersect requested capabilities with the bounding authority.
+7. Apply RBAC, AgentPermissions, ExecConfig, runtime feature availability, and
    deployment policy.
-7. Classify each tool as active, available on demand, approval-required, or
-   unavailable.
-8. Select the per-turn active set according to activation policy.
-9. Derive UI affordances from requested UI profile intersected with effective
-   tool availability.
-10. Produce a fingerprint over every behavior-affecting input.
+8. Classify each tool. `Active` and `AvailableOnDemand` require every descriptor
+   capability to be present in the effective CSpace. A missing requirement is
+   `RequiresApproval` only when it is satisfiable from the approving
+   principal's authority and the complete delegation chain; otherwise the tool
+   is `Unavailable`.
+9. Select the per-turn active set according to activation policy.
+10. Derive UI affordances from the requested UI profile intersected with
+    effective tool availability.
+11. Produce a fingerprint over every behavior-affecting input.
 
-The resolver does not maintain a parallel tool-name allowlist. Each
-`ToolDescriptor` states its capability requirements, and all access layers are
-consulted through the resolver's policy adapters.
+The resolver does not maintain a parallel tool-name allowlist. The descriptor
+is the authoritative tool-to-capability mapping; the profile ceiling can only
+narrow it. All access layers are consulted through resolver policy adapters and
+rechecked by `AccessGate` at invocation time.
 
 ### 5.2 Authority equation
 
@@ -312,13 +336,17 @@ For remote A2A:
 ```text
 remote effective authority
   = delegated request
-  ∩ target principal policy
+  ∩ delegating principal's permitted A2A delegation scope
+  ∩ target principal's accepted delegation authority
   ∩ target deployment policy
   ∩ A2A trust policy
 ```
 
-A denied capability is never converted into a kernel-issued capability merely
-because a profile requested it.
+The caller-side delegation scope is principal policy, not persona state. A
+strong target may perform stronger work only when the authenticated delegating
+principal was explicitly authorized to request that remote authority. A denied
+capability is never converted into a kernel-issued capability merely because a
+profile or remote task requested it.
 
 ### 5.3 Approval semantics
 
@@ -326,9 +354,21 @@ Approval is an explicit resolver decision, not a failed invocation accident.
 `RequiresApproval` tools are described in the resolved profile but are not
 registered as callable until approval succeeds. A single cataloged
 `kernel.approval.request` primitive may request activation of a specific
-candidate tool. Approval creates a new snapshot with a bounded, attributable,
-time-limited capability; activation by itself never changes authority.
-Permanently denied tools remain unavailable and are not advertised as callable.
+candidate tool; it cannot issue authority.
+
+Approved capabilities are minted from the approving principal's bounding
+CSpace. Inside a delegated context they are additionally intersected with the
+entire delegation chain. If the principal intends to broaden a parent
+authority, approval occurs at that parent/session level and the child is
+re-resolved; a child never becomes stronger than its current parent.
+
+Approval creates a new snapshot with a bounded, attributable, time-limited
+capability. Its capability ID, issuer, scope, and expiration are fingerprinted.
+`AccessGate` checks expiration when the capability is presented, and expiration
+invalidates any pooled runtime containing that capability. Snapshot immutability
+therefore never bypasses live capability validity. Activation by itself does
+not change authority. Permanently denied tools remain unavailable and are not
+advertised as callable.
 
 ## 6. Tool profile vocabulary
 
@@ -350,8 +390,9 @@ pack:
 | `knowledge-write` | knowledge mutation |
 | `user-interaction` | ask-user/approval prompts |
 | `delegation` | local subagent/A2A request primitives |
+| `security-scan` | explicitly selected built-in, MCP, or skill scanner tools |
 | `kernel-observe` | status, budget, resources, audit views |
-| `kernel-mutate` | persona, cron, project, agent, program mutation |
+| `kernel-mutate(scope)` | mutation of exact typed kernel resources and rights |
 
 Domain presets compose primitives:
 
@@ -362,8 +403,8 @@ Domain presets compose primitives:
 | `writing` | fs-read/write + web-search + memory-read/write + knowledge-read/write + user-interaction |
 | `research` | fs-read + web-search + browser-read + memory-read + knowledge-read + user-interaction |
 | `advisory` | fs-read + memory-read + knowledge-read + user-interaction |
-| `security-audit` | fs-read + system-observe + web-search + security scanners + memory-read + knowledge-read + user-interaction |
-| `operations` | fs-read/write + shell-exec + kernel-observe + selected kernel-mutate + memory-read/write + user-interaction |
+| `security-audit` | fs-read + system-observe + web-search + security-scan + memory-read + knowledge-read + user-interaction |
+| `operations` | fs-read/write + shell-exec + kernel-observe + kernel-mutate(cron, project, agent) + memory-read/write + user-interaction |
 
 Default personas reference the matching exact profile revision:
 
@@ -454,26 +495,36 @@ creates a new snapshot for the next turn.
 
 ## 9. Delegation and A2A
 
-A delegated task carries a requested execution profile and an authority chain,
-not a free-form persona string:
+The model authors only the task and requested profile:
 
 ```rust
-pub struct DelegatedExecutionRequest {
+pub struct ModelDelegationRequest {
     pub task: TaskSpec,
     pub requested_profile: ToolProfileRef,
-    pub parent_authority: DelegatedAuthority,
+}
+
+pub struct KernelDelegationEnvelope {
+    pub request: ModelDelegationRequest,
+    pub caller_session: SessionId,
+    pub parent_authority: DelegatedAuthorityHandle,
     pub parent_fingerprint: ExecutionProfileFingerprint,
 }
 ```
 
-The kernel, not the delegating model, resolves the child profile. A model may
-request `operations`; the resolver rejects or attenuates it when the parent does
-not possess the required authority.
+`DelegatedAuthorityHandle` is an opaque, unforgeable kernel-sealed reference
+minted with the parent's resolved profile. The kernel injects the handle after
+authenticating the caller and looks up the authority from kernel state. The
+model never supplies serialized authority; `parent_fingerprint` is only a
+consistency check.
+
+The kernel resolves the child profile. A model may request `operations`; the
+resolver rejects or attenuates it when the parent and caller-side delegation
+scope do not contain the required authority.
 
 Local subagents always receive a subset of the parent's effective authority.
-Remote A2A targets are separate principals and are evaluated against both the
-request and the target's policy. There is no confused-deputy path where a weak
-agent delegates to a strong persona to obtain stronger results.
+Remote A2A additionally applies the delegating principal's permitted scope, the
+target's accepted delegation authority, and the A2A trust policy. This prevents
+a weak agent from using a stronger remote principal as a confused deputy.
 
 A specialized Oxios control agent may exist as an ordinary domain agent for UX
 or planning, but it is never an authority broker. Kernel control operations
@@ -542,30 +593,35 @@ and search components appear when supported by the resolved profile.
 
 ## 12. Agent pool and conversation state
 
-Agent runtime identity uses the resolved profile fingerprint, not a global
-persona ID:
+Agent runtimes are session-isolated. Reuse requires both identity and behavior
+to match:
 
 ```text
 runtime reusable
-  iff stored_fingerprint == requested_fingerprint
+  iff stored_session_id == requested_session_id
+  and stored_fingerprint == requested_fingerprint
 ```
 
 The fingerprint covers:
 
 - exact persona and sub-profile revisions;
-- effective authority;
+- effective authority, including approval capability IDs and expirations;
 - active tool IDs and descriptor revisions;
 - model policy;
 - descriptor revisions and provider availability used by this resolution;
 - behavior-affecting deployment policy.
 
 Conversation state is stored separately from the runtime/tool registry. A
-profile change rebuilds the agent runtime and rehydrates the same conversation
-state when policy allows. Global persona changes do not broadcast pool-wide
-evictions.
+profile change rebuilds the session's agent runtime and rehydrates the same
+conversation state when policy allows. Global persona changes do not broadcast
+pool-wide evictions.
 
-Profile updates create new revisions and therefore new fingerprints. Pinned
-sessions remain reproducible until explicitly upgraded.
+Descriptors, provider factories, and immutable kernel handles may be shared.
+Instantiated tools and their `ToolContext` never cross session boundaries.
+Providers declare state scope (`Stateless`, `Session`, or `Turn`); browser,
+exec environment, credentials, cwd, and other stateful instances are created at
+the declared session/turn boundary. Profile updates or capability expiration
+produce new fingerprints and invalidate affected session runtimes.
 
 ## 13. Persistence and API
 
@@ -606,11 +662,14 @@ They do not silently compile to a broader or narrower profile.
 
 - Persona editing changes requested behavior, never the bounding authority.
 - Tool activation cannot create capabilities.
-- Delegation is monotone and carries an auditable authority chain.
-- Profile revisions prevent silent authority growth after tool installation or
-  catalog changes.
+- Delegation is monotone, uses a kernel-sealed parent handle, and carries an
+  auditable authority chain.
+- Pinned revisions prevent silent profile growth, except for explicitly
+  declared dynamic provider contracts bounded by their capability ceiling and
+  recorded in `catalog_dependency_digest`.
 - Namespaced IDs prevent built-in, MCP, and skill tool collisions.
-- Approval-issued capabilities are bounded, attributable, and time-limited.
+- Approval-issued capabilities are bounded by the approving principal and full
+  delegation chain, attributable, time-limited, and checked at presentation.
 - UI and prompt projections cannot claim permanently denied tools are callable.
 - Dynamic providers must publish capability requirements before their tools can
   enter the catalog.
@@ -618,9 +677,9 @@ They do not silently compile to a broader or narrower profile.
 ## 15. Resource behavior
 
 The design intentionally optimizes model context rather than daemon memory.
-Descriptors and immutable profile revisions are shared. Per-turn resolved sets
-contain references and small decision records. Tool instances continue to share
-kernel handles.
+Descriptors, provider factories, immutable profile revisions, and kernel
+handles are shared. Per-turn resolved sets contain references and small decision
+records. Stateful tool instances remain session- or turn-local.
 
 Candidate profiles may contain many tools, but the active model-visible set is
 normally at most 16. This bounds tool-definition tokens without requiring a
@@ -639,11 +698,13 @@ indefinitely.
 - profile revision pinning is stable;
 - unknown selectors and invalid rights fail closed;
 - requested authority never exceeds the bounding CSpace;
-- delegated authority is always a subset of parent authority;
+- delegated authority is always a subset of parent and caller delegation scope;
+- approval inside a child cannot exceed the current delegation chain;
 - activation changes exposure but not authority;
+- expired capabilities fail at presentation and invalidate affected runtimes;
 - UI affordances require their effective tool capabilities;
-- fingerprint changes for every behavior-affecting input and remains stable for
-  identical inputs.
+- fingerprints include approval identity/expiry and remain stable for identical
+  non-temporal inputs.
 
 ### Property-based tests
 
@@ -652,6 +713,8 @@ indefinitely.
 - removing a capability cannot change a tool from unavailable to active;
 - catalog insertion cannot alter a pinned profile unless the profile explicitly
   selects a dynamic provider contract permitting it;
+- two sessions with the same profile fingerprint never share stateful tool
+  instances;
 - prompt tool IDs, registry tool IDs, and UI active tool IDs are identical
   projections of the resolved profile.
 

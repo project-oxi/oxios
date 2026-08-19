@@ -99,6 +99,13 @@ function ChatPage() {
   const vListRef = useRef<VListHandle>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
+  /** Session key that has been anchored to the bottom at least once. The
+   *  session-switch effect fires before the async session fetch resolves, so
+   *  `rows` is still empty and `scrollToIndex` is a no-op. The initial VList
+   *  layout then emits a scroll event at `scrollTop: 0`, which flips
+   *  `atBottomRef` to false — permanently disarming the auto-scroll above.
+   *  The first non-empty row render for a session force-anchors once. */
+  const anchoredSessionRef = useRef<string | null>(null)
   const [expanded, setExpanded] = useState(false)
 
   // Compressed groups: collapse older messages when a conversation is long.
@@ -132,15 +139,26 @@ function ChatPage() {
   // Auto-scroll to the last row while the user is at (or near) the bottom.
   // Re-anchors as the streaming message grows.
   useEffect(() => {
+    if (rows.length === 0) return
+    const sessionKey = activeSessionId ?? '_new'
+    if (anchoredSessionRef.current !== sessionKey) {
+      // First non-empty render for this session — anchor once, regardless of
+      // the poisoned at-bottom flag, and re-arm auto-scrolling.
+      anchoredSessionRef.current = sessionKey
+      atBottomRef.current = true
+      vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
+      return
+    }
     if (atBottomRef.current) {
       vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
     }
-  }, [rows.length, lastSig])
+  }, [rows.length, lastSig, activeSessionId])
 
   // Session switch: always jump to the bottom of the freshly loaded session
   // (the original behavior scrolled on every messages change; keep that for
   // loadSession, independent of the current at-bottom state).
   useEffect(() => {
+    anchoredSessionRef.current = null
     vListRef.current?.scrollToIndex(rows.length - 1, { align: 'end' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId])

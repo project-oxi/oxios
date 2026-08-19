@@ -1,6 +1,6 @@
 [package]
 name = "oxios-kernel"
-version = "1.42.0"
+version = "1.43.0"
 edition = "2024"
 description = "Oxios kernel: supervisor, event bus, state store"
 license = "MIT"
@@ -30,10 +30,10 @@ foundation-keychain = ["dep:keyring"]
 timeline = ["dep:oxiline-core"]
 
 [dependencies]
-oxios-ouroboros = { version = "1.42.0", path = "../oxios-ouroboros" }
-oxios-markdown = { version = "1.42.0", path = "../oxios-markdown" }
-oxios-calendar = { version = "1.42.0", path = "../oxios-calendar" }
-oxios-mcp = { version = "1.42.0", path = "../oxios-mcp" }
+oxios-ouroboros = { version = "1.43.0", path = "../oxios-ouroboros" }
+oxios-markdown = { version = "1.43.0", path = "../oxios-markdown" }
+oxios-calendar = { version = "1.43.0", path = "../oxios-calendar" }
+oxios-mcp = { version = "1.43.0", path = "../oxios-mcp" }
 oxicode-sdk = { workspace = true }
 # oxibrain daemon client (RFC-047).
 oxibrain-client = { workspace = true }

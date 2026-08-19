@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.43.0] - 2026-08-19
 
 ### Added
 - **RFC-049: real turn cancellation** — `TurnRegistry` binds each in-flight

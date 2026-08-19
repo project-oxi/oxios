@@ -213,6 +213,17 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
         passthrough: raw,
       }
 
+    // Web-search citations (backend: chat.rs grounding_from_event). Without
+    // this arm the chunk fell through to `default` and every citation was
+    // dropped, leaving the SearchGrounding panel permanently unrendered.
+    case 'grounding': {
+      const citations = (raw.citations ?? []).filter((c) => !!c?.url)
+      if (citations.length === 0) return { events: [] }
+      return {
+        events: [{ kind: 'grounding', messageId: mid, search: { citations } }],
+      }
+    }
+
     case 'model':
     case 'interview':
     case 'tool_approval':

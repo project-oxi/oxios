@@ -1499,6 +1499,7 @@ export const useChatStore = create<ChatStore>()(
           case 'tool_end':
           case 'tool_call_delta':
           case 'reasoning':
+          case 'grounding':
           case 'memory':
           case 'usage': {
             // Route through StreamProcessor so the single source of truth

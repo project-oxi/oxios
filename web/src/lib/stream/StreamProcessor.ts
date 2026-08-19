@@ -24,6 +24,8 @@ import type {
   ChatError,
   ChatToolPayload,
   ChatToolStatus,
+  CitationItem,
+  GroundingSearch,
   ReasoningBlock,
   TextBlock,
 } from '@/types/chat'
@@ -58,6 +60,8 @@ export class StreamProcessor {
   private stopped = false
   private usageSeq = 0
   private memorySeq = 0
+  /** Accumulated web-search grounding for the turn (citations deduped by url). */
+  private search: GroundingSearch | null = null
 
   // ── Block-stream transparency (single source of truth for the timeline) ──
   private blocks: ChatBlock[] = []
@@ -240,8 +244,24 @@ export class StreamProcessor {
         })
         return { patch: {} }
       }
-      case 'grounding':
-        return { patch: { search: ev.search } }
+      // A turn can search several times; each chunk carries only that call's
+      // hits. Accumulate and dedupe by url so later searches never erase
+      // earlier citations.
+      case 'grounding': {
+        const seen = new Set<string>()
+        const citations: CitationItem[] = []
+        for (const c of [...(this.search?.citations ?? []), ...(ev.search.citations ?? [])]) {
+          if (seen.has(c.url)) continue
+          seen.add(c.url)
+          citations.push(c)
+        }
+        this.search = {
+          ...this.search,
+          ...ev.search,
+          ...(citations.length > 0 ? { citations } : {}),
+        }
+        return { patch: { search: this.search } }
+      }
 
       case 'file_chunks':
         return { patch: { chunksList: ev.chunks } }
@@ -295,6 +315,7 @@ export class StreamProcessor {
       id: this.messageId,
       blocks: [...this.blocks],
       content: text || base.content,
+      search: this.search ?? base.search,
 
       totalInputTokens: totalInputTokens || base.totalInputTokens,
       totalOutputTokens: totalOutputTokens || base.totalOutputTokens,

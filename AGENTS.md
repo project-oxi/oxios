@@ -166,3 +166,23 @@ in-process modules per RFC-026 — no separate crates to publish.
 - **Workspace deps.** `oxicode-sdk` must be in both `[workspace.dependencies]` (root `Cargo.toml`) AND `[dependencies]` in the crate using it.
 - **Stdin blocking.** `oxios run --context-file -` reads stdin to EOF. Don't use with interactive input.
 
+## Local CI Gates (pre-commit cleanup)
+
+Run before committing a non-trivial change:
+
+1. Checkpoint the tree before edits.
+2. `cargo fmt --all -- --check` · `cargo clippy --workspace --all-features -- -D warnings` · `cargo check --workspace --all-features` · `cargo nextest run --workspace --no-fail-fast` · `cargo test --workspace --doc`.
+3. `web/`: frozen bun install, typecheck, tests, Biome lint, build.
+4. `cargo audit` + `cargo deny check` — cargo-deny 0.20 requires modern advisory values (`unmaintained = "all"|"workspace"|"transitive"|"none"`) and SPDX-valid license identifiers.
+5. Fix real warnings rather than hiding them; rerun all gates; commit the cleaned tree.
+
+## oxicode-sdk upgrade
+
+When bumping `oxicode-sdk`/`oxicode-agent`:
+
+- **Source of truth is the local oxicode repo** (`/Volumes/MERCURY/PROJECTS/oxicode`) — read the actual trait/struct definitions there, don't guess from compiler errors: `oxicode-ai/src/circuit_breaker.rs` (`CircuitBreaker`, `DefaultCircuitBreaker`, `BreakerError`/`BreakerState`), `oxicode-agent/src/mcp/spawn.rs` (`SpawnValidator`), `oxicode-sdk/src/lib.rs` (`#[cfg(feature)]` + `#[oxi_unstable]` re-export gates), `oxicode-sdk/Cargo.toml` `[features]`, `CHANGELOG.md` Breaking/Removed sections.
+- **Feature-gate gotcha:** oxicode-sdk's unstable features (`browser`, `delegation`, `subagent`, `circuit-breaker`, …) are often EMPTY — they only gate oxicode-sdk's own re-exports and do NOT enable features on oxicode-agent/oxicode-ai. Check each underlying crate's own features separately.
+- **Procedure:** bump root `[workspace.dependencies]` + kernel dep → `cargo update -p oxicode-sdk -p oxicode-agent` → `cargo check -p oxios-kernel` and fix the REAL errors empirically (design docs predict wrong counts) → gates: `cargo check/clippy/test --workspace --all-features`, rustfmt only on files you touched (don't reformat pre-existing drift) → Rust-only bumps skip the web gate unless TS changed.
+- Common breakages: removed types (`ProviderPool`, `ProviderCircuitBreaker`, …), typed `SdkError` returns (wrap `Ok(...?)`), feature-gated re-exports.
+- Known wiring: `LLM_CIRCUIT_BREAKER` (agent_runtime.rs) is metrics-only — real gating is `resilience/health.rs`; `oxios-mcp` has its own McpClient (direct spawn) and does not use the SDK MCP transport, so `SpawnValidator` has no consumer here — don't wire it as dead code.
+

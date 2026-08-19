@@ -66,17 +66,18 @@ pub struct ToolPack {
 // persona/mod.rs — Persona gains:
 #[serde(default)]
 pub tool_scope: Option<ToolScope>,
-
 pub struct ToolScope {
     pub packs: Vec<String>,      // pack names, unioned
+    pub domains: Vec<String>,    // raw KernelDomain names — long-tail escape hatch
     pub exclude: Vec<String>,    // tool names, removed post-registration
 }
 ```
 
 **Compile semantics** (`capability::packs::compile(&ToolScope) -> CSpace`):
-
-1. Union the grants of all named packs → capability set.
-2. Unknown pack name → hard error at API/validation time, warn+ignore at
+1. Union the grants of all named packs plus the raw `domains` grants
+   (validated against the registration match table's known domain names)
+   → capability set.
+2. Unknown pack or domain name → hard error at API/validation time, warn+ignore at
    legacy-load time (defensive).
 3. `exclude` is **not** part of compilation — it filters registered tool
    names at the agent-build chokepoint (§4). Grants are capability-shaped,
@@ -122,9 +123,13 @@ exclusion.
 ## 4. D2 — Single registration path
 
 1. **Delete the bridge.** Remove `OxiosKernelBridge` and its
-   `KernelToolProvider` impl; dissolve `builtin::register_all_kernel_tools`
-   into the one gated match table. `tool_names()` (30+5) is replaced by the
-   `TOOL_CATALOG` static as the authoritative display inventory.
+   into the one gated match table, adding arms for every bridge-only tool
+   (mount, task, marketplace, skill_forge under `"program"`, calendar, memo,
+   timeline, email, image_gen, screenshot — feature-gated as today) so the
+   single table is total; long-tail tools are reachable via `tool_scope.domains`.
+   `tool_names()` (30+5) is replaced by the `TOOL_CATALOG` static as the
+   authoritative display inventory. The SDK-side `subagent` tool stays
+   runner-wired (`AgentConfig.subagent_runner`), not table-registered.
 2. **Always-on tier → CSpace.** Introduce two `ResourceRef` variants —
    `Fs` and `WebSearch` (the enum currently has neither; `capability/types.rs:174-209`).
    Map them in the registration table; grant them in `worker()` and every
@@ -190,8 +195,9 @@ rebuild cost, no steady-state overhead.
   migration step needed. `persistence.rs` `SCHEMA_VERSION = 3`.
 - `GET /api/personas` summaries include `tool_scope`;
   `PUT /api/personas/:id` accepts partial tool_scope updates. Validation:
-  unknown pack → `400` with the pack catalog; unknown exclude name → `400`
-  with `TOOL_CATALOG` names.
+  unknown pack → `400` with the pack catalog; unknown domain → `400` with
+  the known-domain list; unknown exclude name → `400` with `TOOL_CATALOG`
+  names.
 - New `GET /api/tool-packs` → pack catalog + tool display inventory
   (feeds the editor UI and the header chip).
 - Remote RPC `persona.list` includes resolved pack names.

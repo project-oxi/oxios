@@ -81,8 +81,8 @@ Mirrors `src/commands/update.rs` (GitHub release download) and
 `skill/host_tools/provisioner.rs` (archive extraction).
 
 - Source: `https://api.github.com/repos/a7garden/oxibrain/releases` — latest
-  release with asset `oxibrain-<version>-aarch64-apple-darwin.tar.gz` plus
-  its `.sha256`.
+  release with asset `oxibrain-aarch64-apple-darwin.tar.gz` (unversioned
+  name, mirroring oxios `release.yml`) plus its `.sha256`.
 - Target: `~/.oxi/bin/oxibrain`, mode `0o755`. Flow: tmp download → sha256
   verify → tar extract (single binary inside) → atomic rename.
 - **Version policy**: install only when the binary is absent or the daemon
@@ -96,9 +96,9 @@ Mirrors `src/commands/update.rs` (GitHub release download) and
   degradation continues. Retry on next boot or CLI invocation.
 
 **Prerequisite (oxibrain repo, separate PR):** `publish.yml` builds the
-release binary and uploads `oxibrain-<ver>-aarch64-apple-darwin.tar.gz` +
-`.sha256` to the GitHub Release (mirroring oxios `release.yml` tarball
-packaging). Until that ships, `auto_manage` installs nothing and the banner
+release binary and uploads `oxibrain-aarch64-apple-darwin.tar.gz` + `.sha256`
+to the GitHub Release (mirroring oxios `release.yml` tarball packaging).
+Until that ships, `auto_manage` installs nothing and the banner
 reports `Failed(no-release-asset)` with the manual command.
 
 ## 5. Keeper — launchd + fallback

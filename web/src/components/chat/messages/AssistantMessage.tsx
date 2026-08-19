@@ -76,11 +76,14 @@ function AssistantMessageImpl({
       error={chatError}
       time={message.timestamp ? new Date(message.timestamp).getTime() : undefined}
       durationMs={message.metadata?.duration_ms}
-      actions={<MessageActionBar actions={actions} />}
+      // Post-completion affordances only (2026-08-20 design): copy /
+      // regenerate / delete are premature or hazardous mid-turn, and the
+      // hover bar appearing during streaming reads as noise.
+      actions={!message.generating ? <MessageActionBar actions={actions} /> : undefined}
       messageExtra={
         <>
           {message.metadata && !isError && <ChatMetadata message={message} />}
-          {sessionId != null && assistantIndex != null && (
+          {sessionId != null && assistantIndex != null && !message.generating && (
             <KnowledgeSaveIndicator sessionId={sessionId} messageIndex={assistantIndex} />
           )}
         </>
@@ -107,7 +110,7 @@ function AssistantMessageImpl({
             onSelect={(s) => sendMessage(s)}
           />
         )}
-        <MessageReactionsRow messageId={message.id} />
+        {!message.generating && <MessageReactionsRow messageId={message.id} />}
       </div>
     </ChatItem>
   )

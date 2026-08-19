@@ -308,6 +308,11 @@ export function ensureLastAssistant(
     content: '',
     timestamp: new Date().toISOString(),
     model: ctx.placeholderModel ?? undefined,
+    // The placeholder only exists because a turn is streaming toward this
+    // slot — agent_start can arrive seconds before the first content chunk
+    // (LLM latency), and a non-generating placeholder flashed the
+    // post-completion action row on an empty bubble for that whole window.
+    generating: true,
     // Every assistant message carries a blocks array — BlockStream maps over
     // it unconditionally, so an undefined value crashes the whole chat page.
     blocks: [],

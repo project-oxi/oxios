@@ -1,11 +1,15 @@
-//! Web UI dist directory resolution and auto-download.
+//! Web UI dist resolution.
 //!
-//! This module runs before surfaces start to ensure the web UI is available.
-//! If `~/.oxios/web/dist/index.html` doesn't exist, it downloads from GitHub Releases.
+//! Embedded builds (default release path) serve the SPA compiled into the
+//! binary — exclusively. Non-embedded builds (`cargo install` from crates.io)
+//! download `web-dist.zip` from GitHub Releases at startup and resolve the
+//! downloaded generation via the `~/.oxios/web/.active` marker on restart.
 //!
-//! The resolved path is passed to surfaces via [`SurfaceContext.web_dist`].
-//! This avoids the race condition where the server starts listening before
-//! the web UI is downloaded.
+//! There is deliberately NO on-disk override for embedded builds: a manually
+//! placed dist used to shadow binary deploys silently (stale-UI incidents,
+//! 2026-08-19) and was removed. The resolved path is passed to surfaces via
+//! `SurfaceContext.web_dist` so the server never starts listening before
+//! the web UI source is known.
 
 use anyhow::{Context, Result};
 use console::style;
@@ -15,14 +19,9 @@ use std::time::{Duration, SystemTime};
 
 const GITHUB_REPO: &str = "a7garden/oxios";
 
-/// Returns `~/.oxios/web/` (parent of the dist directory).
+/// Returns `~/.oxios/web/` (download staging root + marker location).
 fn user_web_root() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".oxios").join("web"))
-}
-
-/// Returns `~/.oxios/web/dist/` path.
-fn user_web_dist_dir() -> Option<PathBuf> {
-    user_web_root().map(|r| r.join("dist"))
 }
 
 /// Returns the path to the active-dist marker file (`~/.oxios/web/.active`).
@@ -64,18 +63,17 @@ pub enum WebUiHealth {
 
 /// Resolve the active web-dist health for status reporting.
 pub fn diagnose_active() -> WebUiHealth {
-    let Some(marker) = active_marker_path() else {
-        // No marker: embedded builds still serve the baked-in UI.
-        return if crate::embedded_web::is_embedded() {
-            WebUiHealth::Embedded {
-                version: Some(crate::embedded_web::version()),
-            }
-        } else {
-            WebUiHealth::NotInstalled
+    // Embedded builds always serve the compiled-in SPA — nothing on disk can
+    // override that, so report it without consulting the marker.
+    if crate::embedded_web::is_embedded() {
+        return WebUiHealth::Embedded {
+            version: Some(crate::embedded_web::version()),
         };
+    }
+    let Some(marker) = active_marker_path() else {
+        return WebUiHealth::NotInstalled;
     };
-    let legacy = user_web_dist_dir();
-    match oxios_gateway::ActiveWebDist::resolve(&marker, legacy.as_deref()) {
+    match oxios_gateway::ActiveWebDist::resolve(&marker) {
         Some(p) => {
             let version = std::fs::read(p.join("version.json"))
                 .ok()
@@ -83,36 +81,23 @@ pub fn diagnose_active() -> WebUiHealth {
                 .and_then(|v| v["version"].as_str().map(str::to_string));
             WebUiHealth::Ok { path: p, version }
         }
-        None => {
-            // Marker present but dangling. Embedded builds still serve fine.
-            if crate::embedded_web::is_embedded() {
-                WebUiHealth::Embedded {
-                    version: Some(crate::embedded_web::version()),
-                }
-            } else {
-                WebUiHealth::Broken { marker }
-            }
-        }
+        None => WebUiHealth::Broken { marker },
     }
 }
 
 /// Result of ensuring web UI availability.
 #[derive(Debug)]
 pub enum WebDistResult {
-    /// Web UI found in `~/.oxios/web/dist/`.
-    UserDir(PathBuf),
-    /// Web UI found in `workspace/web/dist/`.
-    WorkspaceDir(PathBuf),
-    /// Downloaded from GitHub Releases.
+    /// Non-embedded build: generation resolved from the persisted
+    /// `~/.oxios/web/.active` marker (survives restarts).
+    Marker(PathBuf),
+    /// Non-embedded build: downloaded from GitHub Releases.
     Downloaded { path: PathBuf, version: String },
-    /// Web UI baked into the binary at compile time (`src/embedded_web.rs`).
-    ///
-    /// Returned by `ensure_web_dist` when the binary was built with a present
-    /// `web/dist/` (see `build.rs`). Authoritative, not a fallback — the
-    /// GitHub download is skipped entirely so no competing on-disk dist is
-    /// created (RFC-024 C3: never mix two build hashes).
+    /// Embedded build: the SPA compiled into the binary. Authoritative and
+    /// exclusive — no on-disk dist can override or shadow it.
     Embedded,
-    /// Download failed — embedded assets will be used as fallback.
+    /// Download failed — nothing to serve for the web surface (embedded
+    /// builds never reach this variant).
     DownloadFailed { reason: String },
 }
 
@@ -340,71 +325,45 @@ async fn download_and_extract_web_dist(version_tag: &str) -> Result<PathBuf> {
     Ok(dist_dir)
 }
 
-/// Ensures the web UI is available, downloading from GitHub if needed.
+/// Ensures the web UI source is known before surfaces start.
 ///
-/// Resolution order (RFC-024 SP3, marker-aware):
-///  1. `~/.oxios/web/.active` marker → generation last served (survives restart)
-///  2. `~/.oxios/web/dist/index.html` — legacy / user override (escape hatch)
-///  3. `workspace/web/dist/index.html` — bundled / dev mode
-///  4. Embedded assets (`src/embedded_web.rs`) — authoritative when compiled
-///     in; skips the GitHub download so the binary is self-contained.
-///  5. Download from GitHub Releases into a fresh versioned staging dir,
-///     then publish via marker so restarts resolve it.
+/// Resolution order:
+///  1. Embedded assets (`src/embedded_web.rs`) — authoritative and
+///     EXCLUSIVE when compiled in. Nothing on disk is consulted; no download
+///     runs; no on-disk dist can shadow the binary's UI.
+///  2. `~/.oxios/web/.active` marker → generation last served (non-embedded
+///     builds only; survives restart).
+///  3. Download from GitHub Releases into a fresh versioned staging dir,
+///     then publish via marker so restarts resolve it (non-embedded only).
 ///
-/// Returns a [`WebDistResult`] describing what happened. The returned path
-/// is the directory the caller should publish as the active dist.
-pub async fn ensure_web_dist(workspace: &Path) -> WebDistResult {
-    let marker = active_marker_path();
-    let legacy = user_web_dist_dir();
-
-    // 1. Marker (RFC-024): generation the previous process was serving.
-    //    Skipped when the binary has embedded assets — a stale download
-    //    from a previous version must not shadow the authoritative
-    //    embedded UI (every pre-1.29.0 → post-embedding upgrader hits
-    //    this: they installed an old version that auto-downloaded web UI
-    //    into `~/.oxios/web/dist-*/`, which the marker keeps pointing at
-    //    forever). The legacy/user-override dist (step 2) is still honored
-    //    — that requires an explicit `~/oxios/web/dist/` placement.
-    if !crate::embedded_web::is_embedded()
-        && let Some(m) = marker.as_ref()
-        && let Some(p) = oxios_gateway::ActiveWebDist::resolve(m, legacy.as_deref())
-    {
-        tracing::info!(path = ?p, "Serving web UI from active marker");
-        return WebDistResult::UserDir(p);
-    }
-
-    // 2. ~/.oxios/web/dist/ (legacy / user override). Must be internally
-    //    self-consistent — a dir that mixes two builds (entry chunk 404s)
-    //    is skipped so we fall through to a fresh download instead of
-    //    serving a broken page forever.
-    if let Some(dist) = &legacy
-        && oxios_gateway::ActiveWebDist::dist_is_consistent(dist)
-    {
-        tracing::info!(path = ?dist, "Serving web UI from ~/.oxios/web/dist/");
-        return WebDistResult::UserDir(dist.clone());
-    }
-
-    // 3. workspace/web/dist/ (bundled / dev)
-    let workspace_dist = workspace.join("web").join("dist");
-    if oxios_gateway::ActiveWebDist::dist_is_consistent(&workspace_dist) {
-        tracing::info!(path = ?workspace_dist, "Serving web UI from workspace (web/dist/)");
-        return WebDistResult::WorkspaceDir(workspace_dist);
-    }
-
-    // 4. Embedded assets (compiled in via `build.rs`). Authoritative —
-    //    short-circuits the download entirely so no competing on-disk dist
-    //    is created (RFC-024 C3). Tiers 1-3 remain escape hatches for a
-    //    manually placed dist.
+/// The former `~/.oxios/web/dist/` (user override) and
+/// `<workspace>/web/dist/` tiers were removed: they silently shadowed
+/// embedded binaries and served stale UIs across deploys (2026-08-19).
+pub async fn ensure_web_dist() -> WebDistResult {
+    // 1. Embedded assets (compiled in via `build.rs`). Authoritative and
+    //    exclusive — short-circuits every on-disk path and the download.
     if crate::embedded_web::is_embedded() {
-        tracing::info!("Serving web UI from embedded assets (no download)");
+        tracing::info!("Serving web UI from embedded assets (exclusive)");
         return WebDistResult::Embedded;
     }
 
-    // 5. Auto-download from GitHub Releases (with bounded retry so a transient
+    // 2. Marker (RFC-024): generation the previous process was serving.
+    //    Also guards pre-1.29.0 upgraders whose marker still points at a
+    //    stale `~/.oxios/web/dist-*/` download from an older version —
+    //    resolve() validates self-consistency and refuses broken dirs.
+    if let Some(m) = active_marker_path()
+        && let Some(p) = oxios_gateway::ActiveWebDist::resolve(&m)
+    {
+        tracing::info!(path = ?p, "Serving web UI from active marker");
+        return WebDistResult::Marker(p);
+    }
+
+    // 3. Auto-download from GitHub Releases (with bounded retry so a transient
     //    network blip or rate-limit doesn't strand the daemon serving 503
     //    until a manual `oxios update --web-only`). Each attempt retries the
     //    full tag-lookup + download pair.
     tracing::info!("No web UI found locally, downloading from GitHub Releases...");
+
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_reason = String::from("unknown error");
     for attempt in 1..=MAX_ATTEMPTS {
@@ -441,7 +400,7 @@ pub async fn ensure_web_dist(workspace: &Path) -> WebDistResult {
             } else {
                 // Publish the freshly-extracted staging dir so restarts
                 // resolve it via the marker.
-                if let Some(m) = marker.as_ref() {
+                if let Some(m) = active_marker_path() {
                     let _ = std::fs::write(m, path.to_string_lossy().as_bytes());
                 }
                 return WebDistResult::Downloaded { path, version: tag };
@@ -538,12 +497,11 @@ async fn resolve_target_tag(target: &SyncTarget) -> Result<String> {
     }
 }
 
-/// Resolve the currently-active dist path from the persisted marker + legacy
-/// fallback. Used by the CLI disk-only path, which has no in-memory pointer.
+/// Resolve the currently-active dist path from the persisted marker.
+/// Used by the CLI disk-only path, which has no in-memory pointer.
 fn current_active_path() -> Option<PathBuf> {
     let marker = active_marker_path()?;
-    let legacy = user_web_dist_dir();
-    oxios_gateway::ActiveWebDist::resolve(&marker, legacy.as_deref())
+    oxios_gateway::ActiveWebDist::resolve(&marker)
 }
 
 /// Internal outcome of the compare+download stage, before the publish
@@ -615,10 +573,10 @@ async fn prepare_sync(target: &SyncTarget, active_path: Option<&Path>) -> Prepar
 ///
 /// Used by the daily health check and the eager startup check.
 pub async fn sync(web_dist: &oxios_gateway::ActiveWebDist, target: SyncTarget) -> SyncOutcome {
-    // Embedded builds are authoritative (see `embedded_web`). Skip the
-    // compare+download so the baked-in UI is never shadowed by a downloaded
-    // generation. Manual override remains via `oxios update --web-only`
-    // (`sync_to_disk`), which is intentionally NOT gated here.
+    // Embedded builds serve the compiled-in SPA exclusively (see
+    // `embedded_web`). Skip the compare+download entirely — a downloaded
+    // generation can never shadow it. `sync_to_disk` below carries the same
+    // gate.
     if crate::embedded_web::is_embedded() {
         return SyncOutcome::UpToDate {
             active: "embedded".into(),
@@ -647,8 +605,16 @@ pub async fn sync(web_dist: &oxios_gateway::ActiveWebDist, target: SyncTarget) -
 /// pointer (the CLI runs in its own process; the running daemon picks the
 /// new generation up on restart via `resolve`).
 ///
-/// Used by `oxios update --web-only`.
+/// Used by `oxios update --web-only`. Gated for embedded builds: the
+/// compiled-in SPA is exclusive, so there is nothing to sync — the CLI
+/// prints an explicit skip message instead.
 pub async fn sync_to_disk(target: SyncTarget) -> SyncOutcome {
+    if crate::embedded_web::is_embedded() {
+        return SyncOutcome::UpToDate {
+            active: "embedded".into(),
+            target: "embedded".into(),
+        };
+    }
     let active = current_active_path();
     match prepare_sync(&target, active.as_deref()).await {
         PrepareOutcome::UpToDate { active, target } => SyncOutcome::UpToDate { active, target },

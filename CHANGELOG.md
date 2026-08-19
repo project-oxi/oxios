@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`TurnTextStreamTracker`) and suppresses the redundant terminal token
   while keeping persistence and the terminal `done` unchanged.
   Non-streaming turns still deliver text via the terminal token.
+- **Embedded SPA is now the exclusive web-UI source for embedded builds** —
+  the on-disk web-UI "escape hatches" (`~/.oxios/web/dist/` manual override
+  and `<workspace>/web/dist/`) were removed. They silently shadowed binary
+  deploys: a manually placed dist was served ahead of the compiled-in SPA,
+  so fresh binaries kept serving yesterday's bundle until the directory was
+  deleted (stale-UI incidents, 2026-08-19). Embedded builds now resolve the
+  SPA straight from the binary — serving, startup resolution
+  (`ensure_web_dist`), the daily/eager sync, `oxios update --web-only`, and
+  the runtime update API all skip or gate on-disk dists; the
+  `~/.oxios/web/.active` marker path remains for non-embedded (crates.io)
+  installs, which still auto-download `web-dist.zip` on first run.
 
 ## [1.42.0] - 2026-08-17
 

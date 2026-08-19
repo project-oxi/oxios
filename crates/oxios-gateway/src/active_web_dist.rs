@@ -193,25 +193,26 @@ impl ActiveWebDist {
             .all(|name| assets_dir.join(name).is_file())
     }
 
-    /// Resolve the active directory at process start.
+    /// Resolve the active directory at process start from the persisted
+    /// marker file.
     ///
-    /// Order: (1) the persisted marker file, if it points at a
-    /// **self-consistent** directory; (2) the `legacy` directory, if it is
-    /// self-consistent. Returns `None` when neither is usable (caller should
-    /// download/embed). Self-consistency (see [`dist_is_consistent`]) is
-    /// required, not merely the presence of `index.html`, so an internally
-    /// inconsistent dir is never honored — the caller falls through to a
-    /// fresh download instead of serving a broken page forever.
-    pub fn resolve(marker: &std::path::Path, legacy: Option<&std::path::Path>) -> Option<PathBuf> {
-        if let Ok(s) = std::fs::read_to_string(marker) {
-            let p = PathBuf::from(s.trim());
-            if Self::dist_is_consistent(&p) {
-                return Some(p);
-            }
-        }
-        legacy
-            .filter(|p| Self::dist_is_consistent(p))
-            .map(PathBuf::from)
+    /// Returns `Some(path)` only when the marker points at a
+    /// **self-consistent** directory (see [`dist_is_consistent`]); `None`
+    /// otherwise (caller should download). Self-consistency is required, not
+    /// merely the presence of `index.html`, so an internally inconsistent dir
+    /// is never honored — the caller falls through to a fresh download
+    /// instead of serving a broken page forever.
+    ///
+    /// The old `legacy` (`~/.oxios/web/dist`) fallback parameter was removed:
+    /// embedded builds serve the compiled-in SPA exclusively, and a manually
+    /// placed directory silently shadowing binary deploys caused stale-UI
+    /// incidents (2026-08-19).
+    pub fn resolve(marker: &std::path::Path) -> Option<PathBuf> {
+        let Ok(s) = std::fs::read_to_string(marker) else {
+            return None;
+        };
+        let p = PathBuf::from(s.trim());
+        Self::dist_is_consistent(&p).then_some(p)
     }
 }
 
@@ -345,8 +346,8 @@ mod tests {
         assert!(!ActiveWebDist::dist_is_consistent(root));
     }
 
-    /// resolve() must refuse an internally-inconsistent marker dir and fall
-    /// through to the legacy dir (or None) — never honor a broken dist.
+    /// resolve() must refuse an internally-inconsistent marker dir (None —
+    /// never honor a broken dist) and honor a consistent one.
     #[test]
     fn resolve_refuses_inconsistent_marker_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -365,13 +366,14 @@ mod tests {
 
         let marker = tmp.path().join(".active");
         std::fs::write(&marker, broken.to_string_lossy().as_bytes()).unwrap();
+        // Marker points at broken → None (caller downloads).
+        assert_eq!(ActiveWebDist::resolve(&marker), None);
 
-        // Marker points at broken → resolve falls through to legacy (good).
-        let resolved = ActiveWebDist::resolve(&marker, Some(&good));
-        assert_eq!(resolved.as_deref(), Some(good.as_path()));
-
-        // No usable legacy either → None (caller downloads).
-        assert_eq!(ActiveWebDist::resolve(&marker, None), None);
+        std::fs::write(&marker, good.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(
+            ActiveWebDist::resolve(&marker).as_deref(),
+            Some(good.as_path())
+        );
     }
 
     fn counter_value(metric: &str) -> u64 {

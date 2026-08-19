@@ -481,9 +481,16 @@ pub(crate) async fn handle_update_run(
     let mut web_updated = false;
     let mut messages: Vec<String> = Vec::new();
 
-    // Update web UI (atomic — RFC-024 SP3)
+    // Update web UI (atomic — RFC-024 SP3). Embedded builds skip this
+    // entirely: the SPA ships in the binary and nothing on disk can replace
+    // it — publishing a downloaded generation would be dead weight.
     if body.web {
-        if let Some((name, url, size)) = assets.iter().find(|(n, _, _)| n == "web-dist.zip") {
+        if crate::embedded_web::is_embedded() {
+            messages.push(
+                "Web UI skipped: embedded build serves the web UI from the binary — update the binary instead".to_string(),
+            );
+        } else if let Some((name, url, size)) = assets.iter().find(|(n, _, _)| n == "web-dist.zip")
+        {
             tracing::info!(name, size, "Downloading web UI for update");
             let bytes = download_bytes(&client, url, MAX_DOWNLOAD_BYTES).await?;
 

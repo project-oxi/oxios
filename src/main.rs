@@ -3009,8 +3009,8 @@ async fn cmd_serve(kernel: &Kernel, config_path: &Path) -> Result<()> {
     //   1. No "web UI not found" on first `oxios start`
     //   2. Users who `cargo install oxios` without building web get it auto-downloaded
     //   3. Server binding is delayed until web UI is ready — no 404 on startup
-    let workspace = PathBuf::from(&kernel.config().kernel.workspace);
-    let web_result = web_dist::ensure_web_dist(&workspace).await;
+    // Embedded builds short-circuit to the compiled-in SPA immediately.
+    let web_result = web_dist::ensure_web_dist().await;
 
     // RFC-024 SP4: finalize the engine readiness. State store is already
     // `Ready` (set in kernel::build). An engine with a configured API key
@@ -3035,8 +3035,7 @@ async fn cmd_serve(kernel: &Kernel, config_path: &Path) -> Result<()> {
 
     // Extract path for surface activation
     let web_dist_path: Option<PathBuf> = match &web_result {
-        web_dist::WebDistResult::UserDir(p) => Some(p.clone()),
-        web_dist::WebDistResult::WorkspaceDir(p) => Some(p.clone()),
+        web_dist::WebDistResult::Marker(p) => Some(p.clone()),
         web_dist::WebDistResult::Downloaded { path, .. } => Some(path.clone()),
         web_dist::WebDistResult::Embedded => None,
         web_dist::WebDistResult::DownloadFailed { .. } => None,

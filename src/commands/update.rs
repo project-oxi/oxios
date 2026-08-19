@@ -255,31 +255,40 @@ pub async fn run_update(
     // target, download into a versioned staging dir, validate, and persist
     // the marker. The running daemon picks the new generation up on restart
     // (the CLI runs in its own process — no in-memory pointer to swap).
+    // Embedded builds skip: the SPA ships in the binary — nothing on disk
+    // can replace it.
     if update_web {
-        let target = version
-            .map(|v| crate::web_dist::SyncTarget::Version(v.to_string()))
-            .unwrap_or(crate::web_dist::SyncTarget::Latest);
-        match crate::web_dist::sync_to_disk(target).await {
-            crate::web_dist::SyncOutcome::Updated { to } => {
-                outcome.web_updated = true;
-                println!("  {} Web UI updated to {}.", style("✓").green(), to);
-            }
-            crate::web_dist::SyncOutcome::UpToDate { active, target } => {
-                println!(
-                    "  {} Web UI already at {} (latest {}).",
-                    style("✓").green(),
-                    active,
-                    target
-                );
-            }
-            crate::web_dist::SyncOutcome::Unstamped => {
-                println!(
-                    "  {} Active web dist has no version stamp; skipping download.",
-                    style("⚠").yellow()
-                );
-            }
-            crate::web_dist::SyncOutcome::Failed { reason } => {
-                anyhow::bail!("Web UI update failed: {reason}");
+        if crate::embedded_web::is_embedded() {
+            println!(
+                "  {} Web UI skipped: embedded build ships the web UI in the binary — update the binary instead.",
+                style("⚠").yellow()
+            );
+        } else {
+            let target = version
+                .map(|v| crate::web_dist::SyncTarget::Version(v.to_string()))
+                .unwrap_or(crate::web_dist::SyncTarget::Latest);
+            match crate::web_dist::sync_to_disk(target).await {
+                crate::web_dist::SyncOutcome::Updated { to } => {
+                    outcome.web_updated = true;
+                    println!("  {} Web UI updated to {}.", style("✓").green(), to);
+                }
+                crate::web_dist::SyncOutcome::UpToDate { active, target } => {
+                    println!(
+                        "  {} Web UI already at {} (latest {}).",
+                        style("✓").green(),
+                        active,
+                        target
+                    );
+                }
+                crate::web_dist::SyncOutcome::Unstamped => {
+                    println!(
+                        "  {} Active web dist has no version stamp; skipping download.",
+                        style("⚠").yellow()
+                    );
+                }
+                crate::web_dist::SyncOutcome::Failed { reason } => {
+                    anyhow::bail!("Web UI update failed: {reason}");
+                }
             }
         }
     }

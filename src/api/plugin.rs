@@ -31,11 +31,12 @@ use tower_http::compression::CompressionLayer;
 
 // Web UI serving. When the binary is compiled with a built `web/dist/`
 // present, `build.rs` emits `web_embedded` and `src/embedded_web.rs` bakes
-// the SPA into the binary — served with no first-run download. When absent
-// (`cargo install` from crates.io), `src/web_dist.rs::ensure_web_dist`
-// downloads `web-dist.zip` from GitHub Releases at startup. Per RFC-024 C3,
-// an active dist (downloaded/manual) is served exclusively; embedded assets
-// are used only when no active dist exists, so two build hashes never mix.
+// the SPA into the binary — served EXCLUSIVELY: no first-run download, and
+// no on-disk dist can override it (a manual override used to silently
+// shadow binary deploys with stale UIs — removed 2026-08-19). When the
+// cfg is absent (`cargo install` from crates.io), `ensure_web_dist`
+// downloads `web-dist.zip` from GitHub Releases at startup and serving
+// goes through the active-dist pointer (RFC-024 SP3/C3).
 
 // ---------------------------------------------------------------------------
 // Filesystem serving (RFC-024 SP3: atomic pointer + immutable cache)
@@ -191,15 +192,29 @@ fn asset_response(data: Vec<u8>, clean: &str, if_none_match: Option<&str>) -> Re
 
 /// Serve a static file.
 ///
-/// **RFC-024 C3 (3-source consistency):** when an active dist is published
-/// (`Some`), we serve *only* from it and never fall back to embedded assets,
-/// so a request never mixes two build hashes. Embedded assets are used only
-/// when no active dist exists (binary compiled with `web/dist/` present and
-/// no download/manual override on disk).
+/// **Embedded-first:** when the binary has the SPA compiled in, it is served
+/// exclusively — an active-dist pointer is never consulted, so nothing on
+/// disk can shadow the binary's UI. Otherwise (crates.io builds) an active
+/// dist is served *only* from itself with no embedded fallback, so a request
+/// never mixes two build hashes (RFC-024 C3).
 fn serve_file(dist: Option<&std::path::Path>, path: &str, if_none_match: Option<&str>) -> Response {
     let clean = path.trim_start_matches('/');
 
-    // Active dist: serve ONLY from it (C3 — no embedded fallback on miss).
+    // Embedded assets: authoritative and exclusive when compiled in.
+    if crate::embedded_web::is_embedded() {
+        if let Some(data) = crate::embedded_web::get(clean)
+            .or_else(|| crate::embedded_web::get(&format!("assets/{clean}")))
+        {
+            return asset_response(data.to_vec(), clean, if_none_match);
+        }
+        return Response::builder()
+            .status(404)
+            .body(Body::empty())
+            .expect("static response build is infallible");
+    }
+
+    // Non-embedded: active dist is served ONLY from it (C3 — no fallback on
+    // miss).
     if let Some(d) = dist {
         if let Some(data) = fs_read(d, clean).or_else(|| fs_read(d, &format!("assets/{clean}"))) {
             return asset_response(data, clean, if_none_match);
@@ -210,15 +225,9 @@ fn serve_file(dist: Option<&std::path::Path>, path: &str, if_none_match: Option<
             .expect("static response build is infallible");
     }
 
-    // No active dist → embedded assets (authoritative when compiled in).
-    if let Some(data) = crate::embedded_web::get(clean)
-        .or_else(|| crate::embedded_web::get(&format!("assets/{clean}")))
-    {
-        return asset_response(data.to_vec(), clean, if_none_match);
-    }
-
-    // No embedded assets either (crates.io build, download not yet complete) →
-    // 503 so the client retries. `ensure_web_dist` makes this transient.
+    // No active dist and no embedded assets (crates.io build, download not
+    // yet complete) → 503 so the client retries. `ensure_web_dist` makes
+    // this transient.
     Response::builder()
         .status(503)
         .header("Retry-After", "5")

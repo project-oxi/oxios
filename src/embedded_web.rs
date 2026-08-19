@@ -10,16 +10,17 @@
 //! not set, asset lookups return `None`, and the daemon falls back to the
 //! runtime download path in [`crate::web_dist`].
 //!
-//! # Authoritative, not a fallback
+//! # Authoritative and exclusive
 //!
 //! When embedded, [`crate::web_dist::ensure_web_dist`] returns
-//! [`WebDistResult::Embedded`](crate::web_dist::WebDistResult::Embedded) and
-//! skips the GitHub download entirely, so no competing on-disk dist is ever
-//! created (RFC-024 C3: never mix two build hashes). A manually placed
-//! `~/.oxios/web/dist/` still takes precedence as an escape hatch for testing
-//! or custom UIs. The automatic daily sync is also a no-op when embedded (see
-//! [`crate::web_dist::sync`]), so the binary stays self-contained; `oxios
-//! update --web-only` remains an explicit manual override.
+//! [`WebDistResult::Embedded`](crate::web_dist::WebDistResult::Embedded),
+//! serving goes straight to the baked-in assets (see
+//! `crate::api::plugin::serve_file`), and every sync path
+//! ([`crate::web_dist::sync`], `sync_to_disk`, the runtime update API) is a
+//! no-op — no competing on-disk dist is ever created or honored (RFC-024 C3:
+//! never mix two build hashes). The former `~/.oxios/web/dist/` manual
+//! override was removed: it silently shadowed binary deploys with stale UIs
+//! (2026-08-19).
 //!
 //! Both `web_embedded` (set by `build.rs`) and the `web` feature (the only
 //! config that actually serves assets) must hold for embedding to activate —

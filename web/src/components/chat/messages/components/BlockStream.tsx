@@ -15,6 +15,7 @@
 // below their card so the agent's edits are scannable without leaving chat.
 
 import { memo, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { InlineDiffViewer, isFileEditCall } from '@/components/chat/InlineDiffViewer'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import { Thinking } from '@/components/chat/thinking'
@@ -25,6 +26,8 @@ import { ToolCallCard } from './ToolCallList'
 interface BlockStreamProps {
   blocks: ChatBlock[]
   messageId: string
+  /** Turn still generating — enables the trailing working pulse. */
+  generating?: boolean
 }
 
 /** Build a small wrapper that renders the tool card + the optional diff. */
@@ -49,7 +52,44 @@ function renderToolBlock(b: ChatBlock & { type: 'tool' }, showDiffViewer: boolea
   )
 }
 
-export const BlockStream = memo(function BlockStream({ blocks, messageId }: BlockStreamProps) {
+/** Whether a block is mid-flight and shows its own live affordance
+ *  (reasoning sweep / tool spinner / streaming markdown). */
+function isBlockStreaming(b: ChatBlock): boolean {
+  if (b.type === 'reasoning') return b.status === 'streaming'
+  if (b.type === 'tool') return b.status === 'loading'
+  if (b.type === 'text') return !!b.streaming
+  return false
+}
+
+/** Trailing "still working" pulse for the dead zones of a turn — before the
+ *  first delta arrives and between phases (e.g. after a tool ends, while the
+ *  second LLM round-trip is in flight). Quieter than a process block: three
+ *  muted dots, no text, so it never competes with real content. */
+function WorkingTail() {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="status"
+      aria-label={t('chat.liveActivity.working')}
+      className="mt-1.5 flex items-center gap-1 px-0.5 py-1"
+      data-testid="working-tail"
+    >
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+export const BlockStream = memo(function BlockStream({
+  blocks,
+  messageId,
+  generating,
+}: BlockStreamProps) {
   const { capabilities } = usePersonaCapabilities()
   const showDiffViewer = capabilities.has('diff-viewer')
 
@@ -105,6 +145,9 @@ export const BlockStream = memo(function BlockStream({ blocks, messageId }: Bloc
           </div>
         )
       })}
+      {/* Working pulse only in dead zones: turn generating but no block is
+         mid-flight (blocks show their own live affordance while streaming). */}
+      {generating && !blocks.some((b) => isBlockStreaming(b)) && <WorkingTail />}
     </div>
   )
 })

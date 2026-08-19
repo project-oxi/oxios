@@ -86,7 +86,7 @@ function AssistantMessageImpl({
       }
     >
       <div className="flex flex-col gap-2">
-        <BlockStream blocks={message.blocks!} messageId={message.id} />
+        <BlockStream blocks={message.blocks!} messageId={message.id} generating={message.generating} />
         {hasSearch && message.search && <SearchGrounding search={message.search} />}
         {hasChunks && <FileChunksPlaceholder chunks={message.chunksList!} />}
         {isError && chatError && <ErrorCard error={chatError} onRetry={onRetry} />}

@@ -357,6 +357,7 @@
     },
     "liveActivity": {
       "thinking": "Thinking...",
+      "working": "Working",
       "reasoning": "Reasoning...",
       "writing": "Writing response...",
       "toolRunning": "Running {{name}}",

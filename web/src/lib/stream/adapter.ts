@@ -112,7 +112,16 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
       const err: ChatError | undefined = raw.is_error
         ? {
             type: 'tool_error',
-            message: typeof raw.tool_result === 'string' ? raw.tool_result : undefined,
+            // Gate denials and exec failures surface their reason via
+            // `output_summary`; the structured `tool_result` variant is the
+            // other wire format. Without the fallback the card collapses the
+            // reason to a generic "Tool error".
+            message:
+              typeof raw.tool_result === 'string'
+                ? raw.tool_result
+                : typeof raw.output_summary === 'string'
+                  ? raw.output_summary
+                  : undefined,
             severity: 'error',
           }
         : undefined

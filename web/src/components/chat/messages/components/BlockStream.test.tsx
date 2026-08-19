@@ -5,14 +5,17 @@ import { describe, expect, it } from 'vitest'
 import type { ChatBlock } from '@/types'
 import { BlockStream } from './BlockStream'
 
-function renderBlockStream(blocks: ChatBlock[], messageId: string) {
+function renderBlockStream(blocks: ChatBlock[], messageId: string, generating = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
-  return render(<BlockStream blocks={blocks} messageId={messageId} />, { wrapper })
+  return render(
+    <BlockStream blocks={blocks} messageId={messageId} generating={generating} />,
+    { wrapper },
+  )
 }
 
 describe('BlockStream', () => {
@@ -62,5 +65,44 @@ describe('BlockStream', () => {
     expect(text).toContain('Considering the options first')
     // Answer still renders after the reasoning span (flow order).
     expect(text.indexOf('Considering')).toBeLessThan(text.indexOf('Answer'))
+  })
+
+  describe('working tail', () => {
+    it('shows the pulse when generating and all blocks are settled', () => {
+      const blocks: ChatBlock[] = [
+        {
+          type: 'tool',
+          id: 't1',
+          identifier: 'kernel',
+          apiName: 'exec',
+          arguments: {},
+          status: 'success',
+        },
+      ]
+      const { getByTestId } = renderBlockStream(blocks, 'm1', true)
+      expect(getByTestId('working-tail')).toBeDefined()
+    })
+
+    it('hides the pulse while the trailing block streams its own affordance', () => {
+      const blocks: ChatBlock[] = [
+        {
+          type: 'reasoning',
+          id: 'r1',
+          text: 'thinking hard',
+          status: 'streaming',
+          startedAt: Date.now(),
+        },
+      ]
+      const { queryByTestId } = renderBlockStream(blocks, 'm1', true)
+      expect(queryByTestId('working-tail')).toBeNull()
+    })
+
+    it('hides the pulse when the turn is not generating', () => {
+      const blocks: ChatBlock[] = [
+        { type: 'text', id: 'x1', text: 'done answer' },
+      ]
+      const { queryByTestId } = renderBlockStream(blocks, 'm1', false)
+      expect(queryByTestId('working-tail')).toBeNull()
+    })
   })
 })

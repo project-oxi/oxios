@@ -43,3 +43,38 @@ describe('adaptChunk — reasoning delta threading', () => {
     expect(end.events).toEqual([{ kind: 'reasoning.end', messageId: 'm1' }])
   })
 })
+
+describe('adaptChunk — tool_end error reason', () => {
+  it('carries output_summary as the error message for gate denials', () => {
+    // Exact wire shape of a GatedTool denial: no `tool_result`, reason only in
+    // `output_summary`. The card's error paragraph must show the 🔒 reason,
+    // not the generic "Tool error" fallback.
+    const result = adaptChunk(
+      {
+        type: 'tool_end',
+        tool_name: 'exec',
+        tool_call_id: 't1',
+        duration_ms: 0,
+        is_error: true,
+        output_summary:
+          "🔒 Access denied: CSpace lacks EXECUTE capability for tool 'exec' [CSpace]",
+      },
+      { msgId: 'm1' },
+    )
+    const end = result.events.find((e) => e.kind === 'tool.end') as {
+      error?: { message?: string }
+    }
+    expect(end.error?.message).toContain('🔒 Access denied')
+  })
+
+  it('keeps a structured tool_result string as the error message', () => {
+    const result = adaptChunk(
+      { type: 'tool_end', tool_call_id: 't2', is_error: true, tool_result: 'boom' },
+      { msgId: 'm1' },
+    )
+    const end = result.events.find((e) => e.kind === 'tool.end') as {
+      error?: { message?: string }
+    }
+    expect(end.error?.message).toBe('boom')
+  })
+})

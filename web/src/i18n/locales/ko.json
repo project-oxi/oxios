@@ -357,6 +357,7 @@
     },
     "liveActivity": {
       "thinking": "생각하는 중...",
+      "working": "작업 중",
       "reasoning": "추론 중",
       "writing": "응답 작성 중...",
       "toolRunning": "{{name}} 실행 중",

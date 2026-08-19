@@ -1495,7 +1495,7 @@ async fn run_agent(
     // means the spawned agent task panicked or was cancelled.
     let result = run_handle
         .await
-        .unwrap_or_else(|e| Err(anyhow::anyhow!("agent stream task failed: {e}").into()));
+        .unwrap_or_else(|e| Err(anyhow::anyhow!("agent stream task failed: {e}")));
 
     // Record circuit breaker result after agent execution. The breaker is
     // observational (see `LLM_CIRCUIT_BREAKER`); the gauge reflects its real

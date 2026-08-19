@@ -54,7 +54,7 @@ export function EventDetail({ event, onEdit, onDelete, onUnlinkNote, onClose }: 
     if (!event.note_path) return
     openFile(event.note_path)
     closeCenter()
-    navigate({ to: '/knowledge' })
+    navigate({ to: '/brain/knowledge' })
     onClose()
   }
 

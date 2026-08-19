@@ -3,9 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { deriveSidebarMode, useSidebarStore } from '@/stores/sidebar'
 import { SIDEBAR_MODES } from './mode-tabs'
-
 /**
- * BottomNav — mobile-only mode switcher (Console / Knowledge / Chat).
+ * BottomNav — mobile-only mode switcher (Console / Brain / Chat).
  *
  * On mobile the Sidebar lives in a slide-in drawer, which is the right place
  * for *context* navigation (chat sessions, file trees) but the wrong place for
@@ -27,6 +26,7 @@ export function BottomNav() {
   const { t } = useTranslation()
   const router = useRouterState()
   const currentMode = deriveSidebarMode(router.location.pathname)
+  const activeKey = currentMode === 'knowledge' ? 'brain' : currentMode
   const setMobileOpen = useSidebarStore((s) => s.setMobileOpen)
 
   return (
@@ -39,7 +39,7 @@ export function BottomNav() {
       )}
     >
       {SIDEBAR_MODES.map(({ key, icon: Icon, labelKey, href }) => {
-        const isActive = currentMode === key
+        const isActive = activeKey === key
         return (
           <Link
             key={key}

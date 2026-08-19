@@ -169,7 +169,9 @@ pub use mcp::{
 };
 
 // ─── Intelligence ───────────────────────────────────────────────────
-pub use brain::{BrainConfig, BrainConnection};
+pub use brain::{
+    BrainConfig, BrainConnection, BrainSupervisor, SupervisorConfig, SupervisorStatus,
+};
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
 pub use memory_agent::sona::{
     LearnedPattern, SonaEngine, SonaMode, Trajectory, TrajectoryStep, Verdict,

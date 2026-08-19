@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import type { ChatBlock, ChatMessage, StreamChunk } from '@/types'
 import { uuid } from '@/lib/uuid'
+import type { ChatBlock, ChatMessage, StreamChunk } from '@/types'
 import {
   applyContentChunk,
   applyTextFlush,

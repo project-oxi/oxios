@@ -40,7 +40,7 @@ export function DocumentView({ view }: DocumentViewProps) {
     // openFile first so the target page mounts with the file already selected.
     openFile(path)
     clearStack()
-    navigate({ to: '/knowledge' })
+    navigate({ to: '/brain/knowledge' })
   }
 
   if (isLoading) {

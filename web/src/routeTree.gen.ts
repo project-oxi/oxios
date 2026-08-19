@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
-import { Route as BrainRouteImport } from './routes/brain'
 import { Route as BudgetRouteImport } from './routes/budget'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CronJobsRouteImport } from './routes/cron-jobs'
@@ -28,6 +27,10 @@ import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TokenMaxingRouteImport } from './routes/token-maxing'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
+import { Route as BrainIndexRouteImport } from './routes/brain/index'
+import { Route as BrainContradictionsRouteImport } from './routes/brain/contradictions'
+import { Route as BrainEntityRouteImport } from './routes/brain/entity'
+import { Route as BrainSearchRouteImport } from './routes/brain/search'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
 import { Route as MountsIndexRouteImport } from './routes/mounts/index'
@@ -37,6 +40,8 @@ import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
 import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
+import { Route as BrainKnowledgeIndexRouteImport } from './routes/brain/knowledge/index'
+import { Route as BrainKnowledgeGraphRouteImport } from './routes/brain/knowledge/graph'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,11 +51,6 @@ const IndexRoute = IndexRouteImport.update({
 const AssetsRoute = AssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainRoute = BrainRouteImport.update({
-  id: '/brain',
-  path: '/brain',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BudgetRoute = BudgetRouteImport.update({
@@ -133,6 +133,26 @@ const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
   path: '/agents/$agentId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BrainIndexRoute = BrainIndexRouteImport.update({
+  id: '/brain/',
+  path: '/brain/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrainContradictionsRoute = BrainContradictionsRouteImport.update({
+  id: '/brain/contradictions',
+  path: '/brain/contradictions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrainEntityRoute = BrainEntityRouteImport.update({
+  id: '/brain/entity',
+  path: '/brain/entity',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrainSearchRoute = BrainSearchRouteImport.update({
+  id: '/brain/search',
+  path: '/brain/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const KnowledgeIndexRoute = KnowledgeIndexRouteImport.update({
   id: '/knowledge/',
   path: '/knowledge/',
@@ -178,11 +198,20 @@ const AgentsAgentIdTraceRoute = AgentsAgentIdTraceRouteImport.update({
   path: '/trace',
   getParentRoute: () => AgentsAgentIdRoute,
 } as any)
+const BrainKnowledgeIndexRoute = BrainKnowledgeIndexRouteImport.update({
+  id: '/brain/knowledge/',
+  path: '/brain/knowledge/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BrainKnowledgeGraphRoute = BrainKnowledgeGraphRouteImport.update({
+  id: '/brain/knowledge/graph',
+  path: '/brain/knowledge/graph',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -198,21 +227,26 @@ export interface FileRoutesByFullPath {
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
+  '/brain/contradictions': typeof BrainContradictionsRoute
+  '/brain/entity': typeof BrainEntityRoute
+  '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/mounts/': typeof MountsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
+  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -228,22 +262,27 @@ export interface FileRoutesByTo {
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
+  '/brain/contradictions': typeof BrainContradictionsRoute
+  '/brain/entity': typeof BrainEntityRoute
+  '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/brain': typeof BrainIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
   '/mounts': typeof MountsIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
+  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/brain/knowledge': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/brain': typeof BrainRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/cron-jobs': typeof CronJobsRoute
@@ -259,23 +298,28 @@ export interface FileRoutesById {
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
+  '/brain/contradictions': typeof BrainContradictionsRoute
+  '/brain/entity': typeof BrainEntityRoute
+  '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/mounts/': typeof MountsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
+  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/assets'
-    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -291,21 +335,26 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
+    | '/brain/contradictions'
+    | '/brain/entity'
+    | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
     | '/agents/'
+    | '/brain/'
     | '/knowledge/'
     | '/mounts/'
     | '/projects/'
     | '/sessions/'
     | '/workspace/'
     | '/agents/$agentId/trace'
+    | '/brain/knowledge/graph'
+    | '/brain/knowledge/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/assets'
-    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -321,21 +370,26 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
+    | '/brain/contradictions'
+    | '/brain/entity'
+    | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
     | '/agents'
+    | '/brain'
     | '/knowledge'
     | '/mounts'
     | '/projects'
     | '/sessions'
     | '/workspace'
     | '/agents/$agentId/trace'
+    | '/brain/knowledge/graph'
+    | '/brain/knowledge'
   id:
     | '__root__'
     | '/'
     | '/assets'
-    | '/brain'
     | '/budget'
     | '/chat'
     | '/cron-jobs'
@@ -351,22 +405,27 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
+    | '/brain/contradictions'
+    | '/brain/entity'
+    | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
     | '/agents/'
+    | '/brain/'
     | '/knowledge/'
     | '/mounts/'
     | '/projects/'
     | '/sessions/'
     | '/workspace/'
     | '/agents/$agentId/trace'
+    | '/brain/knowledge/graph'
+    | '/brain/knowledge/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssetsRoute: typeof AssetsRoute
-  BrainRoute: typeof BrainRoute
   BudgetRoute: typeof BudgetRoute
   ChatRoute: typeof ChatRoute
   CronJobsRoute: typeof CronJobsRoute
@@ -382,15 +441,21 @@ export interface RootRouteChildren {
   TasksRoute: typeof TasksRoute
   TokenMaxingRoute: typeof TokenMaxingRoute
   AgentsAgentIdRoute: typeof AgentsAgentIdRouteWithChildren
+  BrainContradictionsRoute: typeof BrainContradictionsRoute
+  BrainEntityRoute: typeof BrainEntityRoute
+  BrainSearchRoute: typeof BrainSearchRoute
   KnowledgeGraphRoute: typeof KnowledgeGraphRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  BrainIndexRoute: typeof BrainIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
   MountsIndexRoute: typeof MountsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
+  BrainKnowledgeGraphRoute: typeof BrainKnowledgeGraphRoute
+  BrainKnowledgeIndexRoute: typeof BrainKnowledgeIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -407,13 +472,6 @@ declare module '@tanstack/react-router' {
       path: '/assets'
       fullPath: '/assets'
       preLoaderRoute: typeof AssetsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain': {
-      id: '/brain'
-      path: '/brain'
-      fullPath: '/brain'
-      preLoaderRoute: typeof BrainRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/budget': {
@@ -528,6 +586,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsAgentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/brain/': {
+      id: '/brain/'
+      path: '/brain'
+      fullPath: '/brain/'
+      preLoaderRoute: typeof BrainIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brain/contradictions': {
+      id: '/brain/contradictions'
+      path: '/brain/contradictions'
+      fullPath: '/brain/contradictions'
+      preLoaderRoute: typeof BrainContradictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brain/entity': {
+      id: '/brain/entity'
+      path: '/brain/entity'
+      fullPath: '/brain/entity'
+      preLoaderRoute: typeof BrainEntityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brain/search': {
+      id: '/brain/search'
+      path: '/brain/search'
+      fullPath: '/brain/search'
+      preLoaderRoute: typeof BrainSearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/knowledge/': {
       id: '/knowledge/'
       path: '/knowledge'
@@ -591,6 +677,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsAgentIdTraceRouteImport
       parentRoute: typeof AgentsAgentIdRoute
     }
+    '/brain/knowledge/': {
+      id: '/brain/knowledge/'
+      path: '/brain/knowledge'
+      fullPath: '/brain/knowledge/'
+      preLoaderRoute: typeof BrainKnowledgeIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/brain/knowledge/graph': {
+      id: '/brain/knowledge/graph'
+      path: '/brain/knowledge/graph'
+      fullPath: '/brain/knowledge/graph'
+      preLoaderRoute: typeof BrainKnowledgeGraphRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -609,7 +709,6 @@ const AgentsAgentIdRouteWithChildren = AgentsAgentIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssetsRoute: AssetsRoute,
-  BrainRoute: BrainRoute,
   BudgetRoute: BudgetRoute,
   ChatRoute: ChatRoute,
   CronJobsRoute: CronJobsRoute,
@@ -625,15 +724,21 @@ const rootRouteChildren: RootRouteChildren = {
   TasksRoute: TasksRoute,
   TokenMaxingRoute: TokenMaxingRoute,
   AgentsAgentIdRoute: AgentsAgentIdRouteWithChildren,
+  BrainContradictionsRoute: BrainContradictionsRoute,
+  BrainEntityRoute: BrainEntityRoute,
+  BrainSearchRoute: BrainSearchRoute,
   KnowledgeGraphRoute: KnowledgeGraphRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  BrainIndexRoute: BrainIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
   MountsIndexRoute: MountsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
+  BrainKnowledgeGraphRoute: BrainKnowledgeGraphRoute,
+  BrainKnowledgeIndexRoute: BrainKnowledgeIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -848,6 +848,7 @@ pub(crate) async fn handle_brain_status(
             "available": false,
             "space": null,
             "episodes": null,
+            "supervisor": null,
         })));
     };
     let episodes = brain
@@ -858,6 +859,7 @@ pub(crate) async fn handle_brain_status(
         "available": brain.is_available(),
         "space": brain.space(),
         "episodes": episodes,
+        "supervisor": brain.supervisor_state(),
     })))
 }
 

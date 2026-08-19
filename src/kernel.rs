@@ -41,6 +41,9 @@ pub struct Kernel {
     mcp_bridge: Arc<McpBridge>,
     /// Brain daemon connection (RFC-047). Degrades when the daemon is down.
     brain: Arc<BrainConnection>,
+    /// First-party supervisor (RFC-047 + 2026-08-19) — installs/manages the
+    /// oxibrain daemon via launchd/spawn. Built at boot, drives ensure().
+    brain_supervisor: Arc<oxios_kernel::BrainSupervisor>,
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
     cron_scheduler: Arc<CronScheduler>,
     git_layer: Arc<GitLayer>,
@@ -287,7 +290,12 @@ impl Kernel {
                     self.token_maxer.clone(),
                 ));
                 // RFC-047: brain daemon facade — the /api/brain/* surface.
-                let kh = kh.with_brain(oxios_kernel::BrainApi::new(self.brain.clone()));
+                // BrainSupervisor built at boot (src/kernel.rs boot block);
+                // attach it so /api/brain/status surfaces install/launchd state.
+                let kh = kh.with_brain(oxios_kernel::BrainApi::new(
+                    self.brain.clone(),
+                    self.brain_supervisor.clone(),
+                ));
                 // RFC-043: attach the task store so web routes, the auto-run
                 // tick, and the `task` agent tool share ONE store. Boot
                 // continues without it (web surface hard-requires it and
@@ -1225,28 +1233,41 @@ impl KernelBuilder {
         // These are needed before KernelHandle creation (for AgentRuntime).
         // Order doesn't matter — they're independent.
 
-        // Brain daemon connection (RFC-047) — degraded when unavailable.
-        let brain = Arc::new(if config.brain.enabled {
-            let socket_path = if config.brain.socket_path.is_empty() {
-                let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-                home.join(".oxi").join("brain").join("oxibrain.sock")
-            } else {
-                oxios_kernel::config::expand_home(&config.brain.socket_path)
-            };
-            BrainConnection::connect(BrainConfig::new(socket_path, config.brain.space.clone()))
-                .await
+        // Brain daemon connection (RFC-047 + 2026-08-19 first-party supervision).
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let brain_supervisor = Arc::new(oxios_kernel::BrainSupervisor::new(
+            oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+        ));
+        // Boot-time install/start: only when the surface is enabled AND
+        // auto-management is opted in. Otherwise stays fully degraded.
+        if config.brain.enabled && config.brain.auto_manage {
+            brain_supervisor.ensure().await;
+        }
+        let socket_path = if config.brain.enabled {
+            oxios_kernel::brain::resolved_socket_path(
+                &home,
+                &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
+            )
         } else {
             // Fully degraded: connect against a socket that will never exist.
-            BrainConnection::connect(BrainConfig::new(
-                PathBuf::from("/nonexistent/oxibrain.sock"),
-                config.brain.space.clone(),
-            ))
-            .await
-        });
-        // Publish the initial daemon availability to the metrics gauge.
-        oxios_kernel::metrics::get_metrics()
-            .oxibrain_available
-            .set(if brain.is_available() { 1.0 } else { 0.0 });
+            PathBuf::from("/nonexistent/oxibrain.sock")
+        };
+        let mut brain_conn =
+            BrainConnection::connect(BrainConfig::new(socket_path, config.brain.space.clone()))
+                .await;
+        // On lazy-reconnect failure, ask the supervisor to respawn the daemon
+        // (rate-limited 30s). Only when the surface is enabled — a disabled
+        // surface must never trigger an auto-start.
+        if config.brain.enabled {
+            let sv = Arc::clone(&brain_supervisor);
+            brain_conn = brain_conn.with_on_unavailable(Arc::new(move || {
+                let sv = Arc::clone(&sv);
+                Box::pin(async move {
+                    sv.respawn_if_needed().await;
+                })
+            }));
+        }
+        let brain = Arc::new(brain_conn);
 
         // KernelDatabase — shared SQLite connection for mount/project tables.
         // Forward-only migration: the legacy `memory.db` is preserved untouched
@@ -1797,6 +1818,7 @@ impl KernelBuilder {
             persona_manager,
             mcp_bridge,
             brain,
+            brain_supervisor,
             auth_manager,
             cron_scheduler,
             git_layer,

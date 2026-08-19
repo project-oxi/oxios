@@ -6,7 +6,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 
 /**
  * Register global keyboard shortcuts for the Knowledge UI.
- * Only active when the current route is within /knowledge.
+ * Only active when the current route is within /brain/knowledge.
  *
  * Uses individual store selectors and ref-based mutation handles to avoid
  * stale closures and unnecessary re-registrations.
@@ -69,7 +69,7 @@ export function useKnowledgeShortcuts() {
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
       // Only activate when on a knowledge route
-      if (!pathnameRef.current.startsWith('/knowledge')) return
+      if (!pathnameRef.current.startsWith('/brain/knowledge')) return
 
       const isMeta = e.metaKey || e.ctrlKey
 

@@ -88,7 +88,7 @@ export function KnowledgeBrowser({ initialPath }: KnowledgeBrowserProps) {
   const openInEditor = useCallback(
     (path: string) => {
       // Navigate to knowledge page; the file will be visible from there
-      navigate({ to: '/knowledge' })
+      navigate({ to: '/brain/knowledge' })
       // Set the knowledge store's current file path for direct open
       import('@/stores/knowledge').then(({ useKnowledgeStore }) => {
         useKnowledgeStore.getState().openFile(path)

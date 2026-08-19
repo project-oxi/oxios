@@ -12,10 +12,9 @@ function renderBlockStream(blocks: ChatBlock[], messageId: string, generating = 
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   )
-  return render(
-    <BlockStream blocks={blocks} messageId={messageId} generating={generating} />,
-    { wrapper },
-  )
+  return render(<BlockStream blocks={blocks} messageId={messageId} generating={generating} />, {
+    wrapper,
+  })
 }
 
 describe('BlockStream', () => {
@@ -98,9 +97,7 @@ describe('BlockStream', () => {
     })
 
     it('hides the pulse when the turn is not generating', () => {
-      const blocks: ChatBlock[] = [
-        { type: 'text', id: 'x1', text: 'done answer' },
-      ]
+      const blocks: ChatBlock[] = [{ type: 'text', id: 'x1', text: 'done answer' }]
       const { queryByTestId } = renderBlockStream(blocks, 'm1', false)
       expect(queryByTestId('working-tail')).toBeNull()
     })

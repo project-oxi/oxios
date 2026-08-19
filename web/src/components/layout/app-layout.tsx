@@ -35,8 +35,9 @@ export function AppLayout() {
 
   const router = useRouterState()
   const pathname = router.location.pathname
-  const isKnowledge = pathname.startsWith('/knowledge')
-  const isKnowledgeSubRoute = isKnowledge && pathname !== '/knowledge' && pathname !== '/knowledge/'
+  const isKnowledge = pathname.startsWith('/brain/knowledge')
+  const isKnowledgeSubRoute =
+    isKnowledge && pathname !== '/brain/knowledge' && pathname !== '/brain/knowledge/'
   const isChat = pathname === '/chat'
   const { infoPanelOpen } = useKnowledgeStore()
 

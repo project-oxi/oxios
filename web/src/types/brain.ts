@@ -4,6 +4,23 @@
  * The daemon returns rich nested JSON; these types model only the shapes the
  * panel consumes and stay permissive where the payload is deep.
  */
+export type SupervisorState =
+  | 'disabled'
+  | 'not_installed'
+  | 'installing'
+  | 'starting'
+  | 'online'
+  | 'failed'
+
+export type ManagedBy = 'none' | 'launchd' | 'spawn' | 'external'
+
+export interface BrainSupervisorStatus {
+  state: SupervisorState
+  installed_version: string | null
+  daemon_version: string | null
+  managed_by: ManagedBy
+  last_error: string | null
+}
 
 /** GET /api/brain/status */
 export interface BrainStatus {
@@ -13,6 +30,8 @@ export interface BrainStatus {
   space: string | null
   /** Episode count in the space (null when unavailable). */
   episodes: number | null
+  /** Optional first-party supervisor lifecycle (2026-08-19 spec). */
+  supervisor?: BrainSupervisorStatus | null
 }
 
 /** GET /api/brain/stats — fields can be null when the daemon is degraded. */

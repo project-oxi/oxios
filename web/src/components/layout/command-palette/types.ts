@@ -13,8 +13,9 @@ import type { SidebarMode } from '@/stores/sidebar'
  * with the cmdk/shadcn `CommandItem` component imported alongside it in hosts.
  */
 
-/** The six palette verbs. `go` is implicit (bare-text / nav match). */
-export type Verb = 'go' | 'capture' | 'run' | 'switch' | 'control' | 'new'
+/** The palette verbs. `go` is implicit (bare-text / nav match). `search` is the
+ * brain-memory primary (bare text in the Brain surface searches memories). */
+export type Verb = 'go' | 'capture' | 'run' | 'switch' | 'control' | 'new' | 'search'
 
 /** A parsed `@entity` target. */
 export interface PaletteEntity {

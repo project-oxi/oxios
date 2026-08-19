@@ -94,6 +94,12 @@ pub struct BrainSection {
     pub socket_path: String,
     /// Space to operate in.
     pub space: String,
+    /// First-party supervision (2026-08-19 spec): install the daemon from
+    /// GitHub Releases when absent, keep it running via launchd with a
+    /// detached-spawn fallback. `false` restores pure degradation.
+    pub auto_manage: bool,
+    /// Explicit daemon binary path. Non-empty skips the download entirely.
+    pub binary_path: String,
 }
 
 impl Default for BrainSection {
@@ -102,6 +108,8 @@ impl Default for BrainSection {
             enabled: true,
             socket_path: String::new(),
             space: "personal".to_string(),
+            auto_manage: true,
+            binary_path: String::new(),
         }
     }
 }
@@ -2599,6 +2607,22 @@ fn telegram_token_warning(env_var: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn brain_section_defaults_and_overrides() {
+        let sec: BrainSection = toml::from_str("").unwrap();
+        assert!(sec.enabled);
+        assert!(sec.auto_manage);
+        assert_eq!(sec.binary_path, "");
+        assert_eq!(sec.space, "personal");
+
+        let sec: BrainSection = toml::from_str(
+            "enabled = false\nauto_manage = false\nbinary_path = \"/opt/oxibrain\"\n",
+        )
+        .unwrap();
+        assert!(!sec.enabled);
+        assert!(!sec.auto_manage);
+        assert_eq!(sec.binary_path, "/opt/oxibrain");
+    }
     #[test]
     fn telegram_api_base_defaults_and_parses() {
         let cfg: OxiosConfig = toml::from_str("").unwrap();

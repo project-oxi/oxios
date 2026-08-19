@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **oxibrain is now a first-party managed dependency (RFC-047)** — the
+  kernel's `BrainSupervisor` installs, starts, watches, and stops the daemon
+  instead of assuming it runs. Boot auto-installs from GitHub Releases
+  (`a7garden/oxibrain`) when `brain.enabled && brain.auto_manage`; the daemon
+  is kept alive via launchd (`com.oxi.oxibrain`, RunAtLoad + KeepAlive) with
+  a detached-spawn fallback; failed lazy-reconnects ask the supervisor to
+  respawn (rate-limited 30 s). New `[brain]` `auto_manage`/`binary_path`
+  options; `oxios brain install|start|stop|uninstall`; `/api/brain/status`
+  returns supervisor state. Degradation contract unchanged — every failure
+  logs and returns, turns always complete.
+- **Web UI top-level modes restructured** — Console/Brain/Chat; Knowledge
+  (notes) now nests under Brain at `/brain/knowledge`, with redirects from
+  the old `/knowledge/*` paths. Brain status banner surfaces supervisor
+  state (installing/starting/failed) alongside daemon health.
+
 ### Fixed
 - **Telegram/CLI token-spam on streaming turns** — the gateway's
   streaming-sink collector spawned for *every* channel, so each LLM

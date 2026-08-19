@@ -86,6 +86,8 @@ tar = { workspace = true }
 url = "2.5"
 sha2 = { workspace = true }
 hex = { workspace = true }
+# `which` for locating an `oxibrain` already on PATH (Task 5 supervisor).
+which = "7"
 getrandom = { workspace = true }
 once_cell = { workspace = true }
 blake3 = { workspace = true }

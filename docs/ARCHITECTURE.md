@@ -677,9 +677,38 @@ Agent memory lives in a **standalone daemon** (`oxibrain`, separate repo) reache
 
 **In-kernel survivors:** SONA (trajectory pattern engine, `memory_agent::sona`) and the embedding traits (`embedding` — `TextVector`, `cosine_similarity_f32`) were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite WAL) now owns the mount/project tables in `~/.oxios/workspace/kernel.db`.
 
-**Config:** `[brain]` section — `enabled` / `socket_path` (default `~/.oxi/brain/oxibrain.sock`) / `space` (default `personal`).
+**Config:** `[brain]` section — `enabled` / `socket_path` (default `~/.oxi/brain/oxibrain.sock`) / `space` (default `personal`) / `auto_manage` (default `true`) / `binary_path` (override install root).
 
-**Metrics:** `oxibrain_available` (gauge, set at boot + on reconnect), `oxibrain_recall_total` (counter, incremented on successful recall).
+**Metrics:** `oxibrain_available` (gauge, set at boot + on reconnect + on every supervisor state transition), `oxibrain_recall_total` (counter, incremented on successful recall).
+
+#### First-party supervision (2026-08-19)
+
+oxibrain is a **first-party managed dependency** (not just an external daemon). The kernel's `BrainSupervisor` (`crates/oxios-kernel/src/brain/supervisor.rs`) installs, starts, watches, and stops the daemon.
+
+```
+  BrainSupervisor (kernel) ── install │ ensure │ respawn_if_needed
+        │                                                    
+        ├─ GithubInstaller  → GitHub Releases (a7garden/oxibrain):
+        │    `oxibrain-aarch64-apple-darwin.tar.gz` + `.sha256`,
+        │    sha256-verified, atomic tmp+rename 0o755 to
+        │    ~/.oxi/bin/oxibrain.
+        │
+        ├─ launchd keeper (macOS) → plist ~/Library/LaunchAgents/
+        │    com.oxi.oxibrain.plist, RunAtLoad + KeepAlive; fallback
+        │    detached spawn (setsid) when launchctl is unavailable
+        │    (OXIOS_BRAIN_NO_LAUNCHD=1 test escape). Respawn
+        │    rate-limited 30 s; readiness timeout 30 s.
+        │
+        └─ Status: SupervisorState { Disabled, NotInstalled, Installing,
+             Starting, Online, Failed } + ManagedBy { None, Launchd,
+             Spawn, External }.
+```
+
+- **Boot** (`src/kernel.rs`): when `brain.enabled && brain.auto_manage`, `ensure()` installs/launches the daemon before the connection is made. A disabled surface never starts a daemon.
+- **Respawn hook:** `BrainConnection::with_on_unavailable` fires once per failed lazy-reconnect, asking the supervisor to `respawn_if_needed()` (rate-limited); the hook is attached only when the surface is enabled.
+- **`managed_by = external` no-op:** a supervisor that finds a live socket at entry does not touch that daemon (`stop()`/`uninstall()` only act on daemons it started).
+- **Degradation contract holds:** every supervisor failure logs, records state (`SupervisorStatus.last_error`), and returns — agent turns always complete.
+- **CLI:** `oxios brain install|start|stop|uninstall|status`; `/api/brain/status` returns `supervisor: SupervisorStatus`.
 
 
 ### 3.14.1 Oxi Foundation — Versioned Profile/Package Contract (RFC-048)

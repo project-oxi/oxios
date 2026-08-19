@@ -1495,12 +1495,11 @@ fn main() {
 
 /// Resolve the brain daemon socket path from config (empty → default).
 fn brain_socket_path(config: &OxiosConfig) -> PathBuf {
-    if config.brain.socket_path.is_empty() {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join(".oxi").join("brain").join("oxibrain.sock")
-    } else {
-        oxios_kernel::config::expand_home(&config.brain.socket_path)
-    }
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    oxios_kernel::brain::resolved_socket_path(
+        &home,
+        &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
+    )
 }
 
 /// `oxios brain` — talk to the oxibrain daemon directly (RFC-047).
@@ -1512,22 +1511,43 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
 
     match cmd {
         BrainCmd::Status => {
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
-                    std::process::exit(1);
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let sv = oxios_kernel::BrainSupervisor::new(
+                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            );
+            let sup = sv.status();
+            let mut online = false;
+            match BrainClient::connect(&socket).await {
+                Ok(mut client) => {
+                    let episodes = client
+                        .stats(&space)
+                        .await
+                        .ok()
+                        .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()))
+                        .unwrap_or(0);
+                    println!("brain: online");
+                    println!("space: {space}");
+                    println!("episodes: {episodes}");
+                    online = true;
                 }
-            };
-            let episodes = client
-                .stats(&space)
-                .await
-                .ok()
-                .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()))
-                .unwrap_or(0);
-            println!("brain: online");
-            println!("space: {space}");
-            println!("episodes: {episodes}");
+                Err(e) => {
+                    println!("brain: unavailable ({e})");
+                }
+            }
+            println!("supervisor: {:?}", sup.state);
+            println!("managed_by: {:?}", sup.managed_by);
+            if let Some(v) = &sup.installed_version {
+                println!("installed: {v}");
+            }
+            if let Some(v) = &sup.daemon_version {
+                println!("daemon: {v}");
+            }
+            if let Some(e) = &sup.last_error {
+                println!("last_error: {e}");
+            }
+            if !online {
+                std::process::exit(1);
+            }
             Ok(())
         }
         BrainCmd::Ingest { path } => {
@@ -1646,6 +1666,42 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             );
             std::process::exit(2);
         }
+        BrainCmd::Install => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let sv = oxios_kernel::BrainSupervisor::new(
+                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            );
+            let bin = sv.install().await?;
+            println!("installed oxibrain -> {}", bin.display());
+            Ok(())
+        }
+        BrainCmd::Start => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let sv = oxios_kernel::BrainSupervisor::new(
+                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            );
+            sv.start().await?;
+            println!("oxibrain started");
+            Ok(())
+        }
+        BrainCmd::Stop => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let sv = oxios_kernel::BrainSupervisor::new(
+                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            );
+            sv.stop().await?;
+            println!("oxibrain stopped");
+            Ok(())
+        }
+        BrainCmd::Uninstall => {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let sv = oxios_kernel::BrainSupervisor::new(
+                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            );
+            sv.uninstall().await?;
+            println!("oxibrain uninstalled");
+            Ok(())
+        }
     }
 }
 
@@ -1700,6 +1756,7 @@ async fn cmd_foundation(
                 home: home.to_path_buf(),
                 socket_path: Some(socket.clone()),
                 may_start_daemon: *may_start,
+                starter: None,
             };
             let report = bootstrap(&cfg).await.context("foundation bootstrap")?;
             println!("{}", serde_json::to_string_pretty(&report)?);

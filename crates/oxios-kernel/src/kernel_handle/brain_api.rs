@@ -4,21 +4,43 @@
 //! [`BrainConnection`](crate::brain::BrainConnection) and exposes the same
 //! surface to the web routes and the memory tools. All operations follow the
 //! degradation contract: `None`/empty when the daemon is unavailable.
+//!
+//! The supervisor handle is shared with the kernel so `/api/brain/status`
+//! can surface install / launchd state without re-running `ensure`.
 
-use crate::brain::BrainConnection;
+use crate::brain::{BrainConnection, BrainSupervisor, SupervisorStatus};
 use serde_json::Value;
+use std::fmt;
 use std::sync::Arc;
 
 /// Facade over the oxibrain daemon connection.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BrainApi {
     conn: Arc<BrainConnection>,
+    supervisor: Arc<BrainSupervisor>,
+}
+
+impl fmt::Debug for BrainApi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The supervisor holds Arc<dyn Installer>/ProbeFn which aren't
+        // Debug; mask them like the sibling facades (BrowserApi, EngineApi…).
+        f.debug_struct("BrainApi")
+            .field("conn", &self.conn)
+            .field("supervisor", &"Some(<supervisor>)")
+            .finish()
+    }
 }
 
 impl BrainApi {
-    /// Wrap a shared connection.
-    pub fn new(conn: Arc<BrainConnection>) -> Self {
-        Self { conn }
+    /// Wrap a shared connection and supervisor.
+    pub fn new(conn: Arc<BrainConnection>, supervisor: Arc<BrainSupervisor>) -> Self {
+        Self { conn, supervisor }
+    }
+
+    /// Live snapshot of the supervisor (install / launchd / spawn state).
+    /// Cheap clone — the supervisor caches the value internally.
+    pub fn supervisor_state(&self) -> SupervisorStatus {
+        self.supervisor.status()
     }
 
     /// Whether the daemon is currently reachable.

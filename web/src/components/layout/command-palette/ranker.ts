@@ -2,13 +2,14 @@ import type { PaletteItem, QueryContext, Verb } from './types'
 
 /**
  * Mode-primary verb: what a bare-text (no prefix) query resolves to per mode.
- * console → go (navigate), knowledge → capture (memo), chat → run (message).
- * (Design §5, fork R6 resolved.)
+ * console → go (navigate), knowledge → capture (memo), brain → search, chat → run.
  */
 export function modePrimaryVerb(mode: QueryContext['mode']): Verb {
   switch (mode) {
     case 'knowledge':
       return 'capture'
+    case 'brain':
+      return 'search'
     case 'chat':
       return 'run'
     default:

@@ -235,7 +235,9 @@ auto_promote_interval_secs = 3600
 # degrade gracefully (return empty) and agent turns complete normally.
 [brain]
 enabled = true
+auto_manage = true
 # socket_path = ""  # Empty = ~/.oxi/brain/oxibrain.sock
+# binary_path = ""  # Explicit daemon binary; non-empty skips auto-install
 space = "personal"
 # Uncomment to customize settings; when the section is omitted, defaults below apply.
 # Events are stored as .ics files in ~/.oxios/workspace/calendar/events/

@@ -204,13 +204,13 @@ impl<T: AgentTool + 'static> AgentTool for GatedTool<T> {
                 layer = ?denied.layer,
                 "GatedTool: tool access denied"
             );
-        // Return Err (not Ok(error-result)): oxicode-agent's loop only sets
-        // `is_error` on ToolExecutionEnd for Err results or after_tool_call
-        // hook overrides — an Ok soft-error streams as `is_error: false`,
-        // so the web UI renders denials as successful tool calls. Err keeps
-        // the same denial text for the LLM (the loop converts it back to an
-        // error AgentToolResult) while flagging the call as failed.
-        return Err(format_denied(&denied));
+            // Return Err (not Ok(error-result)): oxicode-agent's loop only sets
+            // `is_error` on ToolExecutionEnd for Err results or after_tool_call
+            // hook overrides — an Ok soft-error streams as `is_error: false`,
+            // so the web UI renders denials as successful tool calls. Err keeps
+            // the same denial text for the LLM (the loop converts it back to an
+            // error AgentToolResult) while flagging the call as failed.
+            return Err(format_denied(&denied));
         }
 
         // Step 2: For file tools, check path access permission. On denial,
@@ -566,7 +566,10 @@ mod tests {
         assert!(res.is_err(), "CSpace denial must be Err, got Ok: {res:?}");
         let msg = res.expect_err("checked is_err above");
         assert!(msg.contains("🔒"), "denial text missing lock marker: {msg}");
-        assert!(msg.contains("[CSpace]"), "denial text missing layer tag: {msg}");
+        assert!(
+            msg.contains("[CSpace]"),
+            "denial text missing layer tag: {msg}"
+        );
     }
 
     #[test]

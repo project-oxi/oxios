@@ -1,6 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { KnowledgeLayout } from '@/components/knowledge/knowledge-layout'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
+/** Legacy deep link — permanent redirect into the Brain tab (2026-08-19). */
 export const Route = createFileRoute('/knowledge/')({
-  component: KnowledgeLayout,
+  beforeLoad: ({ search }) => {
+    throw redirect({ to: '/brain/knowledge', search: search as never })
+  },
 })

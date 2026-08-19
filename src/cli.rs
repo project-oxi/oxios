@@ -292,6 +292,16 @@ pub(crate) enum BrainCmd {
     /// Deprecated alias for `curate`. Kept for one minor.
     #[command(hide = true)]
     Dream,
+    /// Install the oxibrain binary from GitHub Releases (first-party
+    /// supervision, RFC-047). sha256-verified; reports no-release-asset
+    /// until the oxibrain repo has a tagged binary release.
+    Install,
+    /// Start an already-installed oxibrain binary (no install attempt).
+    Start,
+    /// Stop a daemon this supervisor started (launchd bootout + kill).
+    Stop,
+    /// Stop + remove the launchd plist (binary and data stay).
+    Uninstall,
 }
 
 #[derive(Debug, Clone, Subcommand)]

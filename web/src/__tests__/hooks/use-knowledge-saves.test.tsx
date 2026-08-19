@@ -51,7 +51,9 @@ describe('useSaveToKnowledge', () => {
     // the mutation observer snapshot is not reliably re-rendered in tests.
     expect(contentType).toContain('application/json')
     // Empty body ('') would 400 on the axum side; assert a parseable JSON object.
-    expect(JSON.parse(capturedBody === null || capturedBody === '' ? 'INVALID' : capturedBody)).toEqual({})
+    expect(
+      JSON.parse(capturedBody === null || capturedBody === '' ? 'INVALID' : capturedBody),
+    ).toEqual({})
   })
 
   it('forwards the path hint in the body when provided', async () => {

@@ -16,6 +16,7 @@ async fn bootstrap_creates_foundation_dir() {
         home: tmp.path().to_path_buf(),
         socket_path: None,
         may_start_daemon: false,
+        starter: None,
     };
     let report = oxios_kernel::foundation::bootstrap::bootstrap(&cfg)
         .await
@@ -36,6 +37,7 @@ async fn bootstrap_is_idempotent() {
         home: tmp.path().to_path_buf(),
         socket_path: None,
         may_start_daemon: false,
+        starter: None,
     };
     let first = oxios_kernel::foundation::bootstrap::bootstrap(&cfg)
         .await
@@ -56,6 +58,7 @@ async fn bootstrap_respects_explicit_socket_override() {
         home: tmp.path().to_path_buf(),
         socket_path: Some(socket.clone()),
         may_start_daemon: false,
+        starter: None,
     };
     let report = oxios_kernel::foundation::bootstrap::bootstrap(&cfg)
         .await

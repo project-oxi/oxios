@@ -141,9 +141,7 @@ function CronJobsPage() {
       {/* Task templates */}
       {jobs.length === 0 && (
         <div>
-          <h2 className="text-lg font-semibold mb-3">
-            {t('cronJobs.templates.galleryTitle')}
-          </h2>
+          <h2 className="text-lg font-semibold mb-3">{t('cronJobs.templates.galleryTitle')}</h2>
           <TaskTemplateGallery onSelectTemplate={handleSelectTemplate} />
         </div>
       )}

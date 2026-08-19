@@ -108,7 +108,7 @@ function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
       label: 'Knowledge Base',
       keywords: ['knowledge', 'kb', 'notes', 'markdown', 'wiki'],
       section: 'Navigation',
-      action: () => navigate('/knowledge'),
+      action: () => navigate('/brain/knowledge'),
     },
     {
       id: 'nav-memory',

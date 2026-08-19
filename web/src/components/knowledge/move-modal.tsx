@@ -65,7 +65,7 @@ export function MoveModal() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'm') return
-      if (!pathnameRef.current.startsWith('/knowledge')) return
+      if (!pathnameRef.current.startsWith('/brain/knowledge')) return
       e.preventDefault()
       setOpen(true)
     }

@@ -143,7 +143,7 @@ export function CommandPalette() {
           title: t('commandPalette.actionSearchNotes'),
           hint: <kbd className="text-[10px] text-muted-foreground">⌘P</kbd>,
           score: 0,
-          onSelect: () => router.history.push('/knowledge'),
+          onSelect: () => router.history.push('/brain/knowledge'),
         },
       ]
     }

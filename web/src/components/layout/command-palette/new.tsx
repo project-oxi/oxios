@@ -47,7 +47,7 @@ const TARGETS: NewTarget[] = [
   {
     key: 'note',
     titleKey: 'commandPalette.newNote',
-    href: '/knowledge',
+    href: '/brain/knowledge',
     icon: <FilePlus className="h-4 w-4" />,
   },
   {

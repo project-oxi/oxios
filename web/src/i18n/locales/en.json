@@ -2009,6 +2009,7 @@
   "sidebar": {
     "console": "Console",
     "knowledge": "Knowledge",
+    "brain": "Brain",
     "chat": "Chat"
   },
   "skills": {
@@ -2385,6 +2386,8 @@
     "noSearchResults": "No results for this search.",
     "searchPlaceholder": "Search the brain...",
     "overview": "Overview",
+    "memorySection": "Memory",
+    "knowledgeSection": "Knowledge",
     "browse": "Browse",
     "dream": "Dream",
     "search": "Search",
@@ -2475,7 +2478,6 @@
     "addMemory": "Add memory",
     "addCategoryMemory": "Add {{category}}",
     "degradedTitle": "Brain daemon offline",
-    "degradedDescription": "The oxibrain daemon is unreachable — memory operations are degraded. Start it with `oxibrain serve --socket ~/.oxi/brain/oxibrain.sock --daemon`.",
     "available": "Status",
     "online": "Online",
     "offline": "Offline",
@@ -2494,6 +2496,11 @@
     "whyPlaceholder": "Statement ID for provenance",
     "why": "Why",
     "provenance": "Provenance",
-    "noContradictions": "No contradicted statements."
+    "noContradictions": "No contradicted statements.",
+    "installing": "Installing oxibrain… — starts automatically when done.",
+    "starting": "Starting the brain daemon…",
+    "failedTitle": "Brain daemon failed to start",
+    "failedDescription": "Auto-retry in 30 s or at next boot.",
+    "manualDescription": "Memory operations are degraded. Start it manually with `oxibrain serve --daemon` or set [brain] auto_manage = true."
   }
 }

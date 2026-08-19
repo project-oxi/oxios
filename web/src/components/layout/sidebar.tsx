@@ -1,9 +1,10 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Activity,
+  AlertTriangle,
   BookOpen,
   Bot,
-  Brain,
+  Boxes,
   CheckSquare,
   FilePlus,
   Flame,
@@ -19,6 +20,7 @@ import {
   Network,
   PanelLeft,
   PanelLeftClose,
+  Search,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -115,7 +117,6 @@ export const consoleNavGroups: { labelKey: string; items: NavItem[] }[] = [
   {
     labelKey: 'common.storage',
     items: [
-      { labelKey: 'common.brain', href: '/brain', icon: <Brain className="h-4 w-4" /> },
       { labelKey: 'common.assets', href: '/assets', icon: <Images className="h-4 w-4" /> },
       {
         labelKey: 'common.workspace',
@@ -203,6 +204,7 @@ export function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto p-2">
         {mode === 'console' && <ConsoleNav />}
+        {mode === 'brain' && <BrainNav />}
         {mode === 'knowledge' && <KnowledgeNav />}
         {mode === 'chat' && <ChatSessionNav />}
       </nav>
@@ -236,6 +238,45 @@ function ConsoleNav() {
           ))}
         </div>
       ))}
+    </>
+  )
+}
+// ── Brain Nav ──────────────────────────────────────────────────
+
+function BrainNav() {
+  const { t } = useTranslation()
+  const router = useRouterState()
+  const currentPath = router.location.pathname
+  const { collapsed } = useSidebarStore()
+
+  const memoryItems: NavItem[] = [
+    { labelKey: 'brain.overview', href: '/brain', icon: <LayoutDashboard className="h-4 w-4" /> },
+    { labelKey: 'brain.search', href: '/brain/search', icon: <Search className="h-4 w-4" /> },
+    { labelKey: 'brain.entity', href: '/brain/entity', icon: <Boxes className="h-4 w-4" /> },
+    {
+      labelKey: 'brain.contradictions',
+      href: '/brain/contradictions',
+      icon: <AlertTriangle className="h-4 w-4" />,
+    },
+  ]
+
+  return (
+    <>
+      <div className={sectionGap}>
+        {!collapsed && <p className={sectionHeader}>{t('brain.memorySection')}</p>}
+        {memoryItems.map((item) => (
+          <NavItemLink
+            key={item.href}
+            item={item}
+            currentPath={currentPath}
+            collapsed={collapsed}
+          />
+        ))}
+      </div>
+      <div className={sectionGap}>
+        {!collapsed && <p className={sectionHeader}>{t('brain.knowledgeSection')}</p>}
+        <KnowledgeNav />
+      </div>
     </>
   )
 }
@@ -366,10 +407,10 @@ function KnowledgeNav() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Link
-                to="/knowledge/graph"
+                to="/brain/knowledge/graph"
                 className={cn(
                   itemCollapsedBase,
-                  currentPath === '/knowledge/graph' ? itemActive : itemInactive,
+                  currentPath === '/brain/knowledge/graph' ? itemActive : itemInactive,
                 )}
               >
                 <Network className="h-4 w-4" />
@@ -467,7 +508,7 @@ function KnowledgeNav() {
         </button>
         <NavItemLink
           item={{
-            href: '/knowledge/graph',
+            href: '/brain/knowledge/graph',
             icon: <Network className="h-4 w-4" />,
             labelKey: 'knowledge.linkGraphTitle',
           }}

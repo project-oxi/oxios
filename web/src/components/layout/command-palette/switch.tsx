@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { Cpu, LayoutDashboard, MessageSquare, NotebookPen, Theater } from 'lucide-react'
+import { Brain, Cpu, LayoutDashboard, MessageSquare, Theater } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -16,12 +16,13 @@ interface Persona {
 
 const MODE_HREF: Record<string, string> = {
   console: '/',
-  knowledge: '/knowledge',
+  knowledge: '/brain/knowledge',
+  brain: '/brain',
   chat: '/chat',
 }
 
 function modeIcon(key: string) {
-  if (key === 'knowledge') return <NotebookPen className="h-4 w-4" />
+  if (key === 'knowledge' || key === 'brain') return <Brain className="h-4 w-4" />
   if (key === 'chat') return <MessageSquare className="h-4 w-4" />
   return <LayoutDashboard className="h-4 w-4" />
 }

@@ -4,7 +4,7 @@ import { SIDEBAR_MODES } from '@/components/layout/mode-tabs'
 
 /**
  * Registers global ⌃1 / ⌃2 / ⌃3 shortcuts for switching between the three
- * top-level surfaces (Console / Knowledge / Chat).
+ * top-level surfaces (Console / Brain / Chat).
  *
  * Uses Control+number (not ⌘+number) because every major browser binds
  * ⌘1-⌘9 to browser-tab switching — a menu-level shortcut that fires

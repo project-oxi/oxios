@@ -576,8 +576,16 @@ impl Gateway {
                                 let _ = send_with_retry(&channel, outgoing).await;
                             }
                             oxios_kernel::agent_runtime::StreamDelta::Thinking => {
-                                // Phase B: emit explicit reasoning.start marker
+                                // Phase B: emit an explicit reasoning.start marker
                                 // so the frontend's Thinking block can auto-expand.
+                                // The runtime pairs a `Thinking` marker with EVERY
+                                // `ThinkingDelta` (agent_runtime.rs), so gate on the
+                                // span transition — otherwise one start marker per
+                                // delta floods the WS (the frontend's reopen logic
+                                // absorbs them, but the frames are pure waste).
+                                if was_reasoning {
+                                    continue;
+                                }
                                 was_reasoning = true;
                                 let mut start_msg = OutgoingMessage::with_id(
                                     uuid::Uuid::new_v4(),

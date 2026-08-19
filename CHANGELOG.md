@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Telegram/CLI token-spam on streaming turns** — the gateway's
+  streaming-sink collector spawned for *every* channel, so each LLM
+  delta (reasoning fragments, answer tokens, empty stream markers)
+  became one channel delivery: on Telegram that meant one Bot API
+  message per token. The `Channel` trait now declares
+  `supports_streaming()` (default `false`); only `WebBridge` opts in.
+  Non-streaming channels receive the single terminal response per turn
+  as before, and the runtime drops deltas silently when no sink is
+  registered (unchanged degradation contract).
+- **Web UI rendered every response twice** — with `WebBridge` opting
+  into live streaming, the WS forwarder still re-emitted the terminal
+  `OutgoingMessage`'s full response text as another `token` chunk
+  (legacy terminal contract) after the per-delta partials had already
+  delivered it; the frontend appends every `token` chunk, so the answer
+  appeared duplicated. The forwarder now tracks per-turn text partials
+  (`TurnTextStreamTracker`) and suppresses the redundant terminal token
+  while keeping persistence and the terminal `done` unchanged.
+  Non-streaming turns still deliver text via the terminal token.
+
 ## [1.42.0] - 2026-08-17
 
 ### Added

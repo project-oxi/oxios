@@ -175,6 +175,25 @@ impl Channel for MyChannel {
 }
 ```
 
+### Streaming Capability
+
+The `Channel` trait exposes one capability flag channels must be aware of:
+
+```rust
+fn supports_streaming(&self) -> bool {
+    false // default
+}
+```
+
+When `true`, the gateway spawns a streaming-sink collector for your
+channel's turns and forwards every LLM delta (text fragments, thinking
+fragments, `stream_kind` control markers) as an individual
+`OutgoingMessage` with `partial = Some(true)`. Only opt in if your surface
+can render those fragments incrementally (e.g. a WebSocket UI appending to
+an in-flight message). With the default `false`, your channel receives
+exactly one message per turn — the complete terminal response. `web` opts
+in; `telegram`, `cli`, and `remote` do not.
+
 ### Registration
 
 Register your channel with the gateway at startup:

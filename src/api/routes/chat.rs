@@ -521,6 +521,44 @@ pub(crate) async fn handle_chat_stream(
     ws.on_upgrade(move |socket| handle_chat_websocket(socket, state.0))
 }
 
+/// RFC-015 P2: per-turn live-text dedup state for the WS forwarder.
+///
+/// When the gateway streams per-delta text partials (channels with
+/// `Channel::supports_streaming`), the client already received the full
+/// response text as accumulated `token` fragments. The terminal
+/// `OutgoingMessage` that follows still carries the complete text (legacy
+/// terminal contract), and the frontend *appends* every `token` chunk —
+/// re-emitting it would render the response twice. This tracker suppresses
+/// the redundant terminal token and resets at each terminal boundary
+/// (`done` / `error`) so the next turn starts clean. Non-streaming turns
+/// (no partials) keep the terminal token: it is their only text delivery.
+#[derive(Debug, Default)]
+struct TurnTextStreamTracker {
+    /// A non-empty text fragment reached the client this turn.
+    text_delivered: bool,
+}
+
+impl TurnTextStreamTracker {
+    /// Record a forwarded streaming text fragment. Empty fragments don't
+    /// count: a turn whose deltas were all empty never delivered text, so
+    /// its terminal token must still carry the response.
+    fn note_text_partial(&mut self, content: &str) {
+        if !content.is_empty() {
+            self.text_delivered = true;
+        }
+    }
+
+    /// Whether the terminal full-text `token` chunk is redundant.
+    fn terminal_token_redundant(&self) -> bool {
+        self.text_delivered
+    }
+
+    /// Turn ended (terminal `done`/`error` emitted) — reset for next turn.
+    fn reset(&mut self) {
+        self.text_delivered = false;
+    }
+}
+
 /// Handles a WebSocket connection for chat streaming.
 ///
 /// Protocol:
@@ -635,6 +673,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
             // (which lack message_id attribution) can be stamped with the
             // current stream's message_id at the WS layer.
             let mut active_message_id: Option<uuid::Uuid> = None;
+            // RFC-015 P2: dedups the terminal full-text token against the
+            // turn's streamed partials (see TurnTextStreamTracker).
+            let mut turn_text = TurnTextStreamTracker::default();
 
             loop {
                 tokio::select! {
@@ -824,6 +865,8 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             if ws_tx.lock().await.send(Message::Text(json.into())).await.is_err() {
                                 break;
                             }
+                            // Terminal error ends the turn.
+                            turn_text.reset();
                         } else {
                             let has_interview = msg.meta.as_ref().and_then(|m| m.interview_questions.as_ref()).is_some();
                             let is_reasoning = msg.metadata.get("stream_kind").map(|v| v.as_str()) == Some("reasoning");
@@ -911,23 +954,35 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     break;
                                 }
                             } else {
-                                let token_chunk = serde_json::json!({
-                                    "type": "token",
-                                    "seq": msg.seq,
-                                    "message_id": msg_id,
-                                    "content": msg.content,
-                                    "session_id": session_id,
-                                    "project_id": project_id,
-                                });
-                                let json = match serde_json::to_string(&token_chunk) {
-                                    Ok(j) => j,
-                                    Err(e) => {
-                                        tracing::error!(error = %e, "Failed to serialize outgoing message");
-                                        continue;
+                                // RFC-015 P2: when live text partials already
+                                // delivered the response this turn, the terminal
+                                // message's full-text `token` chunk would
+                                // duplicate them (the frontend appends every
+                                // token chunk). Skip it; `done` follows below.
+                                let skip_terminal_token =
+                                    !is_partial && turn_text.terminal_token_redundant();
+                                if !skip_terminal_token {
+                                    let token_chunk = serde_json::json!({
+                                        "type": "token",
+                                        "seq": msg.seq,
+                                        "message_id": msg_id,
+                                        "content": msg.content,
+                                        "session_id": session_id,
+                                        "project_id": project_id,
+                                    });
+                                    let json = match serde_json::to_string(&token_chunk) {
+                                        Ok(j) => j,
+                                        Err(e) => {
+                                            tracing::error!(error = %e, "Failed to serialize outgoing message");
+                                            continue;
+                                        }
+                                    };
+                                    if ws_tx.lock().await.send(Message::Text(json.into())).await.is_err() {
+                                        break;
                                     }
-                                };
-                                if ws_tx.lock().await.send(Message::Text(json.into())).await.is_err() {
-                                    break;
+                                }
+                                if is_partial {
+                                    turn_text.note_text_partial(&msg.content);
                                 }
                             }
                         }
@@ -960,6 +1015,8 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             if ws_tx.lock().await.send(Message::Text(done_json.into())).await.is_err() {
                                 break; // WS closed — session was already persisted above
                             }
+                            // Terminal `done` — turn boundary.
+                            turn_text.reset();
 
                             // Auto-trigger compression for long sessions.
                             if let Some(sid) = &active_session_id
@@ -2270,6 +2327,45 @@ mod rfc015_tests {
         };
         let chunk = kernel_event_to_ws_chunk(&event, &None, &None);
         assert!(chunk.is_none());
+    }
+
+    /// RFC-015 P2: after non-empty text partials were forwarded, the
+    /// terminal full-text `token` chunk must be suppressed or the response
+    /// renders twice (the frontend appends every token chunk).
+    #[test]
+    fn terminal_token_suppressed_after_nonempty_text_partial() {
+        let mut t = TurnTextStreamTracker::default();
+        t.note_text_partial("Hel");
+        t.note_text_partial("");
+        t.note_text_partial("lo");
+        assert!(t.terminal_token_redundant());
+    }
+
+    /// A turn whose deltas were all empty never delivered text — the
+    /// terminal token is still needed as the only text carrier.
+    #[test]
+    fn empty_text_partial_keeps_terminal_token() {
+        let mut t = TurnTextStreamTracker::default();
+        t.note_text_partial("");
+        assert!(!t.terminal_token_redundant());
+    }
+
+    /// Non-streaming turns (no partials at all) keep the legacy terminal
+    /// token delivery.
+    #[test]
+    fn fresh_tracker_keeps_terminal_token() {
+        let t = TurnTextStreamTracker::default();
+        assert!(!t.terminal_token_redundant());
+    }
+
+    /// `done`/`error` end the turn: the next turn's terminal token must
+    /// not be suppressed by the previous turn's partials.
+    #[test]
+    fn tracker_resets_at_terminal_boundary() {
+        let mut t = TurnTextStreamTracker::default();
+        t.note_text_partial("answer");
+        t.reset();
+        assert!(!t.terminal_token_redundant());
     }
 }
 

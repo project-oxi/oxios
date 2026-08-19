@@ -128,6 +128,14 @@ impl Channel for WebBridge {
         "web"
     }
 
+    /// The WS/SSE broadcast path renders per-delta partials incrementally
+    /// (chat.rs merges `partial`/`stream_kind` messages into the in-flight
+    /// assistant message), so the gateway's streaming collector must run
+    /// for this channel.
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     async fn start(
         &self,
         tx: mpsc::Sender<GatewayInbox>,
@@ -358,6 +366,13 @@ mod tests {
     fn fresh_bridge(buffer: usize) -> WebBridge {
         let reliability = Arc::new(ReliabilityLayer::new(Default::default()));
         WebBridge::new(buffer, reliability)
+    }
+
+    #[test]
+    fn web_bridge_opts_into_streaming_partials() {
+        use oxios_gateway::channel::Channel;
+        let bridge = fresh_bridge(4);
+        assert!(Channel::supports_streaming(&bridge));
     }
 
     fn push_seq(reliability: &ReliabilityLayer, content: &str) -> OutgoingMessage {

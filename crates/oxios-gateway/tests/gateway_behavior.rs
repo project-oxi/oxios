@@ -22,12 +22,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use oxios_gateway::Gateway;
+use oxios_gateway::GatewayInbox;
 use oxios_gateway::channel::Channel;
 use oxios_gateway::message::{IncomingMessage, OutgoingMessage};
 use oxios_kernel::EventBus;
 use oxios_kernel::state_store::StateStore;
 use tempfile::TempDir;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 // ── Fake channel ─────────────────────────────────────────────────────
 
@@ -35,20 +36,65 @@ use tokio::sync::Mutex;
 /// shutdown signal. Its `start` returns a task that flips `shutdown_observed`
 /// when the gateway signals shutdown — these tests do not exercise the
 /// channel's receive loop, only the gateway's view of the channel.
+///
+/// The dispatch-loop tests additionally use the captured inbox sender
+/// (`push`) and the `streaming` capability flag.
 #[derive(Clone)]
 struct FakeChannel {
     name: String,
+    streaming: bool,
     sent: Arc<Mutex<Vec<OutgoingMessage>>>,
     shutdown_observed: Arc<Mutex<bool>>,
+    incoming_tx: Arc<Mutex<Option<mpsc::Sender<GatewayInbox>>>>,
 }
 
 impl FakeChannel {
     fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
+            streaming: false,
             sent: Arc::new(Mutex::new(Vec::new())),
             shutdown_observed: Arc::new(Mutex::new(false)),
+            incoming_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Declare streaming capability (mirrors `WebBridge`).
+    fn with_streaming(mut self) -> Self {
+        self.streaming = true;
+        self
+    }
+
+    /// Push an incoming message into the gateway inbox via the sender
+    /// captured by `start`.
+    async fn push(&self, msg: IncomingMessage) {
+        let tx = self
+            .incoming_tx
+            .lock()
+            .await
+            .clone()
+            .expect("start() not called");
+        tx.send((self.name.clone(), msg))
+            .await
+            .expect("gateway rx closed");
+    }
+
+    /// Wait until at least one non-partial (terminal) message was recorded.
+    async fn await_terminal(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if self
+                .sent
+                .lock()
+                .await
+                .iter()
+                .any(|m| m.partial != Some(true))
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("no terminal message arrived within 5s");
     }
 }
 
@@ -58,11 +104,16 @@ impl Channel for FakeChannel {
         &self.name
     }
 
+    fn supports_streaming(&self) -> bool {
+        self.streaming
+    }
+
     async fn start(
         &self,
-        _incoming_tx: tokio::sync::mpsc::Sender<(String, IncomingMessage)>,
+        incoming_tx: mpsc::Sender<GatewayInbox>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+        *self.incoming_tx.lock().await = Some(incoming_tx);
         let observed = self.shutdown_observed.clone();
         Ok(tokio::spawn(async move {
             let _ = shutdown.wait_for(|v| *v).await;
@@ -74,6 +125,108 @@ impl Channel for FakeChannel {
         self.sent.lock().await.push(msg);
         Ok(())
     }
+}
+
+// ── Gated supervisor (dispatch-loop tests) ───────────────────────────
+
+/// Supervisor stub whose `run_with_directive` blocks until released.
+///
+/// Holds the dispatch task inside `handle_unified` so tests can observe
+/// mid-turn state (streaming-sink registration) without racing the mock
+/// orchestrator's instant execution.
+struct GatedSupervisor {
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl GatedSupervisor {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            release: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        })
+    }
+
+    /// Let the gated turn proceed.
+    fn release(&self) {
+        self.release
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait_for_release(&self) {
+        // Flag-first loop: no lost wakeup — if `release()` ran before we
+        // registered a waiter, the flag check exits immediately.
+        while !self.release.load(std::sync::atomic::Ordering::SeqCst) {
+            self.notify.notified().await;
+        }
+    }
+}
+
+#[async_trait]
+impl oxios_kernel::supervisor::Supervisor for GatedSupervisor {
+    async fn exec(&self, _id: oxios_kernel::AgentId) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn fork_directive(
+        &self,
+        _directive: &oxios_ouroboros::Directive,
+        _env: &oxios_ouroboros::ExecEnv,
+    ) -> anyhow::Result<oxios_kernel::AgentId> {
+        Ok(oxios_kernel::AgentId::new_v4())
+    }
+    async fn run_with_directive(
+        &self,
+        _id: oxios_kernel::AgentId,
+        _directive: &oxios_ouroboros::Directive,
+        _env: &oxios_ouroboros::ExecEnv,
+    ) -> anyhow::Result<oxios_ouroboros::ExecutionResult> {
+        self.wait_for_release().await;
+        Ok(oxios_ouroboros::ExecutionResult::default())
+    }
+    async fn wait(&self, _id: oxios_kernel::AgentId) -> anyhow::Result<oxios_kernel::AgentStatus> {
+        Ok(oxios_kernel::AgentStatus::Stopped)
+    }
+    async fn kill(&self, _id: oxios_kernel::AgentId) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn list(&self) -> anyhow::Result<Vec<oxios_kernel::AgentInfo>> {
+        Ok(Vec::new())
+    }
+}
+
+// ── Dispatch-loop test builder ───────────────────────────────────────
+
+/// Build a real `Gateway` whose dispatch loop runs against the mock
+/// orchestrator with a gated supervisor and a streaming-sink registry the
+/// test also holds.
+fn build_gated_gateway(
+    registry: Arc<oxios_kernel::streaming_sink::StreamingSinkRegistry>,
+) -> (Arc<Gateway>, TempDir, Arc<GatedSupervisor>) {
+    let event_bus = EventBus::new(16);
+    let temp = TempDir::new().expect("tempdir");
+    let store = Arc::new(StateStore::new(temp.path().to_path_buf()).expect("StateStore"));
+    let supervisor = GatedSupervisor::new();
+    let (orchestrator, _mock) =
+        common::build_test_orchestrator(supervisor.clone(), store, event_bus);
+    let gateway = Arc::new(Gateway::new(orchestrator).with_streaming_sinks(registry));
+    (gateway, temp, supervisor)
+}
+
+/// Poll the sink registry for a session key until it appears or `ms` elapse.
+async fn wait_for_sink(
+    registry: &oxios_kernel::streaming_sink::StreamingSinkRegistry,
+    session_id: &str,
+    ms: u64,
+) -> Option<oxios_kernel::streaming_sink::StreamingSinkSender> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    while std::time::Instant::now() < deadline {
+        if let Some(tx) = registry.lookup(session_id) {
+            return Some(tx);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    None
 }
 
 // ── Minimal Supervisor stub ──────────────────────────────────────────
@@ -253,4 +406,109 @@ async fn signal_shutdown_flips_internal_flag() {
     assert!(!gateway.is_shutdown());
     gateway.signal_shutdown();
     assert!(gateway.is_shutdown());
+}
+
+// ── Dispatch loop: streaming collector gating ────────────────────────
+
+/// Regression (Telegram token-spam): a channel that does not opt into
+/// streaming must never receive per-delta partial messages. The gateway's
+/// streaming-sink collector must not even register a sink for its turns —
+/// otherwise every `StreamDelta` becomes one channel delivery (on
+/// Telegram: one Bot API message per token, plus empty stream markers).
+#[tokio::test]
+async fn non_streaming_channel_receives_no_streaming_partials() {
+    let registry = Arc::new(oxios_kernel::streaming_sink::StreamingSinkRegistry::new());
+    let (gateway, _temp, supervisor) = build_gated_gateway(registry.clone());
+    let fake = FakeChannel::new("tg");
+    gateway.register(Box::new(fake.clone())).await.unwrap();
+
+    let run_handle = {
+        let g = gateway.clone();
+        tokio::spawn(async move { g.run().await })
+    };
+
+    let sid = "dispatch-nostream".to_string();
+    let mut msg = IncomingMessage::new("tg", "user", "hello");
+    msg.metadata.insert("session_id".to_string(), sid.clone());
+    fake.push(msg).await;
+
+    // While the turn is held inside the gated supervisor, check whether the
+    // gateway registered a streaming sink for this session.
+    let gateway_sink = wait_for_sink(&registry, &sid, 500).await;
+    let sink_was_registered = gateway_sink.is_some();
+    // Simulate the agent runtime emitting a text delta — exactly what
+    // agent_runtime.rs does when a sink lookup succeeds.
+    if let Some(tx) = gateway_sink.clone() {
+        let _ = tx.try_send(oxios_kernel::agent_runtime::StreamDelta::Text(
+            "token-fragment".to_string(),
+        ));
+    }
+    drop(gateway_sink);
+
+    supervisor.release();
+    fake.await_terminal().await;
+
+    assert!(
+        !sink_was_registered,
+        "collector must not register a sink for non-streaming channels"
+    );
+
+    let sent = fake.sent.lock().await.clone();
+    assert_eq!(sent.len(), 1, "terminal response only, got {sent:?}");
+    for m in &sent {
+        assert_ne!(m.partial, Some(true), "no partial deltas: {m:?}");
+        assert!(
+            !m.metadata.contains_key("stream_kind"),
+            "no stream markers: {m:?}"
+        );
+    }
+
+    gateway.signal_shutdown();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), run_handle).await;
+}
+
+/// Web regression guard: a streaming-capable channel still gets the
+/// collector — partial deltas forwarded as partial-flagged messages, then
+/// the single terminal.
+#[tokio::test]
+async fn streaming_channel_receives_partials_and_terminal() {
+    let registry = Arc::new(oxios_kernel::streaming_sink::StreamingSinkRegistry::new());
+    let (gateway, _temp, supervisor) = build_gated_gateway(registry.clone());
+    let fake = FakeChannel::new("web").with_streaming();
+    gateway.register(Box::new(fake.clone())).await.unwrap();
+
+    let run_handle = {
+        let g = gateway.clone();
+        tokio::spawn(async move { g.run().await })
+    };
+
+    let sid = "dispatch-stream".to_string();
+    let mut msg = IncomingMessage::new("web", "user", "hello");
+    msg.metadata.insert("session_id".to_string(), sid.clone());
+    fake.push(msg).await;
+
+    let gateway_sink = wait_for_sink(&registry, &sid, 500)
+        .await
+        .expect("collector must register a sink for streaming channels");
+    let _ = gateway_sink.try_send(oxios_kernel::agent_runtime::StreamDelta::Text(
+        "token-fragment".to_string(),
+    ));
+    drop(gateway_sink);
+
+    supervisor.release();
+    fake.await_terminal().await;
+
+    let sent = fake.sent.lock().await.clone();
+    let partials: Vec<_> = sent.iter().filter(|m| m.partial == Some(true)).collect();
+    let terminals: Vec<_> = sent.iter().filter(|m| m.partial != Some(true)).collect();
+    assert_eq!(terminals.len(), 1, "exactly one terminal: {sent:?}");
+    assert_eq!(partials.len(), 1, "exactly one forwarded delta: {sent:?}");
+    assert_eq!(partials[0].content, "token-fragment");
+    assert_eq!(
+        partials[0].metadata.get("session_id").map(String::as_str),
+        Some(sid.as_str())
+    );
+
+    gateway.signal_shutdown();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), run_handle).await;
 }

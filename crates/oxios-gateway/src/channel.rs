@@ -42,6 +42,22 @@ pub trait Channel: Send + Sync {
     /// Send a response message through this channel.
     async fn send(&self, msg: OutgoingMessage) -> Result<()>;
 
+    /// Whether this channel consumes live streaming partials.
+    ///
+    /// The gateway's streaming-sink collector forwards per-token deltas
+    /// (`Text` / `ThinkingDelta` fragments and stream-control markers) as
+    /// individual [`OutgoingMessage`]s with `partial = Some(true)` or a
+    /// `stream_kind` metadata key. Only channels that can *render* those
+    /// fragments incrementally (e.g. a WebSocket UI appending to an
+    /// in-flight message) should opt in. Non-streaming channels (Telegram,
+    /// CLI, RPC bridges) must keep the default `false`: they receive only
+    /// the single terminal response per turn, not one delivery per delta.
+    ///
+    /// Default: `false`.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
     /// Live channel-provided status for control-plane introspection.
     ///
     /// Cheap and synchronous (no I/O): return a small JSON object describing
@@ -82,5 +98,11 @@ mod tests {
     fn status_defaults_to_null() {
         let channel = NullChannel;
         assert!(channel.status().is_null());
+    }
+
+    #[test]
+    fn supports_streaming_defaults_to_false() {
+        let channel = NullChannel;
+        assert!(!channel.supports_streaming());
     }
 }

@@ -452,6 +452,14 @@ impl Gateway {
             // immediately. Register a Weak in the registry so the runtime
             // callback's lookup finds the sender for this session.
             //
+            // Only channels that opted in via `Channel::supports_streaming`
+            // get a collector. Non-streaming channels (Telegram, CLI, RPC
+            // bridges) would otherwise receive one delivery per token delta
+            // plus stream-control markers — on Telegram that means one Bot
+            // API message per token. They still get the single terminal
+            // response below, and the runtime's sink lookup silently misses
+            // (agent_runtime.rs drops deltas when no sink is registered).
+            //
             // Sender-drop ordering is load-bearing: when we `drop(sender_arc)`
             // after `handle_unified` returns and `collector.await` drains,
             // all partials reach the WS BEFORE the terminal `done` is built
@@ -460,7 +468,10 @@ impl Gateway {
             // value is processed.
             let channel_for_collector: Option<Arc<dyn Channel>> = {
                 let guard = channels.read().await;
-                guard.get(&channel_name).map(|e| e.channel.clone())
+                guard
+                    .get(&channel_name)
+                    .map(|e| e.channel.clone())
+                    .filter(|c| c.supports_streaming())
             };
             let collector = channel_for_collector.map(|channel| {
                 let (tx, mut rx) =

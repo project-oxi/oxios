@@ -67,3 +67,34 @@ jobs:
         run: |
           gh workflow run publish.yml -f dry_run=false
           echo "publish.yml dispatched for $GITHUB_REF_NAME"
+
+  # ── Bump Homebrew tap ──────────────────────────────────────────
+  # Rewrites url/sha256 in project-oxi/homebrew-tap Formula/oxios.rb
+  # so `brew upgrade oxios` picks up this release. TAP_GH_TOKEN is a
+  # PAT with Contents:RW on the tap repo (GITHUB_TOKEN cannot push
+  # across repositories).
+  bump-tap:
+    name: Bump Homebrew tap
+    needs: binary
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - name: Update tap formula
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GH_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$TAP_TOKEN"
+          TAG="${VERSION#v}"
+          URL="https://github.com/project-oxi/oxios/releases/download/${VERSION}/oxios-aarch64-apple-darwin.tar.gz"
+          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/project-oxi/homebrew-tap.git" tap
+          cd tap
+          sed -i '' -E \
+            -e "s|url \".*\"|url \"${URL}\"|" \
+            -e "s|sha256 \".*\"|sha256 \"${SHA}\"|" \
+            Formula/oxios.rb
+          git config user.name "oxios-release-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git commit -am "oxios ${TAG}"
+          git push

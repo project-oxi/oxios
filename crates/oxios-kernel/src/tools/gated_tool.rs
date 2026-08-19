@@ -204,7 +204,13 @@ impl<T: AgentTool + 'static> AgentTool for GatedTool<T> {
                 layer = ?denied.layer,
                 "GatedTool: tool access denied"
             );
-            return Ok(AgentToolResult::error(format_denied(&denied)));
+        // Return Err (not Ok(error-result)): oxicode-agent's loop only sets
+        // `is_error` on ToolExecutionEnd for Err results or after_tool_call
+        // hook overrides — an Ok soft-error streams as `is_error: false`,
+        // so the web UI renders denials as successful tool calls. Err keeps
+        // the same denial text for the LLM (the loop converts it back to an
+        // error AgentToolResult) while flagging the call as failed.
+        return Err(format_denied(&denied));
         }
 
         // Step 2: For file tools, check path access permission. On denial,
@@ -281,19 +287,15 @@ impl<T: AgentTool + 'static> AgentTool for GatedTool<T> {
                             }
                         };
                         if !allowed {
-                            return Ok(AgentToolResult::error(format!(
-                                "🔒 Path access denied: {}",
-                                denied.reason
-                            )));
+                            // Err — see the Step 1 note on is_error propagation.
+                            return Err(format!("🔒 Path access denied: {}", denied.reason));
                         }
                         // Path now granted — fall through to Step 2.5.
                     }
                     _ => {
                         // Headless: no event bus / registry — hard deny.
-                        return Ok(AgentToolResult::error(format!(
-                            "🔒 Path access denied: {}",
-                            denied.reason
-                        )));
+                        // Err — see the Step 1 note on is_error propagation.
+                        return Err(format!("🔒 Path access denied: {}", denied.reason));
                     }
                 }
             }
@@ -410,10 +412,11 @@ impl<T: AgentTool + 'static> AgentTool for GatedTool<T> {
                                 }
                             };
                             if !approved {
-                                return Ok(AgentToolResult::error(format!(
+                                // Err — see the Step 1 note on is_error propagation.
+                                return Err(format!(
                                     "Tool execution was denied or timed out ({}s).",
                                     APPROVAL_TIMEOUT.as_secs()
-                                )));
+                                ));
                             }
                             // fall through to Step 3
                         }
@@ -502,6 +505,68 @@ mod tests {
         assert_eq!(path_mode_for_tool("edit"), PathMode::Write);
         assert_eq!(path_mode_for_tool("read"), PathMode::Read);
         assert_eq!(path_mode_for_tool("ls"), PathMode::Read);
+    }
+
+    /// A stub CSpace-driven tool ("exec") whose inner execute always
+    /// succeeds — the gate decision is the only variable under test.
+    struct StubExecTool;
+
+    #[async_trait]
+    impl AgentTool for StubExecTool {
+        fn name(&self) -> &str {
+            "exec"
+        }
+
+        fn label(&self) -> &str {
+            "exec"
+        }
+
+        fn description(&self) -> &'static str {
+            "stub exec tool for gate tests"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({})
+        }
+
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: Value,
+            _signal: Option<tokio::sync::oneshot::Receiver<()>>,
+            _ctx: &ToolContext,
+        ) -> Result<AgentToolResult, oxicode_sdk::ToolError> {
+            Ok(AgentToolResult::success("executed"))
+        }
+    }
+
+    /// A CSpace denial must surface as `Err` — oxicode-agent's loop derives
+    /// `ToolExecutionEnd.is_error` only from Err results (an Ok soft-error
+    /// streams as success), and the web UI renders the failure state off that
+    /// flag. Regression guard for the neutral-denial-card bug.
+    #[tokio::test]
+    async fn cspace_denial_returns_err_with_denial_text() {
+        let gate = make_gate_for_test();
+        // Empty CSpace: "exec" is CSpace-driven, so Layer 0 must deny.
+        let ctx = AgentContext::test_fixture_with_cspace(
+            "test-agent",
+            crate::capability::CSpace::new(uuid::Uuid::new_v4()),
+        );
+        let tool = GatedTool::new(StubExecTool, gate, ctx);
+
+        let res = tool
+            .execute(
+                "c1",
+                serde_json::json!({"command": "ls"}),
+                None,
+                &ToolContext::default(),
+            )
+            .await;
+
+        assert!(res.is_err(), "CSpace denial must be Err, got Ok: {res:?}");
+        let msg = res.expect_err("checked is_err above");
+        assert!(msg.contains("🔒"), "denial text missing lock marker: {msg}");
+        assert!(msg.contains("[CSpace]"), "denial text missing layer tag: {msg}");
     }
 
     #[test]

@@ -15,6 +15,7 @@
 //!
 //! | Module | Purpose |
 //! |--------|---------|
+//! | `builtin_profiles` | Built-in tool profile presets (coding, worker, ...). |
 //! | `profile` | Tool profile specs: selectors, ceilings, publish validation. |
 //! | `resolver` | Resolve a profile + bounding CSpace into an executable profile. |
 //! | `types` | Core types: Capability, CSpace, Rights, ResourceRef, etc. |
@@ -22,6 +23,7 @@
 //! | `resolve` | Resolves an agent's CSpace from Seed + Config. |
 //! | `descriptor` | Tool descriptors and the static kernel catalog. |
 
+pub mod builtin_profiles;
 pub mod descriptor;
 pub mod profile;
 pub mod resolve;

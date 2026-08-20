@@ -33,10 +33,10 @@ use super::types::{ResourceRef, Rights};
 /// execution-profile selector. The wrapped `Arc<str>` keeps the type
 /// cheap to clone while still cheap to hash and compare by content.
 ///
-/// `Serialize` only: the inner `Arc<str>` does not satisfy
-/// `Deserialize` automatically. Deserialization is performed by
-/// upstream consumers (the persona profile loader) via bespoke
-/// constructors.
+/// `Serialize + Deserialize` are implemented by hand because the inner
+/// `Arc<str>` does not satisfy serde's auto-derived `Deserialize`. The
+/// wire format is a plain JSON string (no newtype envelope), which keeps
+/// the format symmetric with `Display` output.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolId(pub Arc<str>);
 
@@ -53,16 +53,23 @@ impl fmt::Display for ToolId {
         f.write_str(&self.0)
     }
 }
+
 impl Serialize for ToolId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
     }
 }
 
+impl<'de> Deserialize<'de> for ToolId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|s| Self(Arc::from(s)))
+    }
+}
+
 /// Identifies which subsystem provides / implements the tool
 /// (e.g. `kernel.fs`, `kernel.web`, `kernel.exec`).
 ///
-/// `Serialize` only — see [`ToolId`] for rationale.
+/// `Serialize + Deserialize` — see [`ToolId`] for rationale.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolProviderId(pub Arc<str>);
 
@@ -79,9 +86,16 @@ impl fmt::Display for ToolProviderId {
         f.write_str(&self.0)
     }
 }
+
 impl Serialize for ToolProviderId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolProviderId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|s| Self(Arc::from(s)))
     }
 }
 
@@ -89,7 +103,7 @@ impl Serialize for ToolProviderId {
 /// `kernel-mutate`). Tag strings are opaque to the kernel; persona
 /// profile authors decide the taxonomy.
 ///
-/// `Serialize` only — see [`ToolId`] for rationale.
+/// `Serialize + Deserialize` — see [`ToolId`] for rationale.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ToolTag(pub Arc<str>);
 
@@ -105,9 +119,16 @@ impl fmt::Display for ToolTag {
         f.write_str(&self.0)
     }
 }
+
 impl Serialize for ToolTag {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolTag {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(|s| Self(Arc::from(s)))
     }
 }
 
@@ -160,6 +181,12 @@ pub enum ActivationClass {
 ///
 /// `ToolDescriptor` instances live for the entire process — the kernel
 /// catalog returns them as a `&'static [ToolDescriptor]` slice.
+///
+/// `Serialize` only: `&'static [..]` slice fields don't contribute
+/// borrowed data during deserialization, so deriving `Deserialize` here
+/// would require owned alternatives. The catalog is built once and
+/// serialized out for diagnostics; deserialization is performed by
+/// upstream consumers (the persona profile loader) via bespoke DTOs.
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolDescriptor {
     /// Stable tool identifier (e.g. `kernel.fs.read`).
@@ -706,5 +733,16 @@ mod tests {
         let d = find_descriptor(&id).expect("kernel.fs.read in catalog");
         assert_eq!(d.registered_name, "read");
         assert!(matches!(d.activation_class, ActivationClass::Always));
+    }
+
+    #[test]
+    fn tool_id_serde_roundtrip() {
+        // JSON shape: a plain string, no newtype envelope.
+        let original = ToolId::new("kernel.fs.read");
+        let json = serde_json::to_string(&original).expect("serialize");
+        assert_eq!(json, "\"kernel.fs.read\"");
+        let decoded: ToolId = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.to_string(), "kernel.fs.read");
     }
 }

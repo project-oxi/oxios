@@ -48,9 +48,10 @@ Oxios is an **Agent Operating System** in Rust. Key components:
 ## Adding a New Tool
 
 1. Define in `crates/oxios-kernel/src/tools/<name>_tool.rs`
-2. Register in `tools/kernel_bridge.rs::register_all_kernel_tools()`
-3. Test with `cargo test -p oxios-kernel`
-4. Audit the execution path in `access_manager/` if sensitive
+2. Add a `ToolDescriptor` (with `registered_name` = the tool's `name()` impl) to the kernel catalog in `capability/descriptor.rs`
+3. Add the registration arm in `tools/registration.rs::register_from_resolved_profile`
+4. Test with `cargo test -p oxios-kernel`
+5. Audit the execution path in `access_manager/` if sensitive
 
 ## Pull Request Process
 

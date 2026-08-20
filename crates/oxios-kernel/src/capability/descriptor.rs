@@ -831,7 +831,7 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             }]),
             ui_affordances: leak_slice(&[tag("ui.kernel")]),
             activation_class: ActivationClass::ApprovalOnly,
-            registered_name: "email",
+            registered_name: "send_email",
         },
         ToolDescriptor {
             id: ToolId::new("kernel.image.gen"),
@@ -847,7 +847,7 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             }]),
             ui_affordances: leak_slice(&[tag("ui.kernel")]),
             activation_class: ActivationClass::ApprovalOnly,
-            registered_name: "image_gen",
+            registered_name: "image_generation",
         },
         ToolDescriptor {
             id: ToolId::new("kernel.screenshot.capture"),
@@ -861,7 +861,7 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             }]),
             ui_affordances: leak_slice(&[tag("ui.browser")]),
             activation_class: ActivationClass::OnDemand,
-            registered_name: "screenshot",
+            registered_name: "browse_screenshot",
         },
      ]
  }

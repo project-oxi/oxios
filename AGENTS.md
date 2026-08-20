@@ -102,9 +102,10 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 ## Adding a New Tool
 
 1. Define in `crates/oxios-kernel/src/tools/<name>_tool.rs` — implement `AgentTool` from `oxicode_sdk`
-2. Register in `tools/kernel_bridge.rs::register_all_kernel_tools()`
-3. If it wraps a KernelHandle API, add `*_api.rs` in `kernel_handle/`
-4. Test: `oxios run --json "<command that triggers tool>"`
+2. Add a `ToolDescriptor` to the kernel catalog in `capability/descriptor.rs` — `registered_name` must equal the tool's `name()` impl
+3. Add the registration arm in `tools/registration.rs::register_from_resolved_profile` (keyed by descriptor id)
+4. If it wraps a KernelHandle API, add `*_api.rs` in `kernel_handle/`
+5. Test: `oxios run --json "<command that triggers tool>"`
 
 ## Key Docs
 
@@ -158,7 +159,7 @@ in-process modules per RFC-026 — no separate crates to publish.
 - **oxicode-sdk is crates.io only.** Never add as path dep. Never reimplement what it provides.
 - **Kernel binary vs library.** `src/kernel.rs` (assembler) is in the binary crate, not `oxios-kernel`.
 - **Agent lifecycle split.** `Supervisor` = low-level process. `AgentLifecycleManager` = full lifecycle (A2A, scheduling, permissions). Don't add lifecycle logic to Orchestrator.
-- **Tool registration.** All kernel tools → `tools/kernel_bridge.rs::register_all_kernel_tools()`. Not `registration.rs`.
+- **Tool registration.** Catalog entry in `capability/descriptor.rs`, registration arm in `tools/registration.rs::register_from_resolved_profile`. Descriptor `registered_name` must match the tool's `name()` impl.
 - **Two knowledge systems.** Agent memory = `oxibrain` daemon (Unix-socket JSON-RPC, RFC-047). User notes = KnowledgeBase (`.md` files, `~/.oxios/knowledge/`). See `docs/rfc-003-knowledge-separation.md`.
 - **Unified skill model.** No separate `program/` module or `program.toml`. `SkillManager` handles everything. Each skill = `SKILL.md` + YAML frontmatter.
 - **Feature gates.** Web, CLI, Telegram, browser, telemetry are feature-gated. Check `cargo build -p oxios --features <feature>`.

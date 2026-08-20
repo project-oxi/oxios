@@ -15,15 +15,18 @@
 //!
 //! | Module | Purpose |
 //! |--------|---------|
+//! | `profile` | Tool profile specs: selectors, ceilings, publish validation. |
+//! | `resolver` | Resolve a profile + bounding CSpace into an executable profile. |
 //! | `types` | Core types: Capability, CSpace, Rights, ResourceRef, etc. |
 //! | `template` | Preset CSpace configurations for common agent roles. |
 //! | `resolve` | Resolves an agent's CSpace from Seed + Config. |
 //! | `descriptor` | Tool descriptors and the static kernel catalog. |
-//! | `profile` | Tool profile specs: selectors, ceilings, publish validation. |
+//! | `resolver` | Resolve a profile + bounding CSpace into an executable profile. |
 
 pub mod descriptor;
 pub mod profile;
 pub mod resolve;
+pub mod resolver;
 pub mod template;
 pub mod types;
 

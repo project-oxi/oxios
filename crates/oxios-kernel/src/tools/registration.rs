@@ -239,7 +239,7 @@ pub fn register_always_on_gated(
 #[allow(clippy::too_many_arguments)]
 pub fn register_from_resolved_profile(
     registry: &ToolRegistry,
-    kernel: &KernelHandle,
+    kernel: &Arc<KernelHandle>,
     resolved: &ResolvedExecutionProfile,
     search_cache: Arc<SearchCache>,
     agent_id: AgentId,
@@ -250,6 +250,15 @@ pub fn register_from_resolved_profile(
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
 ) {
+    // Subagent tool — oxicode-agent's native `subagent` tool (RFC-035
+    // gap 3), re-homed from the legacy bulk-registration path dissolved
+    // in Task 9.
+    // Executed via `AgentConfig.subagent_runner` (wired in
+    // agent_runtime.rs); every kernel-built agent gets it regardless
+    // of profile, so it registers before the descriptor-keyed loop
+    // (no catalog descriptor exists for it).
+    registry.register(oxicode_agent::SubagentTool::new());
+
     for resolved_tool in &resolved.tools {
         if !matches!(
             resolved_tool.status,
@@ -539,6 +548,139 @@ pub fn register_from_resolved_profile(
             "kernel.a2a.query" => {
                 registry.register(A2aQueryTool::from_kernel(kernel));
             }
+            // ── Long-tail kernel domain tools (Task 9) ────────────────
+            // Each arm mirrors the constructor + cfg gating the legacy
+            // bulk-registration path (dissolved in Task 9) used. Tools
+            // that depend on a feature-gated `pub mod` (memo / timeline /
+            // browser) carry the same `#[cfg]` here. When the feature is
+            // off, the descriptor stays in the catalog (so the selector
+            // can still reason about it) but the arm warns and skips so
+            // operators see the catalog/profile/feature mismatch.
+            "kernel.mount.manage" => {
+                registry.register(MountTool::from_kernel(kernel));
+            }
+            // TaskTool is conditional on the assembler attaching a
+            // `task_store` — `from_kernel` returns `None` when no
+            // store is attached, matching the legacy path. The
+            // constructor signature takes `&Arc<KernelHandle>`; the
+            // resolved-profile path now also takes `&Arc<KernelHandle>`,
+            // so the kernel Arc is reused without an extra clone.
+            "kernel.task.manage" => {
+                if let Some(task_tool) =
+                    TaskTool::from_kernel(kernel, &agent_id.to_string())
+                {
+                    registry.register(task_tool);
+                } else {
+                    tracing::warn!(
+                        id = id,
+                        "task store unavailable; skipping kernel.task.manage"
+                    );
+                }
+            }
+            "kernel.marketplace.manage" => {
+                registry.register(MarketplaceTool::from_kernel(kernel));
+            }
+            "kernel.program.forge" => {
+                registry.register(SkillForgeTool::from_kernel(kernel));
+            }
+            // Calendar is gated on `[calendar].enabled` at runtime;
+            // `try_from_kernel` returns `None` when no calendar
+            // service is attached. Mirrors the legacy registration
+            // path exactly.
+            "kernel.calendar.manage" => {
+                if let Some(calendar_tool) = CalendarTool::try_from_kernel(kernel) {
+                    registry.register(calendar_tool);
+                } else {
+                    tracing::warn!(
+                        id = id,
+                        "calendar service unavailable; skipping kernel.calendar.manage"
+                    );
+                }
+            }
+            // Memo (oximemo first-party app module) — feature-gated
+            // because the underlying `MemoTool` is only compiled with
+            // the `memo` feature. The descriptor stays in the catalog
+            // unconditionally so the selector can still resolve the id
+            // even when the feature is off.
+            "kernel.memo.manage" => {
+                #[cfg(feature = "memo")]
+                {
+                    if let Some(memo_tool) = MemoTool::try_from_kernel(kernel) {
+                        registry.register(memo_tool);
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "memo module unavailable; skipping kernel.memo.manage"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "memo"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `memo` feature; skipping kernel.memo.manage"
+                    );
+                }
+            }
+            // Timeline (oxiline first-party app module) — feature-gated
+            // like MemoTool. The underlying `TimelineTool` is only
+            // compiled with the `timeline` feature; the descriptor
+            // stays in the catalog unconditionally.
+            "kernel.timeline.manage" => {
+                #[cfg(feature = "timeline")]
+                {
+                    if let Some(timeline_tool) = TimelineTool::try_from_kernel(kernel) {
+                        registry.register(timeline_tool);
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "timeline module unavailable; skipping kernel.timeline.manage"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "timeline"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `timeline` feature; skipping kernel.timeline.manage"
+                    );
+                }
+            }
+            "kernel.email.send" => {
+                registry.register(EmailTool::from_kernel(kernel));
+            }
+            // Image generation requires `[image-gen].enabled = true`
+            // at runtime. `ImageGenerationTool::from_kernel` reads the
+            // config snapshot but does NOT gate on `enabled`; the
+            // legacy path did this check inline, so we preserve it.
+            "kernel.image.gen" => {
+                if kernel.infra.config().image_gen.enabled {
+                    registry.register(ImageGenerationTool::from_kernel(kernel));
+                } else {
+                    tracing::warn!(
+                        id = id,
+                        "image_gen disabled in config; skipping kernel.image.gen"
+                    );
+                }
+            }
+            // Screenshot is feature-gated on `browser` because
+            // `ScreenshotTool` lives behind `pub mod screenshot_tool`
+            // with `#[cfg(feature = "browser")]`. The legacy path
+            // constructed the tool unconditionally when the feature
+            // was on; we keep that contract.
+            "kernel.screenshot.capture" => {
+                #[cfg(feature = "browser")]
+                {
+                    registry.register(ScreenshotTool::from_kernel(kernel));
+                }
+                #[cfg(not(feature = "browser"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `browser` feature; skipping kernel.screenshot.capture"
+                    );
+                }
+            }
             // ── Fallback ─────────────────────────────────────────────
             _ => {
                 tracing::warn!(id = id, "no registration arm for catalog tool");
@@ -566,7 +708,7 @@ pub fn register_from_resolved_profile(
 /// | ResourceRef | Required rights | Registered tools |
 /// |-------------|----------------|-----------------|
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` |
-/// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
+/// | `KernelDomain { "memory" }` | — | *(registered via the `kernel.memory.*` arms in [`register_from_resolved_profile`])* |
 /// | `KernelDomain { "project" }` | any | `ProjectTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
@@ -603,7 +745,7 @@ pub fn register_tools_from_cspace(
 
             // Kernel domain tools
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered unconditionally in register_all_kernel_tools */ }
+                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */ }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
                     registry.register(A2aDelegateTool::from_kernel(kernel, agent_id));
@@ -711,7 +853,7 @@ pub fn register_tools_from_cspace_gated(
 
             // Kernel domain tools (same as ungated — these already use KernelHandle internally)
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered unconditionally in register_all_kernel_tools */ }
+                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */ }
                 "space" => registry.register(ProjectTool::from_kernel(kernel)),
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
@@ -785,9 +927,8 @@ mod tests {
         );
     }
 
-    /// Lightweight `KernelHandle` construction mirroring
-    /// `tools::kernel_bridge::tests::test_tool_names_length` — the existing
-    /// pattern this crate already uses for unit-test KernelHandles.
+    /// Lightweight `KernelHandle` construction — the established
+    /// pattern this crate uses for unit-test KernelHandles.
     fn make_test_kernel(base: &std::path::Path) -> Arc<KernelHandle> {
         let state_store = Arc::new(
             crate::state_store::StateStore::new(base.join("workspace")).unwrap(),
@@ -1126,6 +1267,99 @@ mod tests {
                     !names.contains(&other_name.to_string()),
                     "[{descriptor_id}] must NOT register sibling browse tool \
                      {other_name} (prefix-match regression): {names:?}"
+                );
+            }
+        }
+
+    }
+
+    /// Catalog completeness — every long-tail tool descriptor introduced
+    /// in Task 9 of the persona execution-profile plan must be present
+    /// in the kernel catalog. The registration arms in
+    /// `register_from_resolved_profile` key off these ids, so a missing
+    /// descriptor would silently fall through to the catch-all `_` arm
+    /// (a `tracing::warn!` + skip). This test pins every new id as
+    /// addressable through `find_descriptor` and asserts each
+    /// declaration has the rights + activation class the brief
+    /// mandates.
+    #[test]
+    fn catalog_long_tail_tools_are_addressable() {
+        use crate::capability::descriptor::{find_descriptor, ActivationClass, ToolId};
+        use crate::capability::{ResourceRef, Rights};
+
+        let cases: &[(&str, &str, &str, &str)] = &[
+            // (descriptor_id, registered_name, domain, rights)
+            ("kernel.mount.manage", "mount", "mount", "WRITE"),
+            ("kernel.task.manage", "task", "task", "WRITE"),
+            (
+                "kernel.marketplace.manage",
+                "marketplace",
+                "marketplace",
+                "WRITE",
+            ),
+            (
+                "kernel.program.forge",
+                "skill_forge",
+                "program",
+                "WRITE",
+            ),
+            ("kernel.calendar.manage", "calendar", "calendar", "WRITE"),
+            ("kernel.memo.manage", "memo", "memo", "WRITE"),
+            (
+                "kernel.timeline.manage",
+                "timeline",
+                "timeline",
+                "WRITE",
+            ),
+            ("kernel.email.send", "email", "email", "WRITE"),
+            ("kernel.image.gen", "image_gen", "image_gen", "WRITE"),
+            (
+                "kernel.screenshot.capture",
+                "screenshot",
+                "browser",
+                "EXECUTE",
+            ),
+        ];
+
+        for (id, registered_name, domain, rights_str) in cases {
+            let tool_id = ToolId::new(*id);
+            let desc =
+                find_descriptor(&tool_id).unwrap_or_else(|| panic!("{id} missing from catalog"));
+            assert_eq!(desc.registered_name, *registered_name, "{id} registered_name");
+            assert!(
+                !desc.required_capabilities.is_empty(),
+                "{id} must declare required_capabilities",
+            );
+            let cap = &desc.required_capabilities[0];
+            match (&cap.resource, *rights_str) {
+                (ResourceRef::KernelDomain { domain: d }, r) => {
+                    assert_eq!(d, domain, "{id} domain");
+                    let want = match r {
+                        "WRITE" => Rights::WRITE,
+                        "EXECUTE" => Rights::EXECUTE,
+                        "READ" => Rights::READ,
+                        other => panic!("unexpected rights token {other}"),
+                    };
+                    assert_eq!(cap.rights, want, "{id} rights");
+                }
+                (ResourceRef::Browser, "EXECUTE") => {
+                    assert_eq!(cap.rights, Rights::EXECUTE, "{id} rights");
+                }
+                (other, _) => {
+                    panic!("{id} unexpected resource ref: {other:?}");
+                }
+            }
+            // Screenshot is an OnDemand browser tool; everything else
+            // is ApprovalOnly (kernel mutation) per the brief.
+            if *id == "kernel.screenshot.capture" {
+                assert!(
+                    matches!(desc.activation_class, ActivationClass::OnDemand),
+                    "{id} activation_class",
+                );
+            } else {
+                assert!(
+                    matches!(desc.activation_class, ActivationClass::ApprovalOnly),
+                    "{id} activation_class",
                 );
             }
         }

@@ -1,8 +1,9 @@
 //! Timeline tool — wraps [`TimelineApi`] behind the `AgentTool` interface (oxiline).
 //!
 //! Only compiled with the `timeline` cargo feature (the module declaration in
-//! `builtin/mod.rs` is feature-gated). Registered conditionally in
-//! [`register_all_kernel_tools`](super::register_all_kernel_tools) when
+//! `builtin/mod.rs` is feature-gated). Registered conditionally by the
+//! `kernel.timeline.manage` arm in
+//! [`register_from_resolved_profile`](crate::tools::registration) when
 //! `[timeline].enabled`. **Read-only (context-in)**: agents observe the user's
 //! time-tracking data; they do not mutate it.
 

@@ -9,7 +9,6 @@ pub mod browse;
 pub mod builtin;
 pub mod exec_tool;
 pub mod gated_tool;
-pub mod kernel_bridge;
 pub mod mcp_tool;
 pub mod memory_tools;
 pub mod pending_path_access;
@@ -29,7 +28,6 @@ pub use exec_tool::ExecTool;
 pub use mcp_tool::McpToolWrapper;
 pub use memory_tools::{MemoryReadTool, MemorySearchTool, MemoryWriteTool};
 
-pub use kernel_bridge::OxiosKernelBridge;
 pub use pending_path_access::{PathAccessResult, PendingPathAccess};
 pub use pending_tool_approvals::{PendingToolApprovals, ToolApprovalResult};
 pub use registry::{ToolMeta, known_tools};

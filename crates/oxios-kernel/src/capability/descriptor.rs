@@ -697,8 +697,175 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             activation_class: ActivationClass::IntentMatched,
             registered_name: "a2a_query",
         },
-    ]
-}
+        // ── Long-tail kernel domain tools (Task 9) ─────────────────
+        // Each entry was previously registered unconditionally by the
+        // legacy bulk-registration path (dissolved in Task 9). They now live
+        // in the kernel catalog so the persona execution-profile
+        // selector (Task 3) can reason about which long-tail tools
+        // an agent is entitled to. The matching registration arms
+        // live in `tools::registration::register_from_resolved_profile`
+        // and key off these exact ids.
+        ToolDescriptor {
+            id: ToolId::new("kernel.mount.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Mount sub-volumes into the agent sandbox.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "mount".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "mount",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.task.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Create, schedule, and verify task entries.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "task".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "task",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.marketplace.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Search, install, and update skills via ClawHub / Skills.sh.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "marketplace".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "marketplace",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.program.forge"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Author, validate, package, and ship skills.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "program".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "skill_forge",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.calendar.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Create, update, delete, and search calendar events.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "calendar".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "calendar",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.memo.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Manage oximemo entries (first-party app module).",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "memo".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "memo",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.timeline.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Observe oxiline timeline entries (first-party app module).",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "timeline".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "timeline",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.email.send"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Send outbound email through the configured provider.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "email".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "email",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.image.gen"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Generate images through the configured image-gen provider.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "image_gen".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "image_gen",
+        },
+        ToolDescriptor {
+            id: ToolId::new("kernel.screenshot.capture"),
+            provider: provider("kernel.browser"),
+            contract_version: V1,
+            description: "Capture a CSS-rendered screenshot of a web page.",
+            tags: leak_slice(&[tag("browser")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::Browser,
+                rights: Rights::EXECUTE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.browser")]),
+            activation_class: ActivationClass::OnDemand,
+            registered_name: "screenshot",
+        },
+     ]
+ }
+
 
 // ─── Internal: constants ──────────────────────────────────────────────
 
@@ -711,7 +878,10 @@ mod tests {
     #[test]
     fn catalog_ids_are_unique_and_requirements_nonempty() {
         let catalog = kernel_catalog();
-        assert!(catalog.len() >= 28);
+        // Task 9: 28 base descriptors + 10 long-tail (mount, task,
+        // marketplace, skill_forge, calendar, memo, timeline, email,
+        // image_gen, screenshot).
+        assert!(catalog.len() >= 38);
         let mut ids: Vec<_> = catalog.iter().map(|d| d.id.to_string()).collect();
         let total = ids.len();
         ids.sort();

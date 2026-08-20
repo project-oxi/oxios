@@ -550,6 +550,16 @@ fn make_operator() -> ToolProfileSpec {
             kernel_domain("security", Rights::READ | Rights::WRITE),
             kernel_domain("budget", Rights::READ | Rights::WRITE),
             kernel_domain("resource", Rights::READ | Rights::WRITE),
+            // Long-tail kernel-mutate domains (Task 9 catalog entries).
+            kernel_domain("mount", Rights::READ | Rights::WRITE),
+            kernel_domain("task", Rights::READ | Rights::WRITE),
+            kernel_domain("marketplace", Rights::READ | Rights::WRITE),
+            kernel_domain("program", Rights::READ | Rights::WRITE),
+            kernel_domain("calendar", Rights::READ | Rights::WRITE),
+            kernel_domain("memo", Rights::READ | Rights::WRITE),
+            kernel_domain("timeline", Rights::READ | Rights::WRITE),
+            kernel_domain("email", Rights::READ | Rights::WRITE),
+            kernel_domain("image_gen", Rights::READ | Rights::WRITE),
         ],
         include: vec![
             provider_tag("kernel.fs", "fs"),

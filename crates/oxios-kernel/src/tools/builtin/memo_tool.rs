@@ -1,8 +1,9 @@
 //! Memo tool — wraps [`MemoApi`] behind the `AgentTool` interface (oximemo).
 //!
 //! Only compiled with the `memo` cargo feature (the module declaration in
-//! `builtin/mod.rs` is feature-gated). Registered conditionally in
-//! [`register_all_kernel_tools`](super::register_all_kernel_tools) when
+//! `builtin/mod.rs` is feature-gated). Registered conditionally by the
+//! `kernel.memo.manage` arm in
+//! [`register_from_resolved_profile`](crate::tools::registration) when
 //! `[memo].enabled`.
 //!
 //! Delegates to [`MemoApi`] (shared via `Arc`), so agent mutations publish

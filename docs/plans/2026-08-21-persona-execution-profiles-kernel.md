@@ -316,7 +316,10 @@ Key functions:
 impl ToolProfileSpec {
     /// Resolved post-exclusion selected set: (include ∪ dynamic) − exclude.
     /// `exclude` always wins; evaluation is set-based, order-independent.
-    pub fn select_tools(&self, catalog: &[ToolDescriptor]) -> Vec<&'static ToolDescriptor>;
+    /// Lifetime ties to the catalog slice only (NOT self): callers passing the
+    /// `'static` kernel catalog get `Vec<&'static ToolDescriptor>` back, which
+    /// `ResolvedTool` stores.
+    pub fn select_tools<'c>(&self, catalog: &'c [ToolDescriptor]) -> Vec<&'c ToolDescriptor>;
 
     /// Publish-time validation per design §4.2/§4.3/§5.1 step 4.
     pub fn validate_publish(&self, catalog: &[ToolDescriptor]) -> Result<(), ProfileError>;

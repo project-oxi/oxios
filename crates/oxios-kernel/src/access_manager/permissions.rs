@@ -41,13 +41,19 @@ impl Default for AgentPermissions {
     fn default() -> Self {
         Self {
             agent_name: String::new(),
-            // Always-on tier — must match the `always_on` skip list in
-            // `gate.rs::check_tool` and the registration in
-            // `tools::registration::register_always_on`. Without
-            // web_search/get_search_results here, Layer 1+2 denies them
-            // even after Layer 0 lets them through — the second half of
-            // the catch-22 from RFC-017 Q3. "ls" was also missing, leaving
-            // it dead-registered for default agents.
+            // Layer-2 (Permissions) allow-list for tools. Layer-0
+            // authorization is enforced separately by
+            // `access_manager::gate::AccessGate::check_tool`, which
+            // maps tool names to typed `ResourceRef`s (see
+            // `descriptor.rs::required_capabilities` for the
+            // matching vocabulary). The list below keeps the
+            // default agent's allowed_tools aligned with both the
+            // gate mapping (so primitive filesystem tools
+            // `read/write/edit/grep/find/ls` and the two web tools
+            // `web_search`/`get_search_results` reach Layer 1+2
+            // instead of dying at the permission filter) and the
+            // builtin `worker` template's grants (which cover the
+            // same surface on the capability side).
             allowed_tools: [
                 "read",
                 "write",

@@ -628,10 +628,19 @@ impl AccessGate {
         let reason = Some(denied.reason.clone());
 
         match req {
-            CheckRequest::Tool { .. } => AuditEvent::ToolAccess {
+            CheckRequest::Tool { tool_name, .. } => AuditEvent::ToolAccess {
                 timestamp: ts,
                 agent: ctx.agent_name.clone(),
-                tool: denied.resource.clone(),
+                // The denied TOOL NAME (e.g. `get_search_results`),
+                // not `denied.resource` — for tool checks
+                // `denied.resource` carries the typed `ResourceRef`
+                // Display form (e.g. `web_search` for both
+                // `web_search` and `get_search_results`), which would
+                // collapse distinct tool names into the same audit
+                // token. The typed resource is still preserved on
+                // `AccessDenied.resource` for callers that need to
+                // map back to the capability template entry.
+                tool: (*tool_name).to_string(),
                 allowed: false,
                 layer,
                 reason,
@@ -672,7 +681,6 @@ impl AccessGate {
         }
     }
 }
-
 impl std::fmt::Debug for AccessGate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AccessGate").finish()
@@ -685,8 +693,29 @@ impl std::fmt::Debug for AccessGate {
 mod tests {
     use super::*;
     use crate::access_manager::AgentPermissions;
-    use crate::access_manager::audit_sink::NoOpAuditSink;
+    use crate::access_manager::audit_sink::{AuditSink, NoOpAuditSink};
     use crate::config::AllowlistMode;
+
+    /// Test audit sink that captures every event into a shared `Vec`
+    /// so tests can assert on the fields the gate emits (notably the
+    /// tool name on a `ToolAccess` denial — see
+    /// `denied_tool_event_carries_tool_name_not_resource`).
+    #[derive(Default)]
+    struct RecordingAuditSink {
+        events: parking_lot::Mutex<Vec<crate::access_manager::audit_sink::AuditEvent>>,
+    }
+
+    impl AuditSink for RecordingAuditSink {
+        fn record(&self, event: crate::access_manager::audit_sink::AuditEvent) {
+            self.events.lock().push(event);
+        }
+    }
+
+    impl RecordingAuditSink {
+        fn snapshot(&self) -> Vec<crate::access_manager::audit_sink::AuditEvent> {
+            self.events.lock().clone()
+        }
+    }
 
     /// Helper: build an AccessGate with a configured agent.
     fn make_gate() -> (AccessGate, AgentContext) {
@@ -705,7 +734,7 @@ mod tests {
         let subject = Subject::Agent(ctx.agent_id);
         access
             .rbac_manager_mut()
-            .assign_role(subject, crate::access_manager::Role::Superuser);
+            .assign_role(subject, crate::access_manager::rbac::Role::Superuser);
 
         let gate = AccessGate::new(
             Arc::new(Mutex::new(access)),
@@ -717,6 +746,35 @@ mod tests {
         );
 
         (gate, ctx)
+    }
+
+    /// Like `make_gate` but installs a `RecordingAuditSink` so the
+    /// caller can assert on the audit events the gate emits.
+    fn make_gate_with_recording_sink() -> (AccessGate, AgentContext, Arc<RecordingAuditSink>) {
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allow_path("/workspace/**");
+        perms.allow_path("/tmp/**");
+        access.set_permissions(perms);
+
+        let subject = Subject::Agent(ctx.agent_id);
+        access
+            .rbac_manager_mut()
+            .assign_role(subject, crate::access_manager::rbac::Role::Superuser);
+
+        let sink = Arc::new(RecordingAuditSink::default());
+        let gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            sink.clone(),
+        );
+
+        (gate, ctx, sink)
     }
 
     /// Helper: build an AccessGate with Enforced mode and specific allowed commands.
@@ -841,6 +899,49 @@ mod tests {
             "web_search must pass Layer 0 with WebSearch EXECUTE grant: {result:?}"
         );
     }
+    #[test]
+    fn denied_tool_event_carries_tool_name_not_resource() {
+        // Task 7 follow-up. With Layer-0 typed mapping, denying a
+        // tool carries the typed `ResourceRef` Display string in
+        // `AccessDenied.resource` (e.g. `web_search` for both
+        // `web_search` and `get_search_results`). The audit
+        // `ToolAccess { tool, .. }` event must, however, carry the
+        // denied TOOL NAME — `get_search_results` — not the
+        // resource token, otherwise two distinct tool names would
+        // collapse into one audit record. The fixture CSpace grants
+        // no WebSearch capability, so `check_tool` denies at
+        // `DenyLayer::Capability` (matches the
+        // `layer0_denies_web_search_without_cspace_grant` contract).
+        let (gate, ctx, sink) = make_gate_with_recording_sink();
+        let denied = gate
+            .check(CheckRequest::Tool {
+                context: &ctx,
+                tool_name: "get_search_results",
+            })
+            .expect_err("get_search_results must deny without WebSearch grant");
+        assert_eq!(denied.layer, DenyLayer::Capability);
+
+        let events = sink.snapshot();
+        // Exactly one event: the denial. (No allow event precedes a
+        // deny — `record_check` is called once per check.)
+        assert_eq!(events.len(), 1, "expected one audit event, got {events:?}");
+        match &events[0] {
+            crate::access_manager::audit_sink::AuditEvent::ToolAccess {
+                tool, allowed, ..
+            } => {
+                assert!(!allowed, "denial event must record allowed=false");
+                assert_eq!(
+                    tool, "get_search_results",
+                    "audit tool must be the denied tool name, not the typed resource"
+                );
+            }
+            other => panic!("expected ToolAccess denial event, got {other:?}"),
+        }
+        // The typed resource is preserved on AccessDenied for
+        // callers that need to map back to the capability template.
+        assert_eq!(denied.resource, "web_search");
+    }
+
 
 
     #[test]

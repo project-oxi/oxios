@@ -44,7 +44,12 @@ impl CapabilityTemplate {
 
     /// **Worker** — minimal execution capability.
     ///
-    /// Rights: shell exec + headless browser.
+    /// Rights: shell exec + headless browser + filesystem read/write
+    /// + web search. This matches the builtin `worker` execution
+    /// profile ceiling (RFC-048 §4): `Fs` (READ|WRITE) covers the
+    /// primitive filesystem tools, `WebSearch` (EXECUTE) covers
+    /// `web_search`/`get_search_results`. Memory and Knowledge stay
+    /// at `standard`+ and are not granted here.
     pub fn worker() -> Self {
         let mut t = Self { caps: Vec::new() };
         t.caps.push((
@@ -55,6 +60,22 @@ impl CapabilityTemplate {
         ));
         t.caps
             .push((ResourceRef::Browser, Rights::READ | Rights::EXECUTE));
+        // Layer-0 sync targets: `gate.rs::check_tool` maps
+        // `read | grep | find | ls` to `ResourceRef::Fs READ`,
+        // `write | edit` to `ResourceRef::Fs WRITE`, and
+        // `web_search | get_search_results` to
+        // `ResourceRef::WebSearch EXECUTE` (descriptor.rs
+        // `required_capabilities` declares the same shape). Granting
+        // both rights on `Fs` covers every read-class and write-class
+        // filesystem tool from a single token.
+        t.caps.push((
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
+        t.caps.push((
+            ResourceRef::WebSearch,
+            Rights::EXECUTE,
+        ));
         t
     }
 
@@ -234,7 +255,45 @@ mod tests {
             Rights::EXECUTE
         ));
         assert!(cs.can(&ResourceRef::Browser, Rights::READ));
-        assert_eq!(cs.len(), 2);
+        // Worker now grants the Layer-0 typed mapping surface
+        // (Fs READ|WRITE, WebSearch EXECUTE) so it satisfies the
+        // gate's `check_tool` mapping without per-tool escalation.
+        assert_eq!(cs.len(), 4);
+    }
+
+    #[test]
+    fn worker_grants_fs_readwrite_and_websearch_execute() {
+        // Layer-0 sync: `gate.rs::check_tool` maps
+        //   read | grep | find | ls        → ResourceRef::Fs READ
+        //   write | edit                    → ResourceRef::Fs WRITE
+        //   web_search | get_search_results → ResourceRef::WebSearch EXECUTE
+        // (descriptor.rs `required_capabilities` declares the same
+        // shape). The worker template must satisfy all of these so
+        // builtin worker CSpaces pass Layer 0 for the primitive
+        // filesystem tools and the two web tools.
+        let cs = CapabilityTemplate::worker().build();
+        assert!(
+            cs.can(&ResourceRef::Fs, Rights::READ),
+            "worker must grant Fs READ for read/grep/find/ls"
+        );
+        assert!(
+            cs.can(&ResourceRef::Fs, Rights::WRITE),
+            "worker must grant Fs WRITE for write/edit"
+        );
+        assert!(
+            cs.can(&ResourceRef::WebSearch, Rights::EXECUTE),
+            "worker must grant WebSearch EXECUTE for web_search/get_search_results"
+        );
+        // Memory/Knowledge stay at standard+ — worker must NOT grant
+        // them, otherwise the ceiling is silently lifted.
+        assert!(
+            !cs.can(&ResourceRef::Memory, Rights::READ),
+            "worker must not grant Memory (standard+ only)"
+        );
+        assert!(
+            !cs.can(&ResourceRef::Knowledge, Rights::READ),
+            "worker must not grant Knowledge (standard+ only)"
+        );
     }
 
     #[test]

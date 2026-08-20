@@ -54,9 +54,20 @@ struct AgentHandle {
 /// - **State persistence** — `export_state()` serializes conversation history
 ///   to JSON for crash recovery, migration, or debugging.
 /// - **State restoration** — `import_state()` restores a previous session.
+/// - **Guarded reuse** — [`insert_profiled`](AgentPool::insert_profiled)
+///   records the session and resolved-profile fingerprint an agent was
+///   built under; [`get_reusable`](AgentPool::get_reusable) hands the agent
+///   back only when a later turn presents the same session AND fingerprint,
+///   so a pooled runtime never serves a turn under a different session or
+///   a stale resolved profile.
 #[derive(Default)]
 pub struct AgentPool {
     agents: RwLock<HashMap<AgentId, Arc<Agent>>>,
+    /// Reuse guard per agent: `(session, fingerprint)` the agent was built
+    /// under. Keyed like `agents`; maintained by
+    /// [`insert_profiled`](AgentPool::insert_profiled) and dropped by
+    /// [`remove`](AgentPool::remove) / [`insert`](AgentPool::insert).
+    fingerprints: RwLock<HashMap<AgentId, (String, u64)>>,
 }
 
 impl AgentPool {
@@ -64,11 +75,22 @@ impl AgentPool {
     pub fn new() -> Self {
         Self {
             agents: RwLock::new(HashMap::new()),
+            fingerprints: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Insert an agent into the pool.
+    /// Insert an agent into the pool without a reuse guard.
+    ///
+    /// The agent stays reachable through [`get`](AgentPool::get) and the
+    /// state export/import paths, but is never returned by
+    /// [`get_reusable`](AgentPool::get_reusable): reuse requires the
+    /// session + fingerprint guard that only
+    /// [`insert_profiled`](AgentPool::insert_profiled) records. Any guard
+    /// entry previously recorded for `id` is dropped, so a plain re-insert
+    /// can never leave a stale session/fingerprint pair vouching for an
+    /// agent that was not built under it.
     pub fn insert(&self, id: AgentId, agent: Arc<Agent>) {
+        self.fingerprints.write().remove(&id);
         self.agents.write().insert(id, agent);
     }
 
@@ -77,9 +99,62 @@ impl AgentPool {
         self.agents.read().get(id).cloned()
     }
 
-    /// Remove an agent from the pool.
+    /// Remove an agent from the pool together with its reuse-guard entry.
     pub fn remove(&self, id: &AgentId) -> Option<Arc<Agent>> {
+        self.fingerprints.write().remove(id);
         self.agents.write().remove(id)
+    }
+
+    /// Insert an agent into the pool under a session + fingerprint reuse
+    /// guard.
+    ///
+    /// A pooled runtime embeds its resolved-profile decisions (registered
+    /// tools, bounding, predicates) at build time, so reuse is only sound
+    /// while both the owning session and the resolved profile are
+    /// unchanged. Recording `(session, fingerprint)` — the u64 inside
+    /// [`ExecutionProfileFingerprint`][efp] — lets
+    /// [`get_reusable`](AgentPool::get_reusable) verify both before
+    /// handing the agent back; pooled state can therefore never leak
+    /// across sessions or outlive the profile revision it was resolved
+    /// from. Re-inserting under the same id replaces agent and guard
+    /// together.
+    ///
+    /// [efp]: crate::capability::resolver::ExecutionProfileFingerprint
+    pub fn insert_profiled(&self, id: AgentId, agent: Arc<Agent>, session: &str, fingerprint: u64) {
+        self.agents.write().insert(id.clone(), agent);
+        self.fingerprints
+            .write()
+            .insert(id, (session.to_string(), fingerprint));
+    }
+
+    /// Get a pooled agent for reuse, but only when the guard matches.
+    ///
+    /// Returns `Some` only when `id` was inserted via
+    /// [`insert_profiled`](AgentPool::insert_profiled) AND both the
+    /// session and the fingerprint match the recorded guard. Any mismatch
+    /// — a foreign session, a stale fingerprint, a missing guard entry
+    /// (legacy [`insert`](AgentPool::insert)ed agent), or a missing agent
+    /// — returns `None`, signalling the caller to rebuild the agent from
+    /// the current resolved profile. Session isolation stops one
+    /// conversation's runtime (and its history) from serving another;
+    /// fingerprint invalidation stops a profile revision, bounding, or
+    /// predicate change from reusing an agent built under the previous
+    /// resolution.
+    pub fn get_reusable(
+        &self,
+        id: &AgentId,
+        session: &str,
+        fingerprint: u64,
+    ) -> Option<Arc<Agent>> {
+        let guarded = self
+            .fingerprints
+            .read()
+            .get(id)
+            .is_some_and(|(s, f)| s == session && *f == fingerprint);
+        if !guarded {
+            return None;
+        }
+        self.agents.read().get(id).cloned()
     }
 
     /// Export an agent's state as JSON.
@@ -669,6 +744,7 @@ mod tests {
     use super::*;
     use crate::event_bus::EventBus;
     use crate::types::AgentStatus;
+    use std::pin::Pin;
 
     // Note: MockProvider no longer needed — OxiosEngine handles provider resolution.
     // The engine resolves models internally, so tests just use OxiosEngine::new().
@@ -790,6 +866,119 @@ mod tests {
     /// Helper to create a minimal (Directive, ExecEnv) pair for testing.
     fn make_directive(goal: &str) -> (Directive, ExecEnv) {
         (Directive::from_message(goal), ExecEnv::default())
+    }
+
+    // ── AgentPool reuse-guard tests ──────────────────────────────────
+    //
+    // The pool only stores and clones `Arc<Agent>` handles; it never
+    // executes them. Agents are built via `Agent::new_empty` with a null
+    // provider, so no engine wiring is needed here.
+
+    /// LLM provider whose `stream` always fails. Never invoked by pool
+    /// tests.
+    struct NullProvider;
+
+    impl oxicode_ai::Provider for NullProvider {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a oxicode_ai::Model,
+            _context: &'a oxicode_ai::Context,
+            _options: Option<oxicode_ai::StreamOptions>,
+        ) -> Pin<Box<dyn Future<Output = oxicode_ai::StreamResult> + Send + 'a>> {
+            Box::pin(async {
+                Err(oxicode_ai::ProviderError::NotImplemented(
+                    "null provider".to_string(),
+                ))
+            })
+        }
+    }
+
+    /// Cheap `Arc<Agent>` for pool storage tests.
+    fn pooled_agent() -> Arc<Agent> {
+        Arc::new(Agent::new_empty(
+            Arc::new(NullProvider),
+            oxicode_sdk::AgentConfig::default(),
+        ))
+    }
+
+    #[test]
+    fn test_pool_reuse_allows_matching_session_and_fingerprint() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x1234);
+
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x1234).is_some(),
+            "same session + fingerprint must be reusable"
+        );
+    }
+
+    #[test]
+    fn test_pool_reuse_rejects_stale_fingerprint() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x1234);
+
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x5678).is_none(),
+            "a changed profile fingerprint must invalidate reuse"
+        );
+    }
+
+    #[test]
+    fn test_pool_reuse_rejects_foreign_session() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x1234);
+
+        assert!(
+            pool.get_reusable(&id, "session-b", 0x1234).is_none(),
+            "an agent pooled under one session must not serve another"
+        );
+    }
+
+    #[test]
+    fn test_pool_reuse_rejects_legacy_inserted_agent() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert(id, pooled_agent());
+
+        assert!(pool.get(&id).is_some(), "plain get keeps working");
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x1234).is_none(),
+            "agents inserted without a profile guard are never reusable"
+        );
+    }
+
+    #[test]
+    fn test_pool_reinsert_replaces_guard() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert_profiled(id.clone(), pooled_agent(), "session-a", 0x1111);
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x2222);
+
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x1111).is_none(),
+            "the superseded fingerprint must no longer vouch for reuse"
+        );
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x2222).is_some(),
+            "the latest insert wins"
+        );
+    }
+
+    #[test]
+    fn test_pool_remove_drops_agent_and_guard() {
+        let pool = AgentPool::new();
+        let id = AgentId::new_v4();
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x1234);
+
+        assert!(pool.remove(&id).is_some());
+        assert!(pool.get(&id).is_none(), "agent is gone");
+        assert!(
+            pool.get_reusable(&id, "session-a", 0x1234).is_none(),
+            "the profile guard is dropped with the agent"
+        );
     }
 
     #[tokio::test]

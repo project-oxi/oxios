@@ -508,6 +508,15 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/personas/active",
             put(persona_routes::handle_persona_active_set),
         )
+        // Tool catalog + built-in tool profiles (execution profiles, read-only)
+        .route(
+            "/api/tool-catalog",
+            get(persona_routes::handle_tool_catalog),
+        )
+        .route(
+            "/api/tool-profiles",
+            get(persona_routes::handle_tool_profiles),
+        )
         // Sessions
         .route("/api/sessions", get(handle_sessions_list))
         .route("/api/sessions/prune", post(handle_sessions_prune))

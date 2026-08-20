@@ -3,20 +3,23 @@
 //!
 //! File path: `~/.oxios/state/personas/index.json`
 //!
-//! Schema (schema_version = 2):
+//! Schema (schema_version = 3):
 //! ```json
 //! {
-//!   "schema_version": 2,
+//!   "schema_version": 3,
 //!   "active_persona_id": "dev",
 //!   "personas": [ { "id": "...", "name": "...", "role": "...",
 //!                   "description": "...", "system_prompt": "...",
 //!                   "enabled": true, "model": null,
 //!                   "personality_traits": [],
-//!                   "capabilities": [] }, ... ]
+//!                   "capabilities": [],
+//!                   "tool_profile": null }, ... ]
 //! }
 //! ```
 //! Backward compat: v1 files (no `capabilities` field) load with empty
-//! capabilities via `#[serde(default)]` on the `Persona.capabilities` field.
+//! capabilities and v2 files (no `tool_profile` field) load with
+//! `tool_profile: None` via `#[serde(default)]` on the corresponding
+//! `Persona` fields.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -24,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use super::Persona;
 use crate::state_store::StateStore;
 
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 /// Oldest schema version still accepted on load (for backward compat).
 const MIN_SCHEMA_VERSION: u32 = 1;
 
@@ -54,8 +57,10 @@ pub async fn load_from_state_store(store: &StateStore) -> Result<Option<PersonaS
             SCHEMA_VERSION
         );
     }
-    // v1 → v2: capabilities field defaults to empty via serde(default).
-    // No explicit migration needed — old personas load with [] capabilities.
+    // v1 → v2: capabilities defaults to empty via serde(default).
+    // v2 → v3: tool_profile defaults to None via serde(default).
+    // No explicit migrations — old personas load with [] capabilities
+    // and no tool profile.
     Ok(Some(snap))
 }
 
@@ -70,6 +75,7 @@ pub async fn save_to_state_store(store: &StateStore, snapshot: &PersonaSnapshot)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::profile::{ProfileRevision, ToolProfileRef};
     use crate::persona::Persona;
 
     fn make_persona(id: &str, name: &str, role: &str, enabled: bool) -> Persona {
@@ -164,6 +170,61 @@ mod tests {
         assert!(loaded.active_persona_id.is_none());
     }
 
+    #[tokio::test]
+    async fn test_v2_backward_compat_loads_without_tool_profile() {
+        // A v2 snapshot (no tool_profile field on personas) should load
+        // successfully with tool_profile == None via #[serde(default)].
+        let store = make_store();
+        let v2_json = serde_json::json!({
+            "schema_version": 2,
+            "active_persona_id": "dev",
+            "personas": [{
+                "id": "dev",
+                "name": "Dev",
+                "role": "developer",
+                "description": "Test persona Dev",
+                "system_prompt": "You are Dev.",
+                "enabled": true,
+                "model": null,
+                "personality_traits": ["curious"],
+                "capabilities": []
+            }]
+        });
+        store
+            .save_json("personas", "index", &v2_json)
+            .await
+            .unwrap();
+        let loaded = load_from_state_store(&store).await.unwrap().unwrap();
+        assert_eq!(loaded.schema_version, 2);
+        assert_eq!(loaded.personas.len(), 1);
+        assert_eq!(loaded.personas[0].tool_profile, None);
+    }
+
+    #[tokio::test]
+    async fn test_v3_round_trip_preserves_tool_profile() {
+        // A v3 snapshot saves with the persona's tool_profile and loads
+        // it back verbatim.
+        let store = make_store();
+        let mut persona = make_persona("dev", "Dev", "developer", true);
+        persona.tool_profile = Some(ToolProfileRef {
+            id: "coding".to_string(),
+            revision: ProfileRevision(1),
+        });
+        let snap = PersonaSnapshot {
+            schema_version: 3,
+            active_persona_id: Some("dev".to_string()),
+            personas: vec![persona],
+        };
+        save_to_state_store(&store, &snap).await.unwrap();
+        let loaded = load_from_state_store(&store).await.unwrap().unwrap();
+        assert_eq!(loaded.schema_version, 3);
+        let tp = loaded.personas[0]
+            .tool_profile
+            .as_ref()
+            .expect("tool_profile must survive the round trip");
+        assert_eq!(tp.id, "coding");
+        assert_eq!(tp.revision, ProfileRevision(1));
+    }
     #[tokio::test]
     async fn test_overwrite_on_save() {
         let store = make_store();

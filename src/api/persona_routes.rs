@@ -11,6 +11,9 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
+use oxios_kernel::capability::builtin_profiles::{builtin_profile, builtin_profile_names};
+use oxios_kernel::capability::descriptor::{ToolDescriptor, kernel_catalog};
+use oxios_kernel::capability::profile::ToolProfileRef;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -31,6 +34,9 @@ pub struct PersonaSummary {
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
+    /// Built-in tool profile driving this persona's execution surface
+    /// (execution profiles). `null` when the persona has none.
+    tool_profile: Option<ToolProfileRef>,
 }
 
 /// GET /api/personas — List all personas.
@@ -47,6 +53,7 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
                 enabled: p.enabled,
                 personality_traits: p.personality_traits,
                 capabilities: p.capabilities,
+                tool_profile: p.tool_profile,
             })
             .collect(),
     )
@@ -68,6 +75,7 @@ pub async fn handle_persona_get(
             "model": p.model,
             "personality_traits": p.personality_traits,
             "capabilities": p.capabilities,
+            "tool_profile": p.tool_profile,
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -140,6 +148,27 @@ pub struct PersonaUpdateRequest {
     model: Option<String>,
     personality_traits: Option<Vec<String>>,
     capabilities: Option<Vec<String>>,
+    /// Optional built-in tool profile reference. `Some` replaces the
+    /// existing profile; `None` keeps it (merge semantics like `model`).
+    tool_profile: Option<ToolProfileRef>,
+}
+
+/// Validate a client-supplied `ToolProfileRef`.
+///
+/// The `id` must name a built-in tool profile; unknown ids are rejected
+/// with a message that lists the available built-ins so clients can
+/// self-correct. The handler surfaces this as `400 BAD_REQUEST`.
+fn validate_tool_profile_ref(r: &ToolProfileRef) -> Result<(), String> {
+    let names = builtin_profile_names();
+    if names.iter().any(|n| *n == r.id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "unknown tool profile id '{}' (available: {})",
+            r.id,
+            names.join(", ")
+        ))
+    }
 }
 
 /// PUT /api/personas/:id — Update a persona.
@@ -154,6 +183,9 @@ pub async fn handle_persona_update(
         .persona
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Persona '{id}' not found")))?;
+    if let Some(tp) = &body.tool_profile {
+        validate_tool_profile_ref(tp).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    }
     let updated = Persona {
         id: existing.id,
         name: body.name.unwrap_or(existing.name),
@@ -166,7 +198,7 @@ pub async fn handle_persona_update(
             .personality_traits
             .unwrap_or(existing.personality_traits),
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
-        tool_profile: existing.tool_profile,
+        tool_profile: body.tool_profile.or(existing.tool_profile),
     };
 
     state
@@ -242,6 +274,7 @@ pub async fn handle_persona_active_get(state: State<Arc<AppState>>) -> Json<serd
             "system_prompt": p.system_prompt,
             "enabled": p.enabled,
             "capabilities": p.capabilities,
+            "tool_profile": p.tool_profile,
         })),
         None => Json(serde_json::json!({
             "active": false,
@@ -286,9 +319,55 @@ pub async fn handle_persona_active_set(
     })))
 }
 
+// ---------------------------------------------------------------------------
+// Tool catalog & tool profiles (execution profiles, read-only)
+// ---------------------------------------------------------------------------
+
+/// GET /api/tool-catalog — the kernel's static tool catalog.
+///
+/// Each entry is a serialized `ToolDescriptor`: `id`, `provider`,
+/// `contract_version`, `tags`, `required_capabilities`,
+/// `ui_affordances`, `activation_class`, `registered_name`.
+pub async fn handle_tool_catalog() -> Json<&'static [ToolDescriptor]> {
+    Json(kernel_catalog())
+}
+
+/// Composition summary of a built-in tool profile.
+#[derive(Debug, Serialize)]
+pub struct ToolProfileSummary {
+    /// Stable profile slug (what `Persona.tool_profile.id` references).
+    pub id: &'static str,
+    /// Published revision of the preset.
+    pub revision: u64,
+    /// Number of include selectors in the preset's composition.
+    pub include_selectors: usize,
+    /// Number of capability ceiling entries the preset grants.
+    pub capability_ceilings: usize,
+}
+
+/// GET /api/tool-profiles — every built-in tool profile, in canonical
+/// preset order, with a composition summary per preset.
+pub async fn handle_tool_profiles() -> Json<Vec<ToolProfileSummary>> {
+    let summaries = builtin_profile_names()
+        .into_iter()
+        .map(|name| {
+            let preset =
+                builtin_profile(name).expect("PRESET_NAMES and PRESETS are declared in lockstep");
+            ToolProfileSummary {
+                id: name,
+                revision: preset.revision.0,
+                include_selectors: preset.include.len(),
+                capability_ceilings: preset.capability_ceiling.len(),
+            }
+        })
+        .collect();
+    Json(summaries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxios_kernel::capability::profile::ProfileRevision;
 
     /// F1 regression: the list endpoint must echo back `capabilities`.
     /// The original bug was that the field never reached the client, so
@@ -307,6 +386,10 @@ mod tests {
             enabled: true,
             personality_traits: vec!["pragmatic".into()],
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
+            tool_profile: Some(ToolProfileRef {
+                id: "coding".into(),
+                revision: ProfileRevision(1),
+            }),
         };
         let json = serde_json::to_value(&summary).expect("serialize");
         let caps: Vec<String> = json
@@ -322,5 +405,36 @@ mod tests {
             caps,
             vec!["terminal".to_string(), "diff-viewer".to_string()]
         );
+        // Execution profiles: the summary must echo the tool profile
+        // reference as {id, revision}.
+        assert_eq!(json["tool_profile"]["id"], "coding");
+        assert_eq!(json["tool_profile"]["revision"], 1);
+    }
+
+    #[test]
+    fn validate_tool_profile_ref_rejects_unknown_ids() {
+        let bad = ToolProfileRef {
+            id: "nope".to_string(),
+            revision: ProfileRevision(1),
+        };
+        let err = validate_tool_profile_ref(&bad).unwrap_err();
+        assert!(
+            err.contains("nope"),
+            "error should name the rejected id: {err}"
+        );
+        // The message lists the built-ins so clients can self-correct.
+        assert!(
+            err.contains("coding"),
+            "error should list available profiles: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_tool_profile_ref_accepts_builtin_ids() {
+        let good = ToolProfileRef {
+            id: "coding".to_string(),
+            revision: ProfileRevision(1),
+        };
+        assert!(validate_tool_profile_ref(&good).is_ok());
     }
 }

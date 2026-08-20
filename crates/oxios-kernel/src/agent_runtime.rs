@@ -417,12 +417,8 @@ impl AgentRuntime {
                 crate::capability::builtin_profiles::builtin_profile("worker")
                     .expect("worker is a built-in profile preset")
             });
-        let resolved = crate::capability::resolver::resolve(
-            resolved_profile,
-            &cspace,
-            agent_id,
-            None,
-        );
+        let resolved =
+            crate::capability::resolver::resolve(resolved_profile, &cspace, agent_id, None);
         tracing::info!(
             profile = %resolved_profile.id,
             revision = resolved_profile.revision.0,
@@ -472,8 +468,7 @@ impl AgentRuntime {
         // prompting the model with capabilities it cannot actually call.
         // Using `resolved.effective_cspace` keeps the manifest in lock-step
         // with what the resolver actually registers downstream.
-        let kernel_manifest =
-            build_kernel_manifest_from_cspace(&resolved.effective_cspace);
+        let kernel_manifest = build_kernel_manifest_from_cspace(&resolved.effective_cspace);
 
         // Rebuild system prompt with capabilities and manifest if available.
         if capabilities_xml.is_some() || kernel_manifest.is_some() {
@@ -1671,9 +1666,7 @@ fn truncate_json_str(json_str: &str, max_len: usize) -> String {
 /// CSpace would still report that domain as active. The manifest is the
 /// contract that promises the model "here is what you can call" — it MUST
 /// reflect the post-resolution set, never the pre-resolution bound.
-fn build_kernel_manifest_from_cspace(
-    cspace: &crate::capability::CSpace,
-) -> Option<String> {
+fn build_kernel_manifest_from_cspace(cspace: &crate::capability::CSpace) -> Option<String> {
     let domains = cspace.active_domains();
     if domains.is_empty() {
         None
@@ -2168,7 +2161,7 @@ mod tests {
     /// actually call.
     #[test]
     fn build_kernel_manifest_from_cspace_emits_exactly_cspace_domains() {
-        use crate::capability::{Capability, CSpace, ResourceRef, Rights};
+        use crate::capability::{CSpace, Capability, ResourceRef, Rights};
         use crate::types::AgentId;
 
         let agent = AgentId::new_v4();
@@ -2180,7 +2173,9 @@ mod tests {
         let mut bounding = CSpace::new(agent);
         for domain in ["space", "knowledge", "program"] {
             bounding.insert(Capability::kernel(
-                ResourceRef::KernelDomain { domain: domain.into() },
+                ResourceRef::KernelDomain {
+                    domain: domain.into(),
+                },
                 Rights::READ,
             ));
         }
@@ -2193,7 +2188,9 @@ mod tests {
         let mut resolved = CSpace::new(agent);
         for domain in ["space", "knowledge"] {
             resolved.insert(Capability::kernel(
-                ResourceRef::KernelDomain { domain: domain.into() },
+                ResourceRef::KernelDomain {
+                    domain: domain.into(),
+                },
                 Rights::READ,
             ));
         }
@@ -2219,8 +2216,7 @@ mod tests {
         // would have failed because `program` would leak into the
         // prompt. Without this guard the regression could pass silently
         // (an empty manifest would also satisfy the assertions above).
-        let bounding_manifest =
-            build_kernel_manifest_from_cspace(&bounding).unwrap();
+        let bounding_manifest = build_kernel_manifest_from_cspace(&bounding).unwrap();
         assert!(
             bounding_manifest.contains("Active domains: knowledge, program, space"),
             "sanity check: bounding CSpace should still advertise program              so the regression guard above remains meaningful, got: {bounding_manifest}"

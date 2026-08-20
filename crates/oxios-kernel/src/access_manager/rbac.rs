@@ -541,7 +541,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_policy_allows_wildcard() {
         let policy = Role::Admin.default_policy();

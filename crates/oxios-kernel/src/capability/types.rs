@@ -214,7 +214,7 @@ pub enum ResourceRef {
     Memory,
     /// User markdown knowledge base.
     Knowledge,
- }
+}
 
 impl fmt::Display for ResourceRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -455,7 +455,9 @@ mod tests {
         // KernelDomain and new variants coexist: a Memory grant is distinct from KernelDomain{"memory"}.
         assert_ne!(
             ResourceRef::Memory,
-            ResourceRef::KernelDomain { domain: "memory".into() }
+            ResourceRef::KernelDomain {
+                domain: "memory".into()
+            }
         );
     }
- }
+}

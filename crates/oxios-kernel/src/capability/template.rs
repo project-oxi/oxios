@@ -44,8 +44,8 @@ impl CapabilityTemplate {
 
     /// **Worker** — minimal execution capability.
     ///
-    /// Rights: shell exec + headless browser + filesystem read/write
-    /// + web search. This matches the builtin `worker` execution
+    /// Rights: shell exec, headless browser, filesystem read/write,
+    /// and web search. This matches the builtin `worker` execution
     /// profile ceiling (RFC-048 §4): `Fs` (READ|WRITE) covers the
     /// primitive filesystem tools, `WebSearch` (EXECUTE) covers
     /// `web_search`/`get_search_results`. Memory and Knowledge stay
@@ -68,14 +68,8 @@ impl CapabilityTemplate {
         // `required_capabilities` declares the same shape). Granting
         // both rights on `Fs` covers every read-class and write-class
         // filesystem tool from a single token.
-        t.caps.push((
-            ResourceRef::Fs,
-            Rights::READ | Rights::WRITE,
-        ));
-        t.caps.push((
-            ResourceRef::WebSearch,
-            Rights::EXECUTE,
-        ));
+        t.caps.push((ResourceRef::Fs, Rights::READ | Rights::WRITE));
+        t.caps.push((ResourceRef::WebSearch, Rights::EXECUTE));
         t
     }
 

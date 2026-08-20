@@ -30,9 +30,7 @@ use oxicode_sdk::{
 
 use crate::KernelHandle;
 use crate::access_manager::{AccessGate, AgentContext};
-use crate::capability::resolver::{
-    ResolutionStatus, ResolvedExecutionProfile, ResolvedTool,
-};
+use crate::capability::resolver::{ResolutionStatus, ResolvedExecutionProfile, ResolvedTool};
 use crate::capability::{CSpace, ResourceRef, Rights};
 use crate::tools::builtin::*;
 use crate::tools::gated_tool::GatedTool;
@@ -266,7 +264,10 @@ pub fn register_from_resolved_profile(
         ) {
             continue;
         }
-        let ResolvedTool { descriptor, status: _ } = resolved_tool;
+        let ResolvedTool {
+            descriptor,
+            status: _,
+        } = resolved_tool;
         // `ToolId` wraps `Arc<str>`; deref to `&str` for cheap matching.
         let id = descriptor.id.to_string();
         match id.as_str() {
@@ -566,9 +567,7 @@ pub fn register_from_resolved_profile(
             // resolved-profile path now also takes `&Arc<KernelHandle>`,
             // so the kernel Arc is reused without an extra clone.
             "kernel.task.manage" => {
-                if let Some(task_tool) =
-                    TaskTool::from_kernel(kernel, &agent_id.to_string())
-                {
+                if let Some(task_tool) = TaskTool::from_kernel(kernel, &agent_id.to_string()) {
                     registry.register(task_tool);
                 } else {
                     tracing::warn!(
@@ -745,7 +744,8 @@ pub fn register_tools_from_cspace(
 
             // Kernel domain tools
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */ }
+                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */
+                }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
                     registry.register(A2aDelegateTool::from_kernel(kernel, agent_id));
@@ -853,7 +853,8 @@ pub fn register_tools_from_cspace_gated(
 
             // Kernel domain tools (same as ungated — these already use KernelHandle internally)
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */ }
+                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */
+                }
                 "space" => registry.register(ProjectTool::from_kernel(kernel)),
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
@@ -930,9 +931,8 @@ mod tests {
     /// Lightweight `KernelHandle` construction — the established
     /// pattern this crate uses for unit-test KernelHandles.
     fn make_test_kernel(base: &std::path::Path) -> Arc<KernelHandle> {
-        let state_store = Arc::new(
-            crate::state_store::StateStore::new(base.join("workspace")).unwrap(),
-        );
+        let state_store =
+            Arc::new(crate::state_store::StateStore::new(base.join("workspace")).unwrap());
         Arc::new(crate::KernelHandle::new(
             crate::StateApi::new(state_store.clone()),
             crate::AgentApi::new(
@@ -987,14 +987,11 @@ mod tests {
                     crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
                 ))),
             ),
-            Arc::new(
-                oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap(),
-            ),
+            Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
                     Arc::new(
-                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens"))
-                            .unwrap(),
+                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
                     ),
                     None,
                 )
@@ -1007,8 +1004,7 @@ mod tests {
                     None,
                 )),
                 Arc::new(
-                    crate::skill::clawhub::ClawHubClient::new(None)
-                        .expect("valid ClawHub client"),
+                    crate::skill::clawhub::ClawHubClient::new(None).expect("valid ClawHub client"),
                 ),
                 Arc::new(crate::skill::skills_sh::SkillsShInstaller::new(
                     base.join("skills"),
@@ -1042,7 +1038,10 @@ mod tests {
             },
             CapRights::EXECUTE,
         ));
-        c.insert(Capability::kernel(CapResourceRef::Browser, CapRights::EXECUTE));
+        c.insert(Capability::kernel(
+            CapResourceRef::Browser,
+            CapRights::EXECUTE,
+        ));
         c
     }
 
@@ -1074,8 +1073,7 @@ mod tests {
         let agent = AgentId::new_v4();
         let bounding = worker_bounding(agent);
         let resolved = resolve(
-            crate::capability::builtin_profiles::builtin_profile("worker")
-                .expect("worker preset"),
+            crate::capability::builtin_profiles::builtin_profile("worker").expect("worker preset"),
             &bounding,
             agent,
             None,
@@ -1087,17 +1085,7 @@ mod tests {
         let context = AgentContext::test_fixture_with_cspace("worker-test", bounding.clone());
 
         register_from_resolved_profile(
-            &registry,
-            &kernel,
-            &resolved,
-            cache,
-            agent,
-            gate,
-            context,
-            None,
-            None,
-            None,
-            None,
+            &registry, &kernel, &resolved, cache, agent, gate, context, None, None, None, None,
         );
 
         let names = registry.names();
@@ -1185,7 +1173,10 @@ mod tests {
         for (descriptor_id, registered_name) in cases {
             let agent = AgentId::new_v4();
             let mut bounding = CSpace::new(agent);
-            bounding.insert(Capability::kernel(CapResourceRef::Browser, CapRights::EXECUTE));
+            bounding.insert(Capability::kernel(
+                CapResourceRef::Browser,
+                CapRights::EXECUTE,
+            ));
 
             let profile = ToolProfileSpec {
                 id: Arc::from(format!("browse-only-{}", registered_name).as_str()),
@@ -1232,17 +1223,7 @@ mod tests {
                 AgentContext::test_fixture_with_cspace("browse-only-test", bounding.clone());
 
             register_from_resolved_profile(
-                &registry,
-                &kernel,
-                &resolved,
-                cache,
-                agent,
-                gate,
-                context,
-                None,
-                None,
-                None,
-                None,
+                &registry, &kernel, &resolved, cache, agent, gate, context, None, None, None, None,
             );
 
             let names = registry.names();
@@ -1270,7 +1251,6 @@ mod tests {
                 );
             }
         }
-
     }
 
     /// Catalog completeness — every long-tail tool descriptor introduced
@@ -1284,7 +1264,7 @@ mod tests {
     /// mandates.
     #[test]
     fn catalog_long_tail_tools_are_addressable() {
-        use crate::capability::descriptor::{find_descriptor, ActivationClass, ToolId};
+        use crate::capability::descriptor::{ActivationClass, ToolId, find_descriptor};
         use crate::capability::{ResourceRef, Rights};
 
         let cases: &[(&str, &str, &str, &str)] = &[
@@ -1297,20 +1277,10 @@ mod tests {
                 "marketplace",
                 "WRITE",
             ),
-            (
-                "kernel.program.forge",
-                "skill_forge",
-                "program",
-                "WRITE",
-            ),
+            ("kernel.program.forge", "skill_forge", "program", "WRITE"),
             ("kernel.calendar.manage", "calendar", "calendar", "WRITE"),
             ("kernel.memo.manage", "memo", "memo", "WRITE"),
-            (
-                "kernel.timeline.manage",
-                "timeline",
-                "timeline",
-                "WRITE",
-            ),
+            ("kernel.timeline.manage", "timeline", "timeline", "WRITE"),
             ("kernel.email.send", "send_email", "email", "WRITE"),
             ("kernel.image.gen", "image_generation", "image_gen", "WRITE"),
             (
@@ -1325,7 +1295,10 @@ mod tests {
             let tool_id = ToolId::new(*id);
             let desc =
                 find_descriptor(&tool_id).unwrap_or_else(|| panic!("{id} missing from catalog"));
-            assert_eq!(desc.registered_name, *registered_name, "{id} registered_name");
+            assert_eq!(
+                desc.registered_name, *registered_name,
+                "{id} registered_name"
+            );
             assert!(
                 !desc.required_capabilities.is_empty(),
                 "{id} must declare required_capabilities",

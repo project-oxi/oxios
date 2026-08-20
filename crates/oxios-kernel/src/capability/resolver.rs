@@ -62,9 +62,9 @@
 
 use std::sync::Arc;
 
-use super::descriptor::{kernel_catalog, ActivationClass, ToolDescriptor};
+use super::descriptor::{ActivationClass, ToolDescriptor, kernel_catalog};
 use super::profile::{ProfileRevision, ToolProfileSpec};
-use super::types::{Capability, CSpace, ResourceRef, Rights};
+use super::types::{CSpace, Capability, ResourceRef, Rights};
 use crate::types::AgentId;
 
 // ─── Unavailability reason ────────────────────────────────────────────
@@ -249,6 +249,11 @@ impl ResolvedExecutionProfile {
 
 // ─── Resolution entry point ────────────────────────────────────────────
 
+/// Predicate consulted by [`resolve`] when a tool requirement falls
+/// outside the bounding CSpace: returning `true` surfaces the tool as
+/// `RequiresApproval` instead of `Unavailable(MissingCapability)`.
+pub type ApprovalPredicate<'a> = &'a dyn Fn(&ResourceRef, Rights) -> bool;
+
 /// Resolve `profile` against `bounding` and the optional approval
 /// predicate.
 ///
@@ -274,7 +279,7 @@ pub fn resolve(
     profile: &ToolProfileSpec,
     bounding: &CSpace,
     agent_id: AgentId,
-    approval_grantable: Option<&dyn Fn(&ResourceRef, Rights) -> bool>,
+    approval_grantable: Option<ApprovalPredicate<'_>>,
 ) -> ResolvedExecutionProfile {
     // Step 1 — selector-major selection against the static catalog.
     let selected = profile.select_tools(kernel_catalog());
@@ -293,8 +298,7 @@ pub fn resolve(
         for req in descriptor.required_capabilities {
             // Step 2 — ceiling check.
             let ceiling_fits = profile.capability_ceiling.iter().any(|ceiling| {
-                ceiling.resource.covers(&req.resource)
-                    && ceiling.rights.contains(req.rights)
+                ceiling.resource.covers(&req.resource) && ceiling.rights.contains(req.rights)
             });
             if !ceiling_fits {
                 status = Some(ResolutionStatus::Unavailable(
@@ -336,16 +340,12 @@ pub fn resolve(
             break;
         }
 
-        let final_status = status.unwrap_or_else(|| {
-            // Step 4 — every requirement satisfied; map activation
-            // class to status.
-            match descriptor.activation_class {
-                ActivationClass::Always | ActivationClass::IntentMatched => {
-                    ResolutionStatus::Active
-                }
-                ActivationClass::OnDemand => ResolutionStatus::AvailableOnDemand,
-                ActivationClass::ApprovalOnly => ResolutionStatus::RequiresApproval,
-            }
+        // Step 4 — every requirement satisfied; map activation
+        // class to status.
+        let final_status = status.unwrap_or(match descriptor.activation_class {
+            ActivationClass::Always | ActivationClass::IntentMatched => ResolutionStatus::Active,
+            ActivationClass::OnDemand => ResolutionStatus::AvailableOnDemand,
+            ActivationClass::ApprovalOnly => ResolutionStatus::RequiresApproval,
         });
 
         // Step 5 — populate the effective CSpace from the
@@ -357,8 +357,7 @@ pub fn resolve(
             ResolutionStatus::Active | ResolutionStatus::AvailableOnDemand
         ) {
             for req in descriptor.required_capabilities {
-                effective_cspace
-                    .insert(Capability::kernel(req.resource.clone(), req.rights));
+                effective_cspace.insert(Capability::kernel(req.resource.clone(), req.rights));
             }
         }
 
@@ -417,7 +416,10 @@ fn compute_fingerprint(
     cap_rows.sort();
 
     let mut canonical = String::with_capacity(
-        profile.id.len() + 24 + tool_rows.iter().map(String::len).sum::<usize>() + cap_rows.iter().map(String::len).sum::<usize>(),
+        profile.id.len()
+            + 24
+            + tool_rows.iter().map(String::len).sum::<usize>()
+            + cap_rows.iter().map(String::len).sum::<usize>(),
     );
     canonical.push_str(profile.id.as_ref());
     canonical.push('|');
@@ -451,17 +453,27 @@ mod tests {
     /// `ask_user` kernel domain.
     fn worker_bounding(agent_id: AgentId) -> CSpace {
         let mut c = CSpace::new(agent_id);
-        c.insert(Capability::kernel(ResourceRef::Fs, Rights::READ | Rights::WRITE));
+        c.insert(Capability::kernel(
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
         c.insert(Capability::kernel(ResourceRef::WebSearch, Rights::EXECUTE));
         c.insert(Capability::kernel(
-            ResourceRef::Exec { mode: "shell".into() },
+            ResourceRef::Exec {
+                mode: "shell".into(),
+            },
             Rights::EXECUTE,
         ));
         c.insert(Capability::kernel(ResourceRef::Browser, Rights::EXECUTE));
-        c.insert(Capability::kernel(ResourceRef::Memory, Rights::READ | Rights::WRITE));
+        c.insert(Capability::kernel(
+            ResourceRef::Memory,
+            Rights::READ | Rights::WRITE,
+        ));
         c.insert(Capability::kernel(ResourceRef::Knowledge, Rights::READ));
         c.insert(Capability::kernel(
-            ResourceRef::KernelDomain { domain: "ask_user".into() },
+            ResourceRef::KernelDomain {
+                domain: "ask_user".into(),
+            },
             Rights::EXECUTE,
         ));
         c
@@ -485,7 +497,9 @@ mod tests {
                     rights: Rights::EXECUTE,
                 },
                 CapabilityRequest {
-                    resource: ResourceSelector::Exec { mode: "shell".into() },
+                    resource: ResourceSelector::Exec {
+                        mode: "shell".into(),
+                    },
                     rights: Rights::EXECUTE,
                 },
                 CapabilityRequest {
@@ -529,11 +543,25 @@ mod tests {
         let agent = AgentId::new_v4();
         let resolved = resolve(&coding_like_profile(), &worker_bounding(agent), agent, None);
         let names = resolved.active_registered_names();
-        for expected in ["read", "write", "web_search", "exec", "memory_read", "memory_write"] {
-            assert!(names.contains(&expected.to_string()), "missing {expected} in {names:?}");
+        for expected in [
+            "read",
+            "write",
+            "web_search",
+            "exec",
+            "memory_read",
+            "memory_write",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing {expected} in {names:?}"
+            );
         }
         assert!(names.contains(&"ask_user".to_string())); // IntentMatched → Active
-        assert!(resolved.effective_cspace.can(&ResourceRef::Fs, Rights::WRITE));
+        assert!(
+            resolved
+                .effective_cspace
+                .can(&ResourceRef::Fs, Rights::WRITE)
+        );
     }
 
     #[test]
@@ -577,10 +605,10 @@ mod tests {
         let b = resolve(&coding_like_profile(), &worker_bounding(agent), agent, None);
         assert_eq!(a.fingerprint, b.fingerprint);
         let mut p2 = coding_like_profile();
-        p2.exclude.push(ToolSelector::Tool(ToolId::new("kernel.exec.run")));
+        p2.exclude
+            .push(ToolSelector::Tool(ToolId::new("kernel.exec.run")));
         let c = resolve(&p2, &worker_bounding(agent), agent, None);
         assert_ne!(a.fingerprint, c.fingerprint);
-
     }
 
     #[test]

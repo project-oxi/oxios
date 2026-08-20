@@ -863,9 +863,8 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             activation_class: ActivationClass::OnDemand,
             registered_name: "browse_screenshot",
         },
-     ]
- }
-
+    ]
+}
 
 // ─── Internal: constants ──────────────────────────────────────────────
 

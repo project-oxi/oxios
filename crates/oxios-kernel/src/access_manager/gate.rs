@@ -831,7 +831,10 @@ mod tests {
         use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
         let (gate, mut ctx) = make_gate();
         let mut cspace = (*ctx.cspace).clone();
-        cspace.insert(Capability::kernel(CapResourceRef::WebSearch, CapRights::EXECUTE));
+        cspace.insert(Capability::kernel(
+            CapResourceRef::WebSearch,
+            CapRights::EXECUTE,
+        ));
         ctx.cspace = Arc::new(cspace);
 
         let result = gate.check(CheckRequest::Tool {
@@ -887,7 +890,10 @@ mod tests {
         use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
         let (gate, mut ctx) = make_gate();
         let mut cspace = (*ctx.cspace).clone();
-        cspace.insert(Capability::kernel(CapResourceRef::WebSearch, CapRights::EXECUTE));
+        cspace.insert(Capability::kernel(
+            CapResourceRef::WebSearch,
+            CapRights::EXECUTE,
+        ));
         ctx.cspace = Arc::new(cspace);
 
         let result = gate.check(CheckRequest::Tool {
@@ -926,9 +932,7 @@ mod tests {
         // deny — `record_check` is called once per check.)
         assert_eq!(events.len(), 1, "expected one audit event, got {events:?}");
         match &events[0] {
-            crate::access_manager::audit_sink::AuditEvent::ToolAccess {
-                tool, allowed, ..
-            } => {
+            crate::access_manager::audit_sink::AuditEvent::ToolAccess { tool, allowed, .. } => {
                 assert!(!allowed, "denial event must record allowed=false");
                 assert_eq!(
                     tool, "get_search_results",
@@ -941,8 +945,6 @@ mod tests {
         // callers that need to map back to the capability template.
         assert_eq!(denied.resource, "web_search");
     }
-
-
 
     #[test]
     fn test_tool_access_unknown_agent_denied() {

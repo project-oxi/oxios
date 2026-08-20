@@ -99,10 +99,7 @@ pub fn builtin_profile_names() -> Vec<&'static str> {
 fn activation() -> ToolActivationPolicy {
     ToolActivationPolicy {
         max_active_tools: 16,
-        required_core: vec![
-            ToolId::new("kernel.fs.read"),
-            ToolId::new("kernel.fs.grep"),
-        ],
+        required_core: vec![ToolId::new("kernel.fs.read"), ToolId::new("kernel.fs.grep")],
         sticky_turns: 2,
     }
 }
@@ -594,7 +591,7 @@ fn make_supervisor() -> ToolProfileSpec {
 mod tests {
     use super::*;
     use crate::capability::descriptor::kernel_catalog;
-    use crate::capability::resolver::{resolve, ResolutionStatus};
+    use crate::capability::resolver::{ResolutionStatus, resolve};
     use crate::capability::{CSpace, Capability, ResourceRef, Rights};
     use crate::types::AgentId;
 
@@ -615,15 +612,30 @@ mod tests {
             (ResourceRef::Fs, Rights::READ | Rights::WRITE),
             (ResourceRef::WebSearch, Rights::EXECUTE),
             (ResourceRef::Browser, Rights::EXECUTE),
-            (ResourceRef::Exec { mode: "shell".into() }, Rights::EXECUTE),
+            (
+                ResourceRef::Exec {
+                    mode: "shell".into(),
+                },
+                Rights::EXECUTE,
+            ),
             (ResourceRef::Memory, Rights::READ | Rights::WRITE),
             (ResourceRef::Knowledge, Rights::READ | Rights::WRITE),
-            (ResourceRef::KernelDomain { domain: "ask_user".into() }, Rights::EXECUTE),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "ask_user".into(),
+                },
+                Rights::EXECUTE,
+            ),
         ] {
             bounding.insert(Capability::kernel(r, rights));
         }
 
-        let resolved = resolve(builtin_profile("code-review").unwrap(), &bounding, agent, None);
+        let resolved = resolve(
+            builtin_profile("code-review").unwrap(),
+            &bounding,
+            agent,
+            None,
+        );
         let names = resolved.active_registered_names();
         assert!(names.contains(&"read".to_string()));
         assert!(
@@ -640,14 +652,32 @@ mod tests {
     fn worker_profile_replaces_legacy_template_surface() {
         let agent = AgentId::new_v4();
         let mut bounding = CSpace::new(agent);
-        bounding.insert(Capability::kernel(ResourceRef::Fs, Rights::READ | Rights::WRITE));
+        bounding.insert(Capability::kernel(
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
         bounding.insert(Capability::kernel(ResourceRef::WebSearch, Rights::EXECUTE));
-        bounding.insert(Capability::kernel(ResourceRef::Exec { mode: "shell".into() }, Rights::EXECUTE));
+        bounding.insert(Capability::kernel(
+            ResourceRef::Exec {
+                mode: "shell".into(),
+            },
+            Rights::EXECUTE,
+        ));
         bounding.insert(Capability::kernel(ResourceRef::Browser, Rights::EXECUTE));
 
         let resolved = resolve(builtin_profile("worker").unwrap(), &bounding, agent, None);
         let names = resolved.active_registered_names();
-        for expected in ["read", "write", "edit", "grep", "find", "ls", "web_search", "get_search_results", "exec"] {
+        for expected in [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "web_search",
+            "get_search_results",
+            "exec",
+        ] {
             assert!(
                 names.contains(&expected.to_string()),
                 "worker missing {expected}: {names:?}"
@@ -663,14 +693,44 @@ mod tests {
         for (r, rights) in [
             (ResourceRef::Fs, Rights::READ | Rights::WRITE),
             (ResourceRef::WebSearch, Rights::EXECUTE),
-            (ResourceRef::Exec { mode: "shell".into() }, Rights::EXECUTE),
+            (
+                ResourceRef::Exec {
+                    mode: "shell".into(),
+                },
+                Rights::EXECUTE,
+            ),
             (ResourceRef::Memory, Rights::READ | Rights::WRITE),
             (ResourceRef::Knowledge, Rights::READ),
-            (ResourceRef::KernelDomain { domain: "ask_user".into() }, Rights::EXECUTE),
-            (ResourceRef::KernelDomain { domain: "cron".into() }, Rights::WRITE),
-            (ResourceRef::KernelDomain { domain: "space".into() }, Rights::WRITE),
-            (ResourceRef::KernelDomain { domain: "agent".into() }, Rights::WRITE),
-            (ResourceRef::KernelDomain { domain: "persona".into() }, Rights::WRITE),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "ask_user".into(),
+                },
+                Rights::EXECUTE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "cron".into(),
+                },
+                Rights::WRITE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "space".into(),
+                },
+                Rights::WRITE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "agent".into(),
+                },
+                Rights::WRITE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "persona".into(),
+                },
+                Rights::WRITE,
+            ),
         ] {
             bounding.insert(Capability::kernel(r, rights));
         }
@@ -684,7 +744,10 @@ mod tests {
                 .map(|t| &t.status)
         };
         // cron/project/agent mutate: ApprovalOnly class → RequiresApproval (authorized, gated).
-        assert!(matches!(status_of("cron"), Some(ResolutionStatus::RequiresApproval)));
+        assert!(matches!(
+            status_of("cron"),
+            Some(ResolutionStatus::RequiresApproval)
+        ));
         // persona is NOT included by operations → not even present.
         assert!(status_of("persona").is_none());
     }

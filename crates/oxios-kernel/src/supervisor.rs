@@ -121,7 +121,7 @@ impl AgentPool {
     ///
     /// [efp]: crate::capability::resolver::ExecutionProfileFingerprint
     pub fn insert_profiled(&self, id: AgentId, agent: Arc<Agent>, session: &str, fingerprint: u64) {
-        self.agents.write().insert(id.clone(), agent);
+        self.agents.write().insert(id, agent);
         self.fingerprints
             .write()
             .insert(id, (session.to_string(), fingerprint));

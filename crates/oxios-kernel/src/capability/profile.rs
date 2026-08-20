@@ -170,21 +170,16 @@ impl ResourceSelector {
             (ResourceSelector::Knowledge, ResourceRef::Knowledge) => true,
             (ResourceSelector::Browser, ResourceRef::Browser) => true,
             (ResourceSelector::A2a, ResourceRef::A2a) => true,
-            (
-                ResourceSelector::KernelDomain(a),
-                ResourceRef::KernelDomain { domain: b },
-            ) => a.as_ref() == b,
+            (ResourceSelector::KernelDomain(a), ResourceRef::KernelDomain { domain: b }) => {
+                a.as_ref() == b
+            }
             (ResourceSelector::Skill(a), ResourceRef::Skill { name: b }) => a.as_ref() == b,
             (ResourceSelector::Space(a), ResourceRef::Space { id: b }) => a == b,
             (ResourceSelector::Agent(a), ResourceRef::Agent { id: b }) => a == b,
-            (
-                ResourceSelector::Exec { mode: a },
-                ResourceRef::Exec { mode: b },
-            ) => a.as_ref() == b,
-            (
-                ResourceSelector::Mcp { server: a },
-                ResourceRef::Mcp { server: b },
-            ) => a.as_ref() == "*" || a.as_ref() == b,
+            (ResourceSelector::Exec { mode: a }, ResourceRef::Exec { mode: b }) => a.as_ref() == b,
+            (ResourceSelector::Mcp { server: a }, ResourceRef::Mcp { server: b }) => {
+                a.as_ref() == "*" || a.as_ref() == b
+            }
             _ => false,
         }
     }
@@ -344,10 +339,10 @@ impl ToolProfileSpec {
     ///    catalog entry it matches (exact id, or provider+tag).
     /// 2. For each [`ToolSelector`] in `exclude`, drop every entry
     ///    already collected that the exclude matches.
-/// 3. Return the survivors, de-duplicated by `ToolId`. The
-///    order is **selector-major**: entries are appended in the
-///    order each `include` selector matches the catalog, not in
-///    catalog source order.
+    /// 3. Return the survivors, de-duplicated by `ToolId`. The
+    ///    order is **selector-major**: entries are appended in the
+    ///    order each `include` selector matches the catalog, not in
+    ///    catalog source order.
     ///
     /// The returned references borrow from `catalog`, not `self` —
     /// callers passing the kernel's `'static` catalog get
@@ -386,11 +381,11 @@ impl ToolProfileSpec {
     /// Publish-time validation per design §4.2/§4.3/§5.1 step 4.
     ///
     /// Checks (in order):
-/// 1. Every selected tool's every `CapabilityRequirement` fits
-///    some ceiling entry: `ceiling.resource.covers(&req.resource)`
-///    AND `ceiling.rights.contains(req.rights)`.
-/// 2. Every `required_core` tool is in the resolved set.
-/// 3. `required_core.len() <= max_active_tools`.
+    /// 1. Every selected tool's every `CapabilityRequirement` fits
+    ///    some ceiling entry: `ceiling.resource.covers(&req.resource)`
+    ///    AND `ceiling.rights.contains(req.rights)`.
+    /// 2. Every `required_core` tool is in the resolved set.
+    /// 3. `required_core.len() <= max_active_tools`.
     ///
     /// The first violation is returned.
     pub fn validate_publish(&self, catalog: &[ToolDescriptor]) -> Result<(), ProfileError> {
@@ -403,8 +398,7 @@ impl ToolProfileSpec {
         for descriptor in &selected {
             for req in descriptor.required_capabilities {
                 let fits = self.capability_ceiling.iter().any(|ceiling| {
-                    ceiling.resource.covers(&req.resource)
-                        && ceiling.rights.contains(req.rights)
+                    ceiling.resource.covers(&req.resource) && ceiling.rights.contains(req.rights)
                 });
                 if !fits {
                     return Err(ProfileError::CeilingExceeded {

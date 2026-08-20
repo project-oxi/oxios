@@ -38,8 +38,14 @@ pub struct Persona {
     /// Backward-compatible: old files load with an empty vec (`#[serde(default)]`).
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Optional reference to a built-in tool profile that drives this
+    /// persona's execution surface (resolution path: Task 8). When `None`,
+    /// the agent runtime falls back to the persona's `role` as a legacy
+    /// profile slug, then to `"worker"`. Backward-compatible: old persona
+    /// files load with `None` (`#[serde(default)]`).
+    #[serde(default)]
+    pub tool_profile: Option<crate::capability::profile::ToolProfileRef>,
 }
-
 impl Default for Persona {
     fn default() -> Self {
         Self {
@@ -52,6 +58,7 @@ impl Default for Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            tool_profile: None,
         }
     }
 }
@@ -69,6 +76,7 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            tool_profile: None,
         }
     }
 
@@ -90,6 +98,7 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            tool_profile: None,
         }
     }
 }
@@ -140,6 +149,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "practical".to_string(),
             ],
             capabilities: vec!["terminal".to_string(), "diff-viewer".to_string(), "worktree-fanout".to_string()],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("coding").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "review".to_string(),
@@ -172,6 +185,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "quality-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("code-review").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "research".to_string(),
@@ -204,6 +221,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "evidence-focused".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("research").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "architect".to_string(),
@@ -240,6 +261,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "tradeoff-aware".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("advisory").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "mentor".to_string(),
@@ -276,6 +301,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "clarity-focused".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("advisory").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "ops".to_string(),
@@ -310,6 +339,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "failure-aware".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("operations").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "security".to_string(),
@@ -345,6 +378,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "risk-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("security-audit").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "writer".to_string(),
@@ -381,6 +418,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "concise".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("writing").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
         Persona {
             id: "planner".to_string(),
@@ -416,6 +457,10 @@ pub fn default_personas() -> Vec<Persona> {
                 "adaptive".to_string(),
             ],
             capabilities: vec![],
+            tool_profile: Some(crate::capability::profile::ToolProfileRef {
+                id: ("advisory").to_string(),
+                revision: crate::capability::profile::ProfileRevision(1),
+            }),
         },
     ]
 }
@@ -506,5 +551,35 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let restored: Persona = serde_json::from_str(&json).unwrap();
         assert!(!restored.enabled);
+    }
+
+    /// Task 8: every default persona must point to a built-in tool profile.
+    /// The resolved ids must match the canonical preset slugs accepted by
+    /// `crate::capability::builtin_profiles::builtin_profile`, so the agent
+    /// runtime can resolve each default persona end-to-end without falling
+    /// back to the legacy `role` lookup.
+    #[test]
+
+    fn default_personas_reference_builtin_profiles() {
+        let personas = default_personas();
+        let dev = personas.iter().find(|p| p.id == "dev").unwrap();
+        assert_eq!(&dev.tool_profile.as_ref().unwrap().id, "coding");
+        let sec = personas.iter().find(|p| p.id == "security").unwrap();
+        assert_eq!(&sec.tool_profile.as_ref().unwrap().id, "security-audit");
+        // Every default persona must have a tool_profile and the id must
+        // resolve through builtin_profile (no hand-typed strings that are
+        // not in the preset catalog).
+        for p in &personas {
+            let tp = p
+                .tool_profile
+                .as_ref()
+                .unwrap_or_else(|| panic!("persona {} missing tool_profile", p.id));
+            assert!(
+                crate::capability::builtin_profiles::builtin_profile(&tp.id).is_some(),
+                "persona {} references unknown tool profile {:?}",
+                p.id,
+                tp.id,
+            );
+        }
     }
 }

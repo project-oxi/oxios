@@ -309,6 +309,7 @@ mod tests {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            tool_profile: None,
         };
         pm.store().register(custom);
         pm.set_active("custom-1").await.unwrap();

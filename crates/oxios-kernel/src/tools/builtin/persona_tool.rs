@@ -249,6 +249,7 @@ impl AgentTool for PersonaTool {
                         .map(|s| s.to_string()),
                     personality_traits: str_array(&params, "personality_traits"),
                     capabilities: str_array(&params, "capabilities"),
+                    tool_profile: None,
                 };
 
                 // Security review (fail-open on engine/parse error): an
@@ -311,7 +312,6 @@ impl AgentTool for PersonaTool {
                     .get("system_prompt")
                     .and_then(|v| v.as_str())
                     .is_some();
-
                 let updated = Persona {
                     id: existing.id,
                     name: str_or(&params, "name").unwrap_or(existing.name),
@@ -334,6 +334,7 @@ impl AgentTool for PersonaTool {
                     } else {
                         existing.capabilities
                     },
+                    tool_profile: existing.tool_profile,
                 };
 
                 if prompt_changed && !updated.system_prompt.trim().is_empty() {

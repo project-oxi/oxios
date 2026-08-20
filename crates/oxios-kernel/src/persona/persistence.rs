@@ -83,6 +83,7 @@ mod tests {
             model: None,
             personality_traits: vec!["curious".to_string()],
             capabilities: vec![],
+            tool_profile: None,
         }
     }
 

@@ -109,6 +109,7 @@ pub async fn handle_persona_create(
         model: body.model,
         personality_traits: body.personality_traits,
         capabilities: body.capabilities.unwrap_or_default(),
+        tool_profile: None,
     };
     let created_id = persona.id.clone();
     let created_name = persona.name.clone();
@@ -153,7 +154,6 @@ pub async fn handle_persona_update(
         .persona
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Persona '{id}' not found")))?;
-
     let updated = Persona {
         id: existing.id,
         name: body.name.unwrap_or(existing.name),
@@ -166,6 +166,7 @@ pub async fn handle_persona_update(
             .personality_traits
             .unwrap_or(existing.personality_traits),
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
+        tool_profile: existing.tool_profile,
     };
 
     state

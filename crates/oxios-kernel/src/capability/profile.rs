@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -35,17 +36,17 @@ use crate::types::AgentId;
 /// A [`ToolProfileRef`] is content-addressed by `(id, revision)` so
 /// that resolution caches can store resolved tools against a specific
 /// published version and invalidate cleanly when the revision changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProfileRevision(pub u64);
 
 /// Content-addressed handle to a published profile.
 ///
 /// The id is the profile's stable slug (e.g. `"coder"`, `"researcher"`)
 /// and the revision disambiguates successive publishes of the same id.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ToolProfileRef {
     /// Stable profile slug.
-    pub id: Arc<str>,
+    pub id: String,
     /// Published revision of `id`.
     pub revision: ProfileRevision,
 }

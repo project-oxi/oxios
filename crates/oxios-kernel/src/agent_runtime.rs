@@ -39,9 +39,10 @@ use std::sync::Arc;
 
 use crate::access_manager::{AccessGate, AgentContext, TracingAuditSink, TrailAuditSink};
 use crate::capability::resolve::resolve_cspace;
+use crate::capability::resolver::ResolvedExecutionProfile;
 use crate::engine::OxiosEngine;
 use crate::persona::PersonaManager;
-use crate::tools::registration::register_tools_from_cspace_gated;
+use crate::tools::registration::register_from_resolved_profile;
 
 use crate::KernelHandle;
 use crate::event_bus::KernelEvent;
@@ -387,6 +388,46 @@ impl AgentRuntime {
             agent_id,
         );
 
+        // Task 8: resolve the tool profile via the precedence chain
+        //   1. cspace_hint (if it names a built-in profile),
+        //   2. persona.tool_profile (if the active persona declares one),
+        //   3. persona.role (legacy role-as-profile-slug fallback),
+        //   4. "worker" (final fallback).
+        // The resolved profile is then mapped against the CSpace
+        // produced above, which acts as the bounding authority.
+        let active = self
+            .persona_manager
+            .as_ref()
+            .and_then(|pm| pm.get_active_persona());
+        let profile_override = cspace_hint
+            .and_then(|h| crate::capability::builtin_profiles::builtin_profile(h.trim()));
+        let persona_profile = active
+            .as_ref()
+            .and_then(|p| p.tool_profile.as_ref())
+            .and_then(|r| crate::capability::builtin_profiles::builtin_profile(&r.id));
+        let legacy_role_profile = active
+            .as_ref()
+            .map(|p| p.role.trim().to_lowercase())
+            .and_then(|r| crate::capability::builtin_profiles::builtin_profile(&r));
+        let resolved_profile = profile_override
+            .or(persona_profile)
+            .or(legacy_role_profile)
+            .unwrap_or_else(|| {
+                crate::capability::builtin_profiles::builtin_profile("worker")
+                    .expect("worker is a built-in profile preset")
+            });
+        let resolved = crate::capability::resolver::resolve(
+            resolved_profile,
+            &cspace,
+            agent_id,
+            None,
+        );
+        tracing::info!(
+            profile = %resolved_profile.id,
+            revision = resolved_profile.revision.0,
+            requested = resolved.tools.len(),
+            "Resolved tool profile"
+        );
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
         let mut system_prompt = build_system_prompt_inner(
@@ -565,6 +606,7 @@ impl AgentRuntime {
                 goal.to_string(),
                 agent_id,
                 cspace,
+                resolved,
                 audit_trail,
                 self.routing_stats.clone(),
                 session_id.clone(),
@@ -739,12 +781,13 @@ async fn run_agent(
     engine: &OxiosEngine,
     kernel_handle: Arc<KernelHandle>,
     sona: Option<Arc<crate::memory_agent::sona::SonaEngine>>,
-    system_prompt: String,
+    mut system_prompt: String,
     prompt: String,
     exec_id: uuid::Uuid,
     goal: String,
     agent_id: AgentId,
     cspace: crate::capability::CSpace,
+    resolved: ResolvedExecutionProfile,
     audit_trail: Option<Arc<AuditTrail>>,
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
@@ -945,11 +988,10 @@ async fn run_agent(
     {
         tracing::warn!("browser engine unavailable, browse tools disabled: {e:#}");
     }
-
-    register_tools_from_cspace_gated(
+    register_from_resolved_profile(
         &registry,
         &kernel_handle,
-        &cspace,
+        &resolved,
         search_cache,
         agent_id,
         access_gate,
@@ -962,10 +1004,16 @@ async fn run_agent(
 
     tracing::info!(
         exec_id = %exec_id,
-        capabilities = cspace.len(),
-        "Tools registered from CSpace"
+        profile = %resolved.profile_id,
+        tools = resolved.tools.len(),
+        "Tools registered from resolved profile"
     );
 
+    // Task 8: append the registry-derived tool list to the system prompt
+    // so the model sees exactly the tools that were registered for this
+    // agent. Replaces the hardcoded "Available Tools" enumeration that
+    // duplicated the registration contract.
+    system_prompt.push_str(&generate_tool_section(&registry.names()));
     // ── Build AgentConfig ──
     //
     // RFC-014 Phase D: `system_prompt` is also passed to the new
@@ -1608,6 +1656,32 @@ fn truncate_json_str(json_str: &str, max_len: usize) -> String {
     format!("{truncated}...")
 }
 
+/// Build the "Available tools" section of the system prompt from the actual
+/// registry contents.
+///
+/// The agent runtime resolves the tool profile against the agent's CSpace
+/// (the bounding authority) and then registers exactly the tools the
+/// resolved profile permits. This helper turns that registered set into a
+/// markdown bullet list, so the prompt advertises the same tools the
+/// model can actually call — replacing the previously hardcoded tool
+/// enumeration which could drift from the runtime registry.
+///
+/// Output format:
+///
+/// ```text
+/// ## Available tools
+/// - `read`
+/// - `write`
+/// ...
+/// ```
+fn generate_tool_section(names: &[String]) -> String {
+    use std::fmt::Write;
+    let mut s = String::from("\n\n## Available tools\n");
+    for n in names {
+        let _ = writeln!(s, "- `{n}`");
+    }
+    s
+}
 /// Infer a domain category from the goal for SONA trajectory grouping.
 ///
 /// Extracts the core verb + object from the goal to create a meaningful
@@ -1781,14 +1855,6 @@ fn build_system_prompt_inner(
         "You are an autonomous agent in the Oxios operating system.\n\
          You execute Seeds — immutable specifications with goals, constraints, and\n\
          acceptance criteria.\n\n\
-         ## Available Tools\n\
-         You have the following tools:\n\
-         - **File tools**: read, write, edit files; grep, find, ls for searching\n\
-         - **Web tools**: web_search for searching the web, get_search_results for retrieving cached results\n\
-         - **Exec**: run shell commands\n\
-         - **Memory tools**: memory_write (store facts/preferences), memory_read (list entries), memory_search (find relevant memories) — your cross-session recall. Use memory_write proactively when the user shares preferences, facts, or corrections worth remembering.
-         - **Knowledge**: knowledge — personal markdown vault for documents and notes\n\
-         - **Kernel tools**: agent, project, persona, cron, security, budget, resource\n\n\
          **Important**: When the task involves fetching information from the internet,\n\
          websites, or online services, use `web_search` first — do NOT search local files.\n\
          When the task asks to \"get\", \"fetch\", \"find online\", or \"look up\" something\n\
@@ -2049,5 +2115,20 @@ mod tests {
         assert!(prompt.contains("image/svg+xml"));
         assert!(prompt.contains("application/lobe.artifacts.mermaid"));
         assert!(prompt.contains("application/lobe.artifacts.react"));
+    }
+
+    /// Task 8: `generate_tool_section` must list exactly the registered
+    /// tools as markdown bullets, with no off-list entries. The section
+    /// header is `## Available tools` and each item is fenced with backticks.
+    #[test]
+    fn generate_tool_section_lists_exactly_registered_names() {
+        let s = generate_tool_section(&["read".into(), "exec".into()]);
+        assert!(s.contains("## Available tools"));
+        assert!(s.contains("`read`"));
+        assert!(s.contains("`exec`"));
+        assert!(!s.contains("`write`"));
+        // Empty input still emits the header so the prompt stays well-formed.
+        let empty = generate_tool_section(&[]);
+        assert!(empty.contains("## Available tools"));
     }
 }

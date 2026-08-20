@@ -148,12 +148,9 @@ mod tests {
         let id = AgentId::new_v4();
         let cs = resolve_cspace(None, None, Some("standard"), id);
         use super::super::types::{ResourceRef, Rights};
-        assert!(cs.can(
-            &ResourceRef::KernelDomain {
-                domain: "memory".into()
-            },
-            Rights::READ
-        ));
+        // Standard template now grants typed `ResourceRef::Memory`
+        // (READ) — not the legacy `KernelDomain{"memory"}` string.
+        assert!(cs.can(&ResourceRef::Memory, Rights::READ));
     }
 
     #[test]

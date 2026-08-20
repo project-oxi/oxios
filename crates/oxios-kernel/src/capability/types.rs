@@ -206,7 +206,15 @@ pub enum ResourceRef {
         /// MCP server name.
         server: String,
     },
-}
+    /// Filesystem primitive tools (read/write/edit/grep/find/ls).
+    Fs,
+    /// Web search tools (web_search/get_search_results).
+    WebSearch,
+    /// Agent memory (oxibrain-backed recall/retain).
+    Memory,
+    /// User markdown knowledge base.
+    Knowledge,
+ }
 
 impl fmt::Display for ResourceRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -219,6 +227,10 @@ impl fmt::Display for ResourceRef {
             ResourceRef::Browser => write!(f, "browser"),
             ResourceRef::A2a => write!(f, "a2a"),
             ResourceRef::Mcp { server } => write!(f, "mcp:{server}"),
+            ResourceRef::Fs => write!(f, "fs"),
+            ResourceRef::WebSearch => write!(f, "web_search"),
+            ResourceRef::Memory => write!(f, "memory"),
+            ResourceRef::Knowledge => write!(f, "knowledge"),
         }
     }
 }
@@ -423,4 +435,27 @@ mod tests {
         assert!(matches!(cap.issuer, Issuer::Agent(_)));
         assert!(cap.grants(Rights::DELEGATE));
     }
-}
+    #[test]
+    fn resource_ref_new_variants_display_and_serde_roundtrip() {
+        use super::ResourceRef;
+        assert_eq!(ResourceRef::Fs.to_string(), "fs");
+        assert_eq!(ResourceRef::WebSearch.to_string(), "web_search");
+        assert_eq!(ResourceRef::Memory.to_string(), "memory");
+        assert_eq!(ResourceRef::Knowledge.to_string(), "knowledge");
+        for r in [
+            ResourceRef::Fs,
+            ResourceRef::WebSearch,
+            ResourceRef::Memory,
+            ResourceRef::Knowledge,
+        ] {
+            let json = serde_json::to_string(&r).expect("serialize");
+            let back: ResourceRef = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, r);
+        }
+        // KernelDomain and new variants coexist: a Memory grant is distinct from KernelDomain{"memory"}.
+        assert_ne!(
+            ResourceRef::Memory,
+            ResourceRef::KernelDomain { domain: "memory".into() }
+        );
+    }
+ }

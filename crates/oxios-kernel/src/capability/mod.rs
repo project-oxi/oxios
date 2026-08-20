@@ -21,7 +21,6 @@
 //! | `template` | Preset CSpace configurations for common agent roles. |
 //! | `resolve` | Resolves an agent's CSpace from Seed + Config. |
 //! | `descriptor` | Tool descriptors and the static kernel catalog. |
-//! | `resolver` | Resolve a profile + bounding CSpace into an executable profile. |
 
 pub mod descriptor;
 pub mod profile;

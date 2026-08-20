@@ -175,13 +175,16 @@ fn status_discriminant(status: &ResolutionStatus) -> &'static str {
 
 /// Rights rendered into the canonical fingerprint string.
 ///
-/// `Rights` does not expose a public `.bits()` accessor, so the
-/// fingerprint uses the human-readable `Display` form (e.g.
-/// `"R|W"`, `"ALL"`). `Display` is fully deterministic and stable
-/// for a given bit pattern, so fingerprint stability across calls
-/// is preserved.
+/// `Rights` is a tuple struct with a `pub u8` bit-pattern field
+/// (`types.rs`), so we format the raw bits as a fixed-width two-digit
+/// hex value. This is **bit-injective**: every distinct `u8` produces a
+/// distinct token, including rights values that share the named-flag
+/// rendering (`Display` collapses e.g. `Rights(0x01)` and `Rights(0x11)`
+/// to `"R"`, which would let two semantically different capabilities
+/// collide in the fingerprint). The token is stable for a given bit
+/// pattern and zero-padded so leading-zero patterns sort correctly.
 fn rights_token(r: Rights) -> String {
-    r.to_string()
+    format!("{:02x}", r.0)
 }
 
 // ─── Resolved profile ──────────────────────────────────────────────────
@@ -577,5 +580,73 @@ mod tests {
         p2.exclude.push(ToolSelector::Tool(ToolId::new("kernel.exec.run")));
         let c = resolve(&p2, &worker_bounding(agent), agent, None);
         assert_ne!(a.fingerprint, c.fingerprint);
+
+    }
+
+    #[test]
+    fn rights_token_is_bit_injective_and_fingerprint_sensitive() {
+        // 1. `rights_token` must be bit-injective on the raw `u8` field.
+        // Two distinct bit patterns that `Display` collapses to the
+        // same string ("R") must produce distinct tokens — this is
+        // the exact bug the hex encoding fixes.
+        assert_ne!(rights_token(Rights(0x01)), rights_token(Rights(0x11)));
+        assert_eq!(rights_token(Rights(0x01)), "01");
+        assert_eq!(rights_token(Rights(0x11)), "11");
+        // Named combos that the old `Display` form differentiated
+        // also round-trip exactly through the hex form.
+        assert_eq!(rights_token(Rights::READ | Rights::WRITE), "03");
+        assert_eq!(rights_token(Rights::READ | Rights::EXECUTE), "05");
+
+        // 2. End-to-end fingerprint sensitivity: two profiles that
+        // resolve to the same resource but different required-rights
+        // bits must produce distinct fingerprints. We exercise this
+        // by selecting a tool whose requirement is `Fs, READ` (0x01)
+        // vs one whose requirement is `Fs, WRITE` (0x02). Both are
+        // ⊇ the named-flag case, so this also covers the R-only vs
+        // W-only named-rights pair the brief calls out as the
+        // raw-bit-case fallback.
+        let agent = AgentId::new_v4();
+        let bounding = worker_bounding(agent);
+
+        let read_only_profile = ToolProfileSpec {
+            id: "fp-read".into(),
+            revision: ProfileRevision(1),
+            extends: vec![],
+            capability_ceiling: vec![CapabilityRequest {
+                resource: ResourceSelector::Fs,
+                rights: Rights::READ | Rights::WRITE,
+            }],
+            include: vec![ToolSelector::Tool(ToolId::new("kernel.fs.read"))],
+            exclude: vec![],
+            dynamic_providers: vec![],
+            activation: ToolActivationPolicy {
+                max_active_tools: 1,
+                required_core: vec![],
+                sticky_turns: 1,
+            },
+        };
+        let write_only_profile = ToolProfileSpec {
+            id: "fp-write".into(),
+            revision: ProfileRevision(1),
+            extends: vec![],
+            capability_ceiling: vec![CapabilityRequest {
+                resource: ResourceSelector::Fs,
+                rights: Rights::READ | Rights::WRITE,
+            }],
+            include: vec![ToolSelector::Tool(ToolId::new("kernel.fs.write"))],
+            exclude: vec![],
+            dynamic_providers: vec![],
+            activation: ToolActivationPolicy {
+                max_active_tools: 1,
+                required_core: vec![],
+                sticky_turns: 1,
+            },
+        };
+        let r_read = resolve(&read_only_profile, &bounding, agent, None);
+        let r_write = resolve(&write_only_profile, &bounding, agent, None);
+        assert_ne!(
+            r_read.fingerprint, r_write.fingerprint,
+            "fingerprints over the same resource must differ when required-rights bits differ"
+        );
     }
 }

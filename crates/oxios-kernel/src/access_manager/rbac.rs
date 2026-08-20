@@ -64,6 +64,9 @@ impl Role {
                     Action::UseTool("bash".into()),
                     Action::UseTool("grep".into()),
                     Action::UseTool("find".into()),
+                    Action::UseTool("ls".into()),
+                    Action::UseTool("web_search".into()),
+                    Action::UseTool("get_search_results".into()),
                     Action::AccessPath("/workspace/**".into()),
                     Action::ManageAgents,
                 ]
@@ -520,6 +523,24 @@ mod tests {
         assert!(policy.allows(&Action::UseTool("bash".into())));
         assert!(!policy.allows(&Action::UseTool("unknown_tool".into())));
     }
+
+    #[test]
+    fn user_default_policy_allows_web_tools() {
+        // Task 7: `Role::User` must declare `ls`, `web_search`, and
+        // `get_search_results` in its default `allowed_actions` so
+        // that the user role can run the baseline web/FS tool set
+        // without RBAC-level denial (Layer 1). Layer 0 is enforced
+        // separately through the typed resource mapping.
+        let policy = Role::User.default_policy();
+        for t in ["ls", "web_search", "get_search_results"] {
+            assert!(
+                policy.allowed_actions.contains(&Action::UseTool(t.into())),
+                "User default policy must allow tool {t:?}; got {:?}",
+                policy.allowed_actions
+            );
+        }
+    }
+
 
     #[test]
     fn test_policy_allows_wildcard() {

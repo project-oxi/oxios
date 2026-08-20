@@ -306,49 +306,40 @@ impl AccessGate {
     // ─── Layer Implementations ───────────────────────────────────────
 
     fn check_tool(&self, ctx: &AgentContext, tool: &str) -> Result<(), AccessDenied> {
-        let resource = ResourceRef::KernelDomain {
-            domain: tool.to_string(),
+        // Layer 0: CSpace — the single grant source. Map the tool to
+        // its typed ResourceRef so the capability lookup uses the same
+        // vocabulary as `ToolDescriptor::required_capabilities` (see
+        // `capability::descriptor::build_catalog`). Tools without a
+        // typed resource fall back to `KernelDomain { domain: tool }`
+        // so CSpace-driven tools (exec, memory_*, knowledge, browse*,
+        // a2a, persona, ...) keep their per-session escalation flow
+        // (GatedTool → PendingToolApprovals → user dialog) covered in
+        // RFC-017.
+        let (resource, required) = match tool {
+            "read" | "grep" | "find" | "ls" => (ResourceRef::Fs, Rights::READ),
+            "write" | "edit" => (ResourceRef::Fs, Rights::WRITE),
+            "web_search" | "get_search_results" => (ResourceRef::WebSearch, Rights::EXECUTE),
+            "memory_read" | "memory_search" => (ResourceRef::Memory, Rights::READ),
+            "memory_write" => (ResourceRef::Memory, Rights::WRITE),
+            "knowledge" => (ResourceRef::Knowledge, Rights::READ),
+            "knowledge_write" => (ResourceRef::Knowledge, Rights::WRITE),
+            other => (
+                ResourceRef::KernelDomain {
+                    domain: other.to_string(),
+                },
+                Rights::EXECUTE,
+            ),
         };
-        if !ctx.cspace.can(&resource, Rights::EXECUTE) {
-            // The always-on tier — registered unconditionally for every
-            // agent by `tools::registration::register_always_on` (file ops
-            // + web search). CSpace capability is advisory for these tools:
-            // they are part of the baseline agent contract documented in
-            // ARCHITECTURE.md §"Tier 1" and enumerated in
-            // `OxiosKernelBridge::tool_names`, so Layer 0 must not gate
-            // them. Without web_search/get_search_results in this list,
-            // every default agent hits a catch-22: the tool is registered
-            // (so the LLM calls it) but no capability template grants the
-            // matching EXECUTE right, so Layer 0 hard-denies. See RFC-017
-            // Q3 ("the bug where web_search was denied despite being
-            // always-on is fixed separately — adding it to the gate's
-            // skip list"). This is that fix.
-            //
-            // CSpace-driven tools (exec, memory_*, knowledge, browse*,
-            // a2a, persona, ...) still require an explicit EXECUTE
-            // capability in the agent's Seed and are denied here when
-            // absent. RFC-017 covers the per-session escalation flow
-            // (GatedTool → PendingToolApprovals → user dialog) for that
-            // case.
-            let always_on = [
-                "read",
-                "write",
-                "edit",
-                "grep",
-                "find",
-                "ls",
-                "web_search",
-                "get_search_results",
-            ];
-            if !always_on.contains(&tool) {
-                return Err(AccessDenied {
-                    agent: ctx.agent_name.clone(),
-                    resource: tool.to_string(),
-                    layer: DenyLayer::Capability,
-                    reason: format!("CSpace lacks EXECUTE capability for tool '{tool}'"),
-                    suggestion: Some(format!("Add the '{tool}' capability to the agent's Seed.")),
-                });
-            }
+        if !ctx.cspace.can(&resource, required) {
+            return Err(AccessDenied {
+                agent: ctx.agent_name.clone(),
+                resource: resource.to_string(),
+                layer: DenyLayer::Capability,
+                reason: format!("CSpace lacks {required} capability for tool '{tool}'"),
+                suggestion: Some(format!(
+                    "Add the matching capability ({resource}, {required}) to the agent's Seed."
+                )),
+            });
         }
 
         // Layer 1+2: RBAC + Permissions (AccessManager)
@@ -769,19 +760,31 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_access_web_search_always_on() {
-        // Regression: web_search + get_search_results are registered
-        // unconditionally for every agent (register_always_on) and must
-        // pass Layer 0 even when the agent's CSpace carries no matching
-        // capability. Before this fix, the test_fixture CSpace (which
-        // grants no web_search cap) caused a hard deny — the
-        // triple-deadlock described in RFC-017 Q3.
-        let (gate, ctx) = make_gate();
+    fn test_tool_access_web_search_via_cspace_grant() {
+        // Task 7 regression: the always-on skip list is gone.
+        // `web_search` and `get_search_results` are no longer
+        // Layer-0-bypassed — they require an explicit
+        // `ResourceRef::WebSearch` EXECUTE capability in the agent's
+        // CSpace. Register them in the agent's bounding CSpace and
+        // the gate must admit them; drop the grant and the gate
+        // denies at the Capability layer (see
+        // `layer0_denies_web_search_without_cspace_grant` above for
+        // the deny half of the contract).
+        use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
+        let (gate, mut ctx) = make_gate();
+        let mut cspace = (*ctx.cspace).clone();
+        cspace.insert(Capability::kernel(CapResourceRef::WebSearch, CapRights::EXECUTE));
+        ctx.cspace = Arc::new(cspace);
+
         let result = gate.check(CheckRequest::Tool {
             context: &ctx,
             tool_name: "web_search",
         });
-        assert!(result.is_ok(), "web_search is always-on: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "web_search must pass with WebSearch EXECUTE grant: {:?}",
+            result
+        );
 
         let result = gate.check(CheckRequest::Tool {
             context: &ctx,
@@ -789,10 +792,56 @@ mod tests {
         });
         assert!(
             result.is_ok(),
-            "get_search_results is always-on: {:?}",
+            "get_search_results must pass with WebSearch EXECUTE grant: {:?}",
             result
         );
     }
+
+    // ─── Layer 0 typed mapping (Task 7) ────────────────────────────
+
+    #[test]
+    fn layer0_denies_web_search_without_cspace_grant() {
+        // With the always-on skip list removed, Layer 0 enforces
+        // CSpace as the single grant source. A fixture CSpace that
+        // holds no `ResourceRef::WebSearch` capability must deny
+        // `web_search` at the Capability layer (not Permission).
+        let (gate, ctx) = make_gate();
+        let result = gate.check(CheckRequest::Tool {
+            context: &ctx,
+            tool_name: "web_search",
+        });
+        assert!(
+            result.is_err(),
+            "web_search must be denied when CSpace carries no WebSearch capability: {result:?}"
+        );
+        assert_eq!(
+            result.unwrap_err().layer,
+            DenyLayer::Capability,
+            "denial must come from Layer 0 (Capability), not RBAC/Permissions"
+        );
+    }
+
+    #[test]
+    fn layer0_allows_web_search_with_websearch_grant() {
+        // Grant `ResourceRef::WebSearch` with EXECUTE in the agent's
+        // CSpace: Layer 0 must pass and the check must succeed (the
+        // Superuser RBAC role from `make_gate` covers Layer 1+2).
+        use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
+        let (gate, mut ctx) = make_gate();
+        let mut cspace = (*ctx.cspace).clone();
+        cspace.insert(Capability::kernel(CapResourceRef::WebSearch, CapRights::EXECUTE));
+        ctx.cspace = Arc::new(cspace);
+
+        let result = gate.check(CheckRequest::Tool {
+            context: &ctx,
+            tool_name: "web_search",
+        });
+        assert!(
+            result.is_ok(),
+            "web_search must pass Layer 0 with WebSearch EXECUTE grant: {result:?}"
+        );
+    }
+
 
     #[test]
     fn test_tool_access_unknown_agent_denied() {

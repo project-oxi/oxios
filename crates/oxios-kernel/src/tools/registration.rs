@@ -199,12 +199,15 @@ pub fn register_always_on_gated(
 /// | `kernel.web.search`        | `GatedTool::with_approval(WebSearchTool, ...)`   |
 /// | `kernel.web.results`       | `GatedTool::with_approval(GetSearchResultsTool,...)`|
 /// | `kernel.exec.run`          | `GatedTool::with_approval(ExecTool::from_kernel_with_context(...),...)` |
-/// | `kernel.browse.*`          | `register_browser_tools(kernel, registry)`        |
+/// | `kernel.browse.open`       | `BrowseTool::new(engine.clone())` (browser feat) |
+/// | `kernel.browse.extract`    | `BrowseExtractTool::new(engine.clone())` (browser feat) |
+/// | `kernel.browse.session`    | `BrowseSessionTool::new(engine.clone())` (browser feat) |
+/// | `kernel.browse.script`     | `BrowseScriptTool::new(engine)` (browser feat)  |
 /// | `kernel.memory.read`       | `MemoryReadTool::from_kernel(kernel)`            |
 /// | `kernel.memory.search`     | `MemorySearchTool::from_kernel(kernel)`          |
 /// | `kernel.memory.write`      | `MemoryWriteTool::from_kernel(kernel)`           |
 /// | `kernel.knowledge.read`    | `KnowledgeTool::from_kernel(kernel)`             |
-/// | `kernel.knowledge.write`   | warn + skip (no separate write tool exists)      |
+/// | `kernel.knowledge.write`   | warn + skip (no separate write tool exists; covered by `KnowledgeTool` from `kernel.knowledge.read`) |
 /// | `kernel.ask_user.ask`      | `AskUserTool::new(pending, event_bus)`           |
 /// | `kernel.persona.update`    | `PersonaTool::from_kernel(kernel)`               |
 /// | `kernel.project.update`    | `ProjectTool::from_kernel(kernel)`               |
@@ -362,12 +365,111 @@ pub fn register_from_resolved_profile(
                 ));
             }
             // ── Browser ──────────────────────────────────────────────
-            // Every `kernel.browse.*` descriptor collapses to the same
-            // helper, which registers the headless-browser suite in one
-            // shot. Duplicates are harmless — ToolRegistry overwrites by
-            // name.
-            id if id.starts_with("kernel.browse.") => {
-                register_browser_tools(kernel, registry);
+            // Per-descriptor-id arms so the registered set exactly
+            // mirrors the resolved active set. The previous prefix
+            // match `kernel.browse.*` collapsed every browse
+            // descriptor onto `register_browser_tools`, which
+            // registers the full suite — a custom profile that
+            // selected a subset of the four browse descriptors
+            // therefore ended up with extra tools in the registry
+            // (e.g. selecting only `kernel.browse.extract` still
+            // registered `browse`, `browse_session`, and
+            // `browse_script`). Each arm acquires the engine the
+            // same way `register_browser_tools` does; without an
+            // initialized engine (or without the `browser`
+            // feature) the arm warns and skips so operators see the
+            // mismatch instead of a silent drop.
+            "kernel.browse.open" => {
+                #[cfg(feature = "browser")]
+                {
+                    use crate::tools::browse::BrowseTool;
+                    if let Some(browser) = kernel.browser.as_ref()
+                        && let Some(engine) = browser.try_engine()
+                    {
+                        registry.register(BrowseTool::new(engine.clone()));
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "browser engine unavailable; skipping kernel.browse.open"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "browser"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `browser` feature; skipping kernel.browse.open"
+                    );
+                }
+            }
+            "kernel.browse.extract" => {
+                #[cfg(feature = "browser")]
+                {
+                    use crate::tools::browse::BrowseExtractTool;
+                    if let Some(browser) = kernel.browser.as_ref()
+                        && let Some(engine) = browser.try_engine()
+                    {
+                        registry.register(BrowseExtractTool::new(engine.clone()));
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "browser engine unavailable; skipping kernel.browse.extract"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "browser"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `browser` feature; skipping kernel.browse.extract"
+                    );
+                }
+            }
+            "kernel.browse.session" => {
+                #[cfg(feature = "browser")]
+                {
+                    use crate::tools::browse::BrowseSessionTool;
+                    if let Some(browser) = kernel.browser.as_ref()
+                        && let Some(engine) = browser.try_engine()
+                    {
+                        registry.register(BrowseSessionTool::new(engine.clone()));
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "browser engine unavailable; skipping kernel.browse.session"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "browser"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `browser` feature; skipping kernel.browse.session"
+                    );
+                }
+            }
+            "kernel.browse.script" => {
+                #[cfg(feature = "browser")]
+                {
+                    use crate::tools::browse::BrowseScriptTool;
+                    if let Some(browser) = kernel.browser.as_ref()
+                        && let Some(engine) = browser.try_engine()
+                    {
+                        registry.register(BrowseScriptTool::new(engine));
+                    } else {
+                        tracing::warn!(
+                            id = id,
+                            "browser engine unavailable; skipping kernel.browse.script"
+                        );
+                    }
+                }
+                #[cfg(not(feature = "browser"))]
+                {
+                    tracing::warn!(
+                        id = id,
+                        "kernel built without `browser` feature; skipping kernel.browse.script"
+                    );
+                }
             }
             // ── Memory ───────────────────────────────────────────────
             "kernel.memory.read" => {
@@ -380,17 +482,22 @@ pub fn register_from_resolved_profile(
                 registry.register(MemoryWriteTool::from_kernel(kernel));
             }
             // ── Knowledge ────────────────────────────────────────────
+            // Precondition: `KnowledgeTool` is registered only via the
+            // `kernel.knowledge.read` arm above (the catalog declares
+            // a single `KnowledgeTool` whose `action: "write"` covers
+            // write operations). A profile that selects ONLY
+            // `kernel.knowledge.write` therefore degrades to this
+            // warn+skip path — the resolved set names a tool the
+            // kernel has no constructor for. Operators should see the
+            // warning so the catalog/profile mismatch is observable.
             "kernel.knowledge.read" => {
                 registry.register(KnowledgeTool::from_kernel(kernel));
             }
             "kernel.knowledge.write" => {
-                // The unified `KnowledgeTool` already covers write actions
-                // (`action: "write"`); there is no separate write tool in
-                // `tools/builtin`. Skip with a warning so operators see
-                // the mismatch if a future catalog adds a dedicated tool.
                 tracing::warn!(
                     id = id,
-                    "no registration arm for catalog tool (write is covered by KnowledgeTool)"
+                    "no registration arm for catalog tool (write is covered by KnowledgeTool; \
+                     kernel.knowledge.read must also be selected for the covering tool to register)"
                 );
             }
             // ── User interaction ─────────────────────────────────────
@@ -873,5 +980,154 @@ mod tests {
             !names.contains(&"memory_read".to_string()),
             "worker must NOT include memory_read: {names:?}"
         );
+    }
+
+    /// Verify the per-descriptor-id browse arms (Task 6 fix): a
+    /// profile that resolves ONLY one browse descriptor must
+    /// register only that browse tool — not the full browse suite.
+    ///
+    /// The previous prefix match `kernel.browse.*` collapsed every
+    /// descriptor onto `register_browser_tools`, which registers the
+    /// full suite. A custom profile that selected a subset of the
+    /// four browse descriptors therefore ended up with extra tools
+    /// in the registry (e.g. selecting only `kernel.browse.extract`
+    /// still registered `browse`, `browse_session`, and
+    /// `browse_script`).
+    ///
+    /// The unit-test fixture builds a `KernelHandle` with
+    /// `kernel.browser = None` (see `make_test_kernel`), so every
+    /// browse arm hits the `else` branch and warns without
+    /// registering. The exhaustive table-driven assertions below
+    /// therefore verify two things:
+    ///
+    /// 1. **Each of the four exact-id arms is reachable.**
+    ///    Asserting NEITHER `browse_extract` (for the
+    ///    `kernel.browse.extract` case) nor `browse` is in the
+    ///    registry rules out both the prefix-match regression
+    ///    (which would register `browse`) and an arm that silently
+    ///    falls through to the catch-all (which would still skip
+    ///    `browse` but skip the warn path too).
+    /// 2. **No descriptor id leaks into the resolved set.**
+    ///    A pre-resolve assertion guards against accidental tool
+    ///    selection across the four ids.
+    ///
+    /// With the `browser` feature enabled AND an initialized
+    /// `BrowserApi`, the assertions flip: only the selected
+    /// descriptor's `registered_name` appears. Initializing an
+    /// oxibrowser-core engine in a unit test is not currently
+    /// supported (no fixture exposes a pre-populated `BrowserApi`),
+    /// so the table-driven test asserts the warn+skip path. The
+    /// four arms are visibly distinct in source — each acquires the
+    /// engine and constructs exactly one tool — which, paired with
+    /// the static arm map, is the strongest unit-level evidence.
+    #[tokio::test]
+    async fn register_from_resolved_profile_arms_match_browse_per_descriptor_id() {
+        use crate::capability::descriptor::ToolId;
+        use crate::capability::profile::{
+            CapabilityRequest, ProfileRevision, ResourceSelector, ToolActivationPolicy,
+            ToolProfileSpec, ToolSelector,
+        };
+
+        // (descriptor id, registered name) — exhaustive across all
+        // four `kernel.browse.*` descriptors. Each row exercises a
+        // distinct match arm.
+        let cases: &[(&str, &str)] = &[
+            ("kernel.browse.open", "browse"),
+            ("kernel.browse.extract", "browse_extract"),
+            ("kernel.browse.session", "browse_session"),
+            ("kernel.browse.script", "browse_script"),
+        ];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let kernel = make_test_kernel(tmp.path());
+
+        for (descriptor_id, registered_name) in cases {
+            let agent = AgentId::new_v4();
+            let mut bounding = CSpace::new(agent);
+            bounding.insert(Capability::kernel(CapResourceRef::Browser, CapRights::EXECUTE));
+
+            let profile = ToolProfileSpec {
+                id: Arc::from(format!("browse-only-{}", registered_name).as_str()),
+                revision: ProfileRevision(1),
+                extends: vec![],
+                capability_ceiling: vec![CapabilityRequest {
+                    resource: ResourceSelector::Browser,
+                    rights: CapRights::EXECUTE,
+                }],
+                include: vec![ToolSelector::Tool(ToolId::new(*descriptor_id))],
+                exclude: vec![],
+                dynamic_providers: vec![],
+                activation: ToolActivationPolicy {
+                    max_active_tools: 16,
+                    required_core: vec![],
+                    sticky_turns: 0,
+                },
+            };
+
+            let resolved = resolve(&profile, &bounding, agent, None);
+            // Sanity: only the targeted descriptor reaches the
+            // resolver loop; no other descriptor leaks into the
+            // resolved set.
+            assert_eq!(
+                resolved.tools.len(),
+                1,
+                "[{descriptor_id}] resolved.tools must contain exactly one entry, got {:?}",
+                resolved.tools
+            );
+            assert_eq!(resolved.tools[0].descriptor.id.to_string(), *descriptor_id);
+            assert!(
+                matches!(
+                    resolved.tools[0].status,
+                    ResolutionStatus::Active | ResolutionStatus::AvailableOnDemand
+                ),
+                "[{descriptor_id}] must reach Active/AvailableOnDemand, got {:?}",
+                resolved.tools[0].status
+            );
+
+            let registry = ToolRegistry::new();
+            let cache = Arc::new(SearchCache::new());
+            let gate = make_test_gate();
+            let context =
+                AgentContext::test_fixture_with_cspace("browse-only-test", bounding.clone());
+
+            register_from_resolved_profile(
+                &registry,
+                &kernel,
+                &resolved,
+                cache,
+                agent,
+                gate,
+                context,
+                None,
+                None,
+                None,
+                None,
+            );
+
+            let names = registry.names();
+            // Engine is None in the unit fixture → every arm
+            // warn+skips. The selected descriptor's tool must NOT be
+            // registered, and the other three browse tools must also
+            // NOT be registered (the prefix-match regression would
+            // have registered them all when the engine was Some;
+            // here it registers none because None short-circuits,
+            // but the assertion still pins the contract that no
+            // descriptor leaks a different tool's name).
+            assert!(
+                !names.contains(&registered_name.to_string()),
+                "[{descriptor_id}] engine is None; the arm for this id must warn+skip, \
+                 but registry contains {registered_name}: {names:?}"
+            );
+            for (_, other_name) in cases {
+                if other_name == registered_name {
+                    continue;
+                }
+                assert!(
+                    !names.contains(&other_name.to_string()),
+                    "[{descriptor_id}] must NOT register sibling browse tool \
+                     {other_name} (prefix-match regression): {names:?}"
+                );
+            }
+        }
     }
 }

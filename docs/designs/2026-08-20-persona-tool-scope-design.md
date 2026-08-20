@@ -129,6 +129,25 @@ pub struct ToolProfileRef {
 }
 ```
 
+Selector syntax and precedence are fixed:
+
+```rust
+pub enum ToolSelector {
+    Tool(ToolId),
+    ProviderTag { provider: ToolProviderId, tag: ToolTag },
+}
+```
+
+`include` matches exact namespaced tool IDs or every catalog tool carrying a
+provider tag. `exclude` uses the same selector syntax and always wins over
+`include`: the selected set is `(include ∪ dynamic_contracts) − exclude`.
+Evaluation is set-based and order-independent. Descriptor `ActivationClass`
+remains a floor on restrictiveness — profiles can further restrict a tool but
+never relax it — and exclusions apply after every other inclusion source, so
+`exclude` is the single most authoritative authoring control. The canonical
+fingerprint input is the resolved post-exclusion tool set with descriptor
+contract versions, never the raw selector list.
+
 Profiles pin exact revisions. Editing a profile creates a new revision. Existing
 personas continue to reference their pinned revision until explicitly upgraded.
 This prevents ambient authority and behavior changes.

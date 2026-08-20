@@ -148,26 +148,52 @@ ecosystem's format, not oximemo's. `SPEC.md` inside the crate is the normative
 contract; the parser is its reference implementation. Dependencies: none beyond
 `uuid`, `time` (pure).
 
-### 4.1 The format — constrained YAML subset
+### 4.1 The format — constrained YAML subset (grammar v2, post-verification)
 
 - **Markdown notes**: first line `---`, block of conformant lines, closing `---`.
   **HTML notes** (oximemo only): the same block wrapped in an HTML comment.
-- **Allowed**: flat `key: value`; nested maps to depth 2 (for app tables); flow arrays
-  of scalars `[a, b]`; scalars are bool / int / RFC3339 timestamp / string (bare or
-  quoted). Canonical emission: unquoted where legal, keys in canonical order
-  (`id`, `created`, `updated`, `favorite`, `deleted`, then unknown keys in original
-  order, then app tables alphabetically).
-- **Forbidden**: anchors/aliases, multi-document, YAML tags, block scalars, complex
-  keys, tabs. Violations are a parse **error** surfaced to the caller — never a silent
-  fallback to body (invariant 2). Obsidian's properties-UI output is plain flat
-  scalars/arrays — inside the subset, absorbed as-is.
-- **Schema v1**: `id` (UUIDv7, required, immutable), `created`, `updated` (RFC3339,
-  required), `favorite` (optional), `deleted` (optional; presence = soft-deleted),
-  plus open app tables (`oxios:` per RFC-022). **Deliberately dropped** from oximemo's
-  current schema: `hash` (derived — recomputed at walk time; storing it violated
-  invariant 1 and fed the dead doctor path, review minor) and `tags` (already derived
-  from body `#tags` by `tags_of`; if present in frontmatter — e.g. written by
-  Obsidian — it is read and unioned, never rewritten).
+- **Grammar** (layer 1 — syntax only; schema is layer 2, validated by apps):
+  - `key: value` flat entries; nested maps to depth 2 (app tables).
+  - **Sequences in both forms**: flow `[a, b]` *and* block (`key:` followed by
+    `  - item` lines) — Obsidian's properties editor serializes lists as block
+    sequences and actively converts flow→block on edit (verified
+    2026-08-20; forum bug graveyard #101635). Canonical emission uses flow form.
+  - **Block scalars `|`** for multi-line strings — Obsidian multiline text
+    properties use them. Canonical emission of a `\n`-containing string is the
+    block-scalar form.
+  - Scalars: `true`/`false` ⇒ Bool. Everything else is a **string** (bare or
+    quoted) — timestamps (`2026-08-20T13:40:00.000Z`, fractional seconds
+    accepted; RFC3339 validated at the app layer for schema fields), numbers
+    (`3`, `3.5` — floats and dates such as `2026-08-20` pass through as
+    unquoted strings), dates, URLs.
+  - Keys: bare printable, no `:`, no leading/trailing space.
+- **Forbidden**: anchors/aliases, multi-document, YAML tags, complex keys, tabs,
+  comments (a `#` inside a value must be quoted; the emitter always quotes such
+  strings), multi-line flow collections, empty values (`key:` with neither a
+  child map nor a sequence is an error; emit `key: []` for empty lists).
+  Violations are a parse **error** surfaced to the caller — never a silent
+  fallback to body (invariant 2).
+- **Edge policy** (spec-mandated): UTF-8 only (BOM ⇒ error, not silent
+  BodyOnly); CRLF accepted on parse, LF on canonical emission; duplicate keys ⇒
+  error; an unclosed opening `---` ⇒ error with guidance ("a leading `---` must
+  close a frontmatter block; for a horizontal rule use `***`"); an empty block
+  (`---\n---`) parses as an empty table — schema layer then reports missing
+  `id`/`created`/`updated`.
+- **Canonical emission**: keys `id, created, updated, favorite, deleted` first,
+  then unknown keys in original order, then sub-tables alphabetically; strings
+  quoted only when necessary (empty, leading/trailing space, contains any of
+  `:#,[]{}&*!|>'"%@` or a tab, or would parse as Bool).
+- **NoOp is semantic, not byte-level**: `write_document` on a semantically
+  unchanged file returns `NoOp` and leaves foreign formatting (e.g.
+  Obsidian-style block lists) untouched — it never "re-canonicalizes" idle
+  files, because a byte rewrite would churn mtime and mint a brain episode.
+- **Schema v1** (layer 2): `id` (UUIDv7, required, immutable), `created`,
+  `updated` (RFC3339, required), `favorite` (optional), `deleted` (optional;
+  presence = soft-deleted), plus open app tables (`oxios:` per RFC-022).
+  **Deliberately dropped** from oximemo's current schema: `hash` (derived —
+  recomputed at walk time) and `tags` (derived from body `#tags`; if present in
+  frontmatter — e.g. written by Obsidian — read and unioned, never rewritten).
+  Grammar evolution is additive-only: future versions must parse every v1 file.
 
 ### 4.2 The single write API (review blocker fix)
 
@@ -458,3 +484,15 @@ already-migrated tolerance; `.html` watcher gap documented. Format decision: con
 target changed from oximemo's TOML `+++` to the new neutral `oxi-frontmatter`
 constrained-YAML subset — Obsidian/`---`-ecosystem compatibility, RFC-022 native
 conformance, derived fields (`hash`, `tags`) removed from the file (§1, §4).
+
+**Revision 3 — format verification (2026-08-20).** The format grammar had not been
+independently verified (the 3-way review predates the format redesign). External
+verification against Obsidian's actual emission found one real defect: list
+properties serialize as **block sequences** (and the properties editor converts
+flow→block on edit) and multiline text properties use **block scalars `|`** — both
+were forbidden by grammar v1, so the "absorbs Obsidian output as-is" claim was false.
+Grammar v2 (§4.1) admits both forms, passes timestamps/floats/dates through as
+unquoted strings (RFC3339/UUID validation moved to the schema layer at the apps),
+and pins ten edge policies (comments, `#`-quoting, unclosed fence, BOM, CRLF,
+duplicate keys, empty values, key charset, semantic NoOp that never re-canonicalizes,
+additive-only evolution). Also updated: implementation plan Tasks 1–2 test matrices.

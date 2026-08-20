@@ -9,10 +9,10 @@
 //! Two operations matter at the kernel boundary:
 //!
 //! - [`ToolProfileSpec::select_tools`] — resolves the static
-//!   `include ∪ dynamic − exclude` set against a tool catalog.
-//!   Returns references that borrow from the catalog slice (not
-//!   `self`) so the kernel's `'static` catalog propagates through
-//!   unchanged.
+//!   `include − exclude` set (dynamic providers add tools at
+//!   resolution time, not here) against a tool catalog. Returns
+//!   references that borrow from the catalog slice (not `self`) so
+//!   the kernel's `'static` catalog propagates through unchanged.
 //! - [`ToolProfileSpec::validate_publish`] — full pre-publish
 //!   validation per design §4.2/§4.3/§5.1 step 4: every selected
 //!   tool's required capabilities must fit some ceiling entry,
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::descriptor::{ToolDescriptor, ToolId, ToolProviderId, ToolTag};
+use super::descriptor::{ToolContractVersion, ToolDescriptor, ToolId, ToolProviderId, ToolTag};
 use super::types::{ResourceRef, Rights};
 use crate::types::AgentId;
 
@@ -222,19 +222,6 @@ pub enum ProviderCompatibilityPolicy {
     },
 }
 
-/// Semantic-version contract for a tool's input/output schema.
-///
-/// Mirrors the `ToolContractVersion` defined in `descriptor.rs` but
-/// lives in this module so profile authors can construct ceiling
-/// values without importing the descriptor module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ToolContractVersion {
-    /// Breaking-change counter. Bumped on incompatible schema changes.
-    pub major: u32,
-    /// Backwards-compatible feature addition counter.
-    pub minor: u32,
-}
-
 /// A dynamic provider's contribution to the tool set.
 ///
 /// Dynamic providers are not part of the static kernel catalog — they
@@ -323,8 +310,8 @@ pub struct ToolProfileSpec {
 /// Errors a profile can raise at publish time.
 #[derive(Debug, Error)]
 pub enum ProfileError {
-    /// The profile references a tool that is not in the catalog
-    /// (typically a required-core id or a dynamic-provider name).
+    /// Raised by the resolver when a profile references a tool
+    /// absent from the catalog.
     #[error("tool {0} is not in the catalog")]
     UnknownTool(ToolId),
     /// A selected tool requires a capability the profile's ceiling
@@ -356,17 +343,22 @@ impl ToolProfileSpec {
     ///    catalog entry it matches (exact id, or provider+tag).
     /// 2. For each [`ToolSelector`] in `exclude`, drop every entry
     ///    already collected that the exclude matches.
-    /// 3. Return the survivors, preserving the catalog's source
-    ///    order and de-duplicating.
+/// 3. Return the survivors, de-duplicated by `ToolId`. The
+///    order is **selector-major**: entries are appended in the
+///    order each `include` selector matches the catalog, not in
+///    catalog source order.
     ///
     /// The returned references borrow from `catalog`, not `self` —
     /// callers passing the kernel's `'static` catalog get
     /// `Vec<&'static ToolDescriptor>` back, which `ResolvedTool` can
     /// store without re-borrowing the profile struct.
     pub fn select_tools<'c>(&self, catalog: &'c [ToolDescriptor]) -> Vec<&'c ToolDescriptor> {
-        // Step 1: union of include matches. Preserve catalog order;
-        // de-duplicate by `ToolId` (the catalog's primary key) so an
-        // id matched by two selectors appears exactly once.
+        // Step 1: union of include matches. Iteration is
+        // selector-major (include outer, catalog inner), so the
+        // resulting order matches the include selectors, not the
+        // catalog's source order. De-duplicate by `ToolId` (the
+        // catalog's primary key) so an id matched by two selectors
+        // appears exactly once.
         let mut selected: Vec<&ToolDescriptor> = Vec::new();
         for selector in &self.include {
             for descriptor in catalog {
@@ -393,11 +385,11 @@ impl ToolProfileSpec {
     /// Publish-time validation per design §4.2/§4.3/§5.1 step 4.
     ///
     /// Checks (in order):
-    /// 1. Every `required_core` tool is in the resolved set.
-    /// 2. Every selected tool's every `CapabilityRequirement` fits
-    ///    some ceiling entry: `ceiling.resource.covers(&req.resource)`
-    ///    AND `ceiling.rights.contains(req.rights)`.
-    /// 3. `required_core.len() <= max_active_tools`.
+/// 1. Every selected tool's every `CapabilityRequirement` fits
+///    some ceiling entry: `ceiling.resource.covers(&req.resource)`
+///    AND `ceiling.rights.contains(req.rights)`.
+/// 2. Every `required_core` tool is in the resolved set.
+/// 3. `required_core.len() <= max_active_tools`.
     ///
     /// The first violation is returned.
     pub fn validate_publish(&self, catalog: &[ToolDescriptor]) -> Result<(), ProfileError> {

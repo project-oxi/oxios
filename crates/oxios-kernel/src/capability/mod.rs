@@ -18,7 +18,9 @@
 //! | `types` | Core types: Capability, CSpace, Rights, ResourceRef, etc. |
 //! | `template` | Preset CSpace configurations for common agent roles. |
 //! | `resolve` | Resolves an agent's CSpace from Seed + Config. |
+//! | `descriptor` | Tool descriptors and the static kernel catalog. |
 
+pub mod descriptor;
 pub mod resolve;
 pub mod template;
 pub mod types;

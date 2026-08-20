@@ -8,14 +8,14 @@
 //! record the outcome in the session.
 //!
 //! ## §6.4 — fail-closed, structurally
-//! The maxer's agents run through the AgentRuntime **gated** registration path
-//! (`register_tools_from_cspace_gated`), which:
-//! (a) scopes capabilities to `standard()` so high-risk tools
-//!     (rm/osascript/wildcard/ManageRBAC/SystemConfig) **DENY** at the
-//!     `AccessGate`, and
-//! (b) does **not** register `ask_user` (that lives in `register_all_kernel_tools`
-//!     / the bridge path, not this one) — so an unattended agent cannot pend on
-//!     a clarification.
+//! The maxer sets `ExecEnv.cspace_hint = "standard"`, so the AgentRuntime
+//! resolves the `"standard"` persona execution profile against the resulting
+//! CSpace and registers tools via `register_from_resolved_profile()`. Because
+//! the standard profile excludes high-risk selectors (rm/osascript/wildcard/
+//! ManageRBAC/SystemConfig) and `ask_user`, the agent cannot reach those tools
+//! even if it tried — the resolver never arms them. The legacy gated path
+//! (`register_tools_from_cspace_gated`) is still exported for backward
+//! compatibility but is not exercised by the maxer.
 //! As defense-in-depth, each task is wrapped in a hard per-task timeout so any
 //! tool that blocks is bounded (`execute_directive` also enforces
 //! `max_execution_time`).

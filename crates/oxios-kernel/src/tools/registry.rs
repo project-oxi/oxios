@@ -5,9 +5,13 @@
 //! settings UI uses this via `GET /api/tools/registry` to render
 //! the `allowed_tools` multi-select widget.
 //!
-//! The catalog is a superset of the tools registered in
-//! [`super::registration::register_tools_from_cspace_gated`].
-//! It includes all always-on tools and all CSpace-driven tools.
+//! The catalog is a superset of the tools reachable via the agent runtime's
+//! live path: persona execution profile → `capability::resolver::resolve` →
+//! [`super::registration::register_from_resolved_profile`]. It includes all
+//! always-on tools and every CSpace-driven tool a profile could possibly
+//! activate. The legacy gated path
+//! (`register_tools_from_cspace_gated`) is still exported but is no longer
+//! the authoritative registration source.
 //!
 //! MCP tools are dynamically registered per-server and are NOT
 //! included here. Users can type MCP tool names manually when

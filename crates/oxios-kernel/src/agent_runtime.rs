@@ -10,7 +10,8 @@
 //! path for agent OS control. The runtime:
 //!
 //! 1. Resolves the agent's CSpace from persona/role/hint
-//! 2. Registers tools via `register_tools_from_cspace()`
+//! 2. Resolves the persona execution profile against that CSpace and
+//!    registers tools via `register_from_resolved_profile()`
 //! 3. Optionally queries `ToolRetriever` for semantic capability hints
 //! 4. Builds an `Agent` via `AgentBuilder` with middleware pipeline
 //! 5. Runs via `Agent::run_streaming()` for real-time event processing
@@ -463,15 +464,16 @@ impl AgentRuntime {
             None
         };
 
-        // Build kernel manifest from CSpace active domains.
-        let kernel_manifest = {
-            let domains = cspace.active_domains();
-            if domains.is_empty() {
-                None
-            } else {
-                Some(crate::tools::retrieval::build_kernel_manifest(&domains))
-            }
-        };
+        // Build kernel manifest from the *resolved* effective CSpace, not the
+        // legacy bounding CSpace. Tool selection can attenuate domains away
+        // (e.g. dropping every `kernel.browse.*` descriptor removes the
+        // `browser` ResourceRef from the effective CSpace). The bounding
+        // CSpace would still report the attenuated domain as "active",
+        // prompting the model with capabilities it cannot actually call.
+        // Using `resolved.effective_cspace` keeps the manifest in lock-step
+        // with what the resolver actually registers downstream.
+        let kernel_manifest =
+            build_kernel_manifest_from_cspace(&resolved.effective_cspace);
 
         // Rebuild system prompt with capabilities and manifest if available.
         if capabilities_xml.is_some() || kernel_manifest.is_some() {
@@ -1656,6 +1658,30 @@ fn truncate_json_str(json_str: &str, max_len: usize) -> String {
     format!("{truncated}...")
 }
 
+/// Build the kernel manifest markdown for the system prompt from a CSpace.
+///
+/// Returns `None` when the CSpace has no active domains (no `## Kernel Manifest`
+/// block emitted), and `Some(markdown)` otherwise. Pure function — depends
+/// only on the CSpace passed in, so it is trivially testable in isolation.
+///
+/// Callers must pass the *resolved* effective CSpace
+/// (`ResolvedExecutionProfile.effective_cspace`) and NOT the legacy bounding
+/// CSpace used to drive resolution: a profile can attenuate a domain away
+/// (e.g. by removing every `kernel.browse.*` selector), and the bounding
+/// CSpace would still report that domain as active. The manifest is the
+/// contract that promises the model "here is what you can call" — it MUST
+/// reflect the post-resolution set, never the pre-resolution bound.
+fn build_kernel_manifest_from_cspace(
+    cspace: &crate::capability::CSpace,
+) -> Option<String> {
+    let domains = cspace.active_domains();
+    if domains.is_empty() {
+        None
+    } else {
+        Some(crate::tools::retrieval::build_kernel_manifest(&domains))
+    }
+}
+
 /// Build the "Available tools" section of the system prompt from the actual
 /// registry contents.
 ///
@@ -2130,5 +2156,81 @@ mod tests {
         // Empty input still emits the header so the prompt stays well-formed.
         let empty = generate_tool_section(&[]);
         assert!(empty.contains("## Available tools"));
+    }
+
+    /// Task 8 fix round: `build_kernel_manifest_from_cspace` must emit
+    /// exactly the active domains of the CSpace it is given, no more and
+    /// no less. The bounding CSpace (used as input to resolution) and the
+    /// resolved effective CSpace (post-attenuation) can diverge — a
+    /// profile can strip a domain by removing every selector that
+    /// requires it. The runtime must build the manifest from the latter
+    /// so the prompt never advertises capabilities the agent cannot
+    /// actually call.
+    #[test]
+    fn build_kernel_manifest_from_cspace_emits_exactly_cspace_domains() {
+        use crate::capability::{Capability, CSpace, ResourceRef, Rights};
+        use crate::types::AgentId;
+
+        let agent = AgentId::new_v4();
+
+        // Bounding CSpace: the agent holds capabilities for `space`,
+        // `knowledge`, and `program` (all `KernelDomain` variants, which
+        // round-trip through `active_domains()` and survive the
+        // KNOWN_DOMAINS filter inside `build_kernel_manifest`).
+        let mut bounding = CSpace::new(agent);
+        for domain in ["space", "knowledge", "program"] {
+            bounding.insert(Capability::kernel(
+                ResourceRef::KernelDomain { domain: domain.into() },
+                Rights::READ,
+            ));
+        }
+
+        // Resolved effective CSpace: identical to bounding EXCEPT
+        // `program` has been attenuated away by the profile selector —
+        // a tool that required `program` was deselected, so the resolver
+        // never arms it into the effective CSpace. This is the CSpace the
+        // manifest builder must reflect.
+        let mut resolved = CSpace::new(agent);
+        for domain in ["space", "knowledge"] {
+            resolved.insert(Capability::kernel(
+                ResourceRef::KernelDomain { domain: domain.into() },
+                Rights::READ,
+            ));
+        }
+
+        // Manifest built from the resolved CSpace must mention the two
+        // surviving domains and MUST NOT mention the attenuated one.
+        let manifest = build_kernel_manifest_from_cspace(&resolved)
+            .expect("non-empty effective CSpace should produce a manifest");
+        assert!(
+            manifest.contains("Active domains: knowledge, space"),
+            "expected surviving domains in the active list (sorted), got: {manifest}"
+        );
+        assert!(
+            !manifest.contains("### program") && !manifest.contains("program"),
+            "manifest leaked the attenuated `program` domain: {manifest}"
+        );
+
+        // The bounding CSpace DOES contain `program` — this sanity
+        // check guards against a regression where the builder
+        // accidentally reads from the bounding CSpace. If the
+        // implementation ever switches back to `cspace` (bounding)
+        // instead of `resolved.effective_cspace`, the previous assertion
+        // would have failed because `program` would leak into the
+        // prompt. Without this guard the regression could pass silently
+        // (an empty manifest would also satisfy the assertions above).
+        let bounding_manifest =
+            build_kernel_manifest_from_cspace(&bounding).unwrap();
+        assert!(
+            bounding_manifest.contains("Active domains: knowledge, program, space"),
+            "sanity check: bounding CSpace should still advertise program              so the regression guard above remains meaningful, got: {bounding_manifest}"
+        );
+
+        // Empty CSpace produces no manifest block.
+        let empty = CSpace::new(agent);
+        assert!(
+            build_kernel_manifest_from_cspace(&empty).is_none(),
+            "empty CSpace must yield None so the prompt stays well-formed"
+        );
     }
 }

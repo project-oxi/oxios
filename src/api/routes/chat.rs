@@ -2773,7 +2773,11 @@ pub(crate) async fn handle_save_to_knowledge(
     {
         Ok(true) => {}
         Ok(false) => {
-            // Path is a user-authored file — force write via plain note_write
+            // Redefined refusal (RFC-022 §5): the path is a user-authored
+            // note (frontmatter WITHOUT an oxios: table) or a system path.
+            // This save is user-initiated, so force it via plain note_write —
+            // format-aware since T12: existing user frontmatter keys survive
+            // as the merge base and only the body is replaced.
             state.kernel.knowledge.note_write(&path, content)?;
         }
         Err(e) => return Err(AppError::from(e)),

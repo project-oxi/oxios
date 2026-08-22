@@ -174,8 +174,7 @@ mod tests {
         );
         if resolved.is_none() {
             let err = resolve_bot_token("OXIOS_NO_SUCH_ENV_VAR_QQ")
-                .err()
-                .expect("must error when no token anywhere")
+                .expect_err("must error when no token anywhere")
                 .to_string();
             assert!(
                 err.contains("Web UI"),

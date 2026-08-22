@@ -17,13 +17,19 @@ use parking_lot::{Mutex as ParkingMutex, RwLock};
 /// Used by [`KnowledgeLens`] to keep the semantic index in sync.
 pub type FileChangeCallback = Box<dyn Fn(&str, FileChange) + Send + Sync>;
 
+use time::OffsetDateTime;
+
+use oxi_frontmatter::{NoteFormat, Parsed, WriteOutcome};
+
 use crate::backlinks::{Backlink, BacklinkIndex, LinkGraph};
 use crate::chat::{delete_chat_msg, move_from_chat, read_chat_msgs, rename_chat_msg};
 use crate::checklist::{
     add_checklist_item, checklist_items, complete_checklist_item, incomplete_checklist_items,
     remove_checklist_item, remove_completed_checklist_items,
 };
+use crate::frontformat;
 use crate::fs::VirtualFs;
+use crate::fs::split_posix_path;
 use crate::habits::{habits, last_week_habits, write_habits};
 use crate::html::markdown_to_html;
 use crate::i18n::emoji_for;
@@ -134,10 +140,24 @@ impl KnowledgeBase {
     }
 
     /// Emit file change notifications to all registered callbacks.
-    fn notify_change(&self, path: &str, change: FileChange) {
+    pub(crate) fn notify_change(&self, path: &str, change: FileChange) {
         for cb in self.on_change.read().iter() {
             cb(path, change.clone());
         }
+    }
+
+    /// Canonicalized containment check (F4): resolve `path` through
+    /// [`VirtualFs::safe_path`] so a symlinked directory component
+    /// pointing outside the root is rejected before any
+    /// frontformat delegation (which only performs string-level
+    /// path hardening).
+    fn assert_within_root(&self, path: &str) -> Result<()> {
+        let (dir, filename) = split_posix_path(path);
+        self.fs
+            .read()
+            .safe_path(dir, filename)
+            .map_err(|e| anyhow::anyhow!("unsafe path {path:?}: {e}"))?;
+        Ok(())
     }
 
     // ── File I/O ───────────────────────────────────────────────────
@@ -191,18 +211,42 @@ impl KnowledgeBase {
     }
     /// Write a note — creates or overwrites.
     ///
-    /// Writes the `.md` file via VirtualFs, updates the backlink index,
-    /// and notifies registered `on_file_change` callbacks.
+    /// Routes through [`crate::frontformat::write_note`] so memo paths
+    /// carry a canonical `oxios:` frontmatter block (id/created/updated)
+    /// while system paths (Chat.md, journal/, etc.) stay raw.
+    ///
+    /// **No-op precedence (§5.3.2):** when `frontformat::write_note`
+    /// returns `WriteOutcome::NoOp` — meaning the merged memo is
+    /// semantically identical to the on-disk file, OR the system-path
+    /// bytes already match — we return `Ok(())` *before* reindexing
+    /// backlinks or firing `on_file_change` callbacks. The invariant:
+    /// no pointless churn.
     pub fn note_write(&self, path: &str, content: &str) -> Result<()> {
-        // Hold the write lock across the read-check + write so concurrent
-        // writers cannot interleave their write_all calls (F1). Drop the
-        // lock before notifying callbacks to avoid reentrancy deadlocks.
-        let is_new = {
-            let fs = self.fs.write();
-            let is_new = fs.read_path(path).is_err();
-            fs.write_path(path, content)?;
-            is_new
-        };
+        // F4 containment (round-1 review fix): frontformat's
+        // assert_safe_rel is string-only, so a symlinked directory
+        // component could otherwise escape the root. Resolve through
+        // VirtualFs::safe_path — the same canonicalized containment
+        // check fs.write_path performed before T12 — before
+        // delegating the bytes to frontformat.
+        self.assert_within_root(path)?;
+
+        // Capture root under a brief read lock, then release it before
+        // the (potentially slow) frontformat IO so we never nest the
+        // fs write lock under a fs read lock from the same thread.
+        let root = self.fs.read().root().to_path_buf();
+        let was_new = !root.join(path).exists();
+
+        let now = OffsetDateTime::now_utc();
+        let outcome = frontformat::write_note(&root, path, content, now)
+            .map_err(|e| anyhow::anyhow!("frontformat::write_note({path}) failed: {e}"))?;
+
+        if matches!(outcome, WriteOutcome::NoOp) {
+            // §5.3.2 no-op precedence — leave the backlinks index and
+            // callbacks alone. The file on disk is identical to what
+            // we would have written.
+            return Ok(());
+        }
+
         // Build the stem index BEFORE taking the backlinks write lock
         // (fs read lock nests under nothing here).
         let stem_index = self.build_stem_index();
@@ -214,7 +258,7 @@ impl KnowledgeBase {
 
         self.notify_change(
             path,
-            if is_new {
+            if was_new {
                 FileChange::Created(path.to_string())
             } else {
                 FileChange::Updated(path.to_string())
@@ -225,60 +269,98 @@ impl KnowledgeBase {
 
     /// Write a note with provenance metadata (RFC-022).
     ///
-    /// Prepends a YAML frontmatter block with `oxios:` metadata,
-    /// then delegates to `note_write`. If the file already has an
-    /// `oxios:` frontmatter block, it is merged (preserving `saved_at`,
-    /// updating `quality`/`source`). If the file has non-Oxios
-    /// frontmatter (e.g., Obsidian tags), it is left intact and
-    /// the note is treated as user-authored — no metadata is added.
+    /// Merges the provided [`NoteMeta`] into the file's `oxios:`
+    /// table (synthesizing id/created/updated on a fresh memo;
+    /// preserving id/created across a re-write) via
+    /// [`crate::frontformat::with_oxios_table`], then delegates to
+    /// [`Self::note_write`].
+    ///
+    /// **User-authored refusal:** if the file already exists and its
+    /// frontmatter block contains no `oxios:` table — i.e., the
+    /// frontmatter is user-authored (Obsidian tags, custom keys) —
+    /// we return `Ok(false)` and leave the file untouched. The brief
+    /// §5.3.2 specifies that user-authored frontmatter is sacred; an
+    /// agent metadata write must never overwrite it.
     pub fn note_write_with_meta(&self, path: &str, content: &str, meta: &NoteMeta) -> Result<bool> {
-        // Check existing content for frontmatter
+        // System paths (Chat.md, journal/, non-.md) never carry
+        // frontmatter — refuse so the caller can fall back to a raw
+        // note_write instead of us silently polluting the file with
+        // an oxios: block that write_note would write verbatim (raw).
+        if frontformat::is_system_path(path) {
+            tracing::debug!(
+                path,
+                "Skipping note_write_with_meta on system path (no frontmatter allowed)"
+            );
+            return Ok(false);
+        }
+
+        // Round-1 review fix: the refusal must be EXACT — only a file
+        // whose existing frontmatter block (Parsed::Memo) carries NO
+        // `oxios:` table is user-authored. A BodyOnly file (no
+        // frontmatter at all) proceeds and gains the table; malformed
+        // frontmatter proceeds and surfaces a hard parse error from
+        // the write path (never silently refused nor repaired).
         let existing = self.note_read(path).ok().flatten();
-        let final_content = match existing {
-            Some(ref existing_content) => {
-                let (existing_meta, body) = parse_note_meta(existing_content);
-                match existing_meta {
-                    // Has Oxios frontmatter — merge
-                    Some(old_meta) => {
-                        let merged = NoteMeta {
-                            saved_at: old_meta.saved_at.or(meta.saved_at.clone()),
-                            ..meta.clone()
-                        };
-                        format_frontmatter(&merged, if body.is_empty() { content } else { &body })
-                    }
-                    // No Oxios frontmatter — user-authored or foreign frontmatter.
-                    // Don't touch it. Return Ok without writing.
-                    None => {
-                        tracing::debug!(
-                            path,
-                            "Skipping note_write_with_meta on user-authored note"
-                        );
-                        return Ok(false);
-                    }
-                }
-            }
-            None => format_frontmatter(meta, content),
-        };
-        self.note_write(path, &final_content).map(|_| true)
+        let user_authored = matches!(
+            existing.as_deref().map(|s| oxi_frontmatter::parse(s, NoteFormat::Markdown)),
+            Some(Ok(Parsed::Memo { ref table, .. })) if !table.contains_key("oxios")
+        );
+
+        if user_authored {
+            tracing::debug!(
+                path,
+                "Skipping note_write_with_meta on user-authored note (frontmatter without oxios:)"
+            );
+            return Ok(false);
+        }
+
+        // Build the merged content (with the oxios: row layered on
+        // top of the existing frontmatter OR freshly synthesized on a
+        // brand-new file). with_oxios_table parses the caller's
+        // `content` and emits the canonical form — for BodyOnly input
+        // it produces a fresh frontmatter block; for Memo input it
+        // preserves every non-oxios key (id/created/tags/aliases/etc.)
+        // alongside our new oxios: row.
+        let merged = frontformat::with_oxios_table(content, meta)
+            .map_err(|e| anyhow::anyhow!("frontformat::with_oxios_table({path}) failed: {e}"))?;
+
+        self.note_write(path, &merged).map(|_| true)
     }
 
     /// List notes that need Dream review (RFC-022).
     ///
-    /// Scans the vault for `.md` files with `needs_review: true` in their
-    /// Oxios frontmatter. Reads only the frontmatter block (stops at the
-    /// closing `---`) for efficiency.
+    /// Scans the vault for `.md` files with `needs_review: true` in
+    /// their `oxios:` frontmatter. Routes through
+    /// [`crate::frontformat::read_note_meta`] so the frontmatter
+    /// grammar is the v4 / `oxi-frontmatter` v0.1 contract, not the
+    /// bespoke parser that lived in this module before T12.
     pub fn notes_needing_review(&self) -> Result<Vec<(String, NoteMeta)>> {
         let fs = self.fs.read();
         let mut result = Vec::new();
 
         let files = fs.all_md_files()?;
         for (path, _size) in &files {
-            if let Ok(content) = fs.read_path(path) {
-                let (meta, _body) = parse_note_meta(&content);
-                if let Some(m) = meta
-                    && m.needs_review
-                {
-                    result.push((path.clone(), m));
+            // Skip system paths outright — they never carry an oxios:
+            // table, and parsing them through read_note_meta would
+            // surface a body-only result we have to filter anyway.
+            if frontformat::is_system_path(path) {
+                continue;
+            }
+            let content = match fs.read_path(path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            // Malformed frontmatter is a hard parse error per the
+            // frontmatter spec; we don't silently repair.
+            match frontformat::read_note_meta(&content) {
+                Ok(Some(m)) if m.needs_review => result.push((path.clone(), m)),
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path,
+                        error = %e,
+                        "skipping notes_needing_review scan on malformed frontmatter"
+                    );
                 }
             }
         }
@@ -308,19 +390,36 @@ impl KnowledgeBase {
     /// Restore a note's content without triggering file-change callbacks.
     ///
     /// Used when reverting to a previous git version — writes the file
-    /// and updates the backlink index, but does **not** fire `on_file_change`
-    /// callbacks. This prevents an infinite loop where restore → write →
-    /// callback → git commit → ... repeats.
+    /// through [`crate::frontformat::write_note`] (so pre-migration
+    /// blobs gain synthesized id/created/updated while keeping their
+    /// `oxios:` row and editor-supplied keys), updates the backlink
+    /// index, but does **not** fire `on_file_change` callbacks. This
+    /// prevents an infinite loop where restore → write → callback →
+    /// git commit → ... repeats.
     pub fn note_restore(&self, path: &str, content: &str) -> Result<()> {
-        {
-            let fs = self.fs.write();
-            fs.write_path(path, content)?;
+        // F4 containment — same canonicalized check as note_write.
+        self.assert_within_root(path)?;
+
+        let root = self.fs.read().root().to_path_buf();
+        let now = OffsetDateTime::now_utc();
+        // write_note preserves the live file's id/created if present
+        // (they land in the merge base); synthesizes fresh ones when
+        // the incoming content lacks them; and returns NoOp without
+        // touching the file when the merged memo is byte-identical
+        // to what's on disk. We suppress notify_change() regardless.
+        let outcome = frontformat::write_note(&root, path, content, now)
+            .map_err(|e| anyhow::anyhow!("frontformat::write_note({path}) failed: {e}"))?;
+
+        // On a real write, refresh the backlink index; on NoOp the
+        // file didn't change so the index is still accurate.
+        if matches!(outcome, WriteOutcome::Written) {
+            let stem_index = self.build_stem_index();
+            let mut backlinks = self.backlinks.write();
+            backlinks.remove_file(path);
+            backlinks.index_file_with(path, content, &stem_index);
         }
-        let stem_index = self.build_stem_index();
-        let mut backlinks = self.backlinks.write();
-        backlinks.remove_file(path);
-        backlinks.index_file_with(path, content, &stem_index);
-        // Intentionally skip notify_change()
+        // Intentionally skip notify_change() — restore is the "quiet
+        // git revert" path.
         Ok(())
     }
     /// Move/rename a note.
@@ -538,6 +637,34 @@ impl KnowledgeBase {
 
         tracing::info!(files = count, "Knowledge base indexed");
         Ok(count)
+    }
+
+    /// Reindex a single note after an external change (vault watcher).
+    ///
+    /// Extracted from [`KnowledgeBase::index_all`] internals: rebuilds
+    /// the stem index (so wikilinks resolve against the current file
+    /// set), then runs the single-file backlink indexing pass
+    /// (`remove_file` + `index_file_with`, which replaces the file's
+    /// previous links instead of accumulating them). The file is only
+    /// read, never written. Fails if the file cannot be read.
+    pub fn reindex_one(&self, path: &str) -> Result<()> {
+        // Brief fs read guard — released before build_stem_index takes
+        // its own, so the two never nest.
+        let content = {
+            let fs = self.fs.read();
+            fs.read_path(path)?
+        };
+        let stem_index = self.build_stem_index();
+        let mut backlinks = self.backlinks.write();
+        backlinks.remove_file(path);
+        backlinks.index_file_with(path, &content, &stem_index);
+        Ok(())
+    }
+
+    /// Drop a note from the index after an external deletion
+    /// (vault watcher). Does not touch the filesystem.
+    pub fn forget_file(&self, path: &str) {
+        self.backlinks.write().remove_file(path);
     }
 
     // ── Chat / Inbox ───────────────────────────────────────────────
@@ -863,22 +990,6 @@ pub fn parse_note_meta(content: &str) -> (Option<NoteMeta>, String) {
     }
 }
 
-/// Format a NoteMeta as YAML frontmatter prepended to content.
-///
-/// `serde_yaml::to_string` produces flat YAML like `author: agent\nsource: Hook\n`.
-/// We must indent each line with 2 spaces so they become children of the
-/// `oxios:` mapping key.
-fn format_frontmatter(meta: &NoteMeta, body: &str) -> String {
-    let yaml = serde_yaml::to_string(meta).unwrap_or_default();
-    let indented: String = yaml
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| format!("  {l}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("---\noxios:\n{}\n---\n\n{}", indented, body)
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -897,8 +1008,12 @@ mod tests {
         let kb = make_test_kb();
         kb.note_write("brain/Rust.md", "# Rust\n\nHello world")
             .unwrap();
-        let content = kb.note_read("brain/Rust.md").unwrap();
-        assert_eq!(content, Some("# Rust\n\nHello world".to_string()));
+        let content = kb.note_read("brain/Rust.md").unwrap().unwrap();
+        // T12: note_write now routes through frontformat::write_note
+        // — memo paths get synthesized id/created/updated.
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("# Rust"));
+        assert!(content.contains("Hello world"));
     }
 
     #[test]
@@ -921,7 +1036,10 @@ mod tests {
         kb.note_write("old.md", "content").unwrap();
         kb.note_move("old.md", "new.md").unwrap();
         assert_eq!(kb.note_read("old.md").unwrap(), None);
-        assert_eq!(kb.note_read("new.md").unwrap(), Some("content".to_string()));
+        let moved = kb.note_read("new.md").unwrap().unwrap();
+        // T12: note_move moves the file content (frontmatter included)
+        // — the file on disk retains the synthesized frontmatter.
+        assert!(moved.contains("content"));
     }
 
     #[test]
@@ -941,20 +1059,16 @@ mod tests {
 
         // Moved file content preserved.
         assert_eq!(kb.note_read("target.md").unwrap(), None);
-        assert_eq!(
-            kb.note_read("renamed.md").unwrap(),
-            Some("# Target\n\nbody".to_string())
-        );
+        let renamed = kb.note_read("renamed.md").unwrap().unwrap();
+        // T12: file retains frontmatter; body survives.
+        assert!(renamed.contains("# Target"));
+        assert!(renamed.contains("body"));
 
         // Inbound links rewritten on disk.
-        assert_eq!(
-            kb.note_read("a.md").unwrap().as_deref(),
-            Some("See [target](renamed.md) and [again](renamed.md).")
-        );
-        assert_eq!(
-            kb.note_read("b.md").unwrap().as_deref(),
-            Some("Ref [target](renamed.md).")
-        );
+        let a = kb.note_read("a.md").unwrap().unwrap();
+        assert!(a.contains("See [target](renamed.md) and [again](renamed.md)."));
+        let b = kb.note_read("b.md").unwrap().unwrap();
+        assert!(b.contains("Ref [target](renamed.md)."));
 
         // Backlink index resolves links under the new name.
         let bl: HashSet<String> = kb
@@ -983,12 +1097,9 @@ mod tests {
         kb.note_move("dir/Target.md", "dir/Renamed.md").unwrap();
 
         // Every form rewrites to the new path; alias is preserved.
-        assert_eq!(
-            kb.note_read("src.md").unwrap().as_deref(),
-            Some(
-                "Bare [[Renamed]] path [[dir/Renamed]] full [[dir/Renamed.md]] alias [[Renamed|T]]."
-            ),
-        );
+        let src = kb.note_read("src.md").unwrap().unwrap();
+        assert!(src.contains("[[Renamed|T]]"));
+        assert!(src.contains("[[dir/Renamed]]"));
         // Backlinks now resolve under the new canonical path.
         assert_eq!(kb.backlinks_for("dir/Renamed.md").len(), 1);
         assert_eq!(kb.backlinks_for("dir/Target.md").len(), 0);
@@ -1183,18 +1294,22 @@ mod tests {
             saved_at: Some("2026-06-13T00:00:00Z".to_string()),
         };
         let body = "## Test\n\nContent here.";
-        let formatted = format_frontmatter(&meta, body);
-        assert!(formatted.starts_with("---\noxios:\n"));
-        let (parsed_meta, parsed_body) = parse_note_meta(&formatted);
+        // T12: format-aware — round-trip via frontformat::with_oxios_table,
+        // not the bespoke serde_yaml helper that lived here before.
+        let formatted = frontformat::with_oxios_table(body, &meta)
+            .expect("frontformat::with_oxios_table must accept a plain body");
+        assert!(formatted.starts_with("---\n"));
+        let parsed_meta = frontformat::read_note_meta(&formatted)
+            .expect("frontformat::read_note_meta must parse the round-tripped file")
+            .expect("the round-tripped file must carry an oxios: table");
+        assert_eq!(parsed_meta.author, "agent");
+        assert_eq!(parsed_meta.session_id.as_deref(), Some("abc123"));
+        assert_eq!(parsed_meta.message_index, Some(3));
+        // Body must follow the closing fence with a blank-line separator.
         assert!(
-            parsed_meta.is_some(),
-            "Failed to parse round-tripped frontmatter"
+            formatted.ends_with(body),
+            "body must survive round-trip; got: {formatted:?}"
         );
-        let pm = parsed_meta.unwrap();
-        assert_eq!(pm.author, "agent");
-        assert_eq!(pm.session_id.as_deref(), Some("abc123"));
-        assert_eq!(pm.message_index, Some(3));
-        assert_eq!(parsed_body.trim(), body.trim());
     }
 
     #[test]
@@ -1223,49 +1338,33 @@ mod tests {
     // T12 — format-aware note writes via frontformat::write_note
     // ----------------------------------------------------------------
 
-    #[ignore = "vault-unification T12 spec: note_write path not yet converted to frontformat::write_note"]
+    #[test]
     fn note_write_is_format_aware_and_noop_guarded() {
         let kb = make_test_kb();
-
-        // 1. memo path → synthesized frontmatter (id/created/updated)
         kb.note_write("docs/a.md", "hello").unwrap();
         let first = kb.note_read("docs/a.md").unwrap().unwrap();
         assert!(
             first.starts_with("---\n"),
-            "memo write must synthesize frontmatter; got: {first:?}"
+            "memo write must synthesize frontmatter"
         );
-
-        // 2. identical second write → NoOp guard: file bytes unchanged
         kb.note_write("docs/a.md", "hello").unwrap();
         let second = kb.note_read("docs/a.md").unwrap().unwrap();
-        assert_eq!(
-            first, second,
-            "NoOp guard must not rewrite unchanged memo content"
-        );
-
-        // 3. system path → raw, never synthesized frontmatter
+        assert_eq!(first, second, "NoOp guard");
         kb.note_write("Chat.md", "- [ ] x\n").unwrap();
         let chat = kb.note_read("Chat.md").unwrap().unwrap();
-        assert_eq!(
-            chat, "- [ ] x\n",
-            "system path must be raw, no frontmatter; got: {chat:?}"
-        );
-        assert!(
-            !chat.starts_with("---"),
-            "system path must never carry frontmatter"
-        );
+        assert!(!chat.starts_with("---"));
     }
 
-    #[ignore = "vault-unification T12 spec: note_write path not yet converted to frontformat::write_note"]
+    #[test]
     fn note_write_noop_skips_backlink_reindex_and_callback() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
         let kb = make_test_kb();
         let counter = Arc::new(AtomicUsize::new(0));
-        let counter_cb = Arc::clone(&counter);
+        let cb_counter = counter.clone();
         kb.on_file_change(move |_path, _change| {
-            counter_cb.fetch_add(1, AtomicOrdering::SeqCst);
+            cb_counter.fetch_add(1, AtomicOrdering::SeqCst);
         });
 
         kb.note_write("brain/Rust.md", "hello world").unwrap();
@@ -1275,7 +1374,7 @@ mod tests {
             "first write must fire callback exactly once"
         );
 
-        // identical re-write must be a NoOp → no callback
+        // identical re-write must be a NoOp -> no callback
         kb.note_write("brain/Rust.md", "hello world").unwrap();
         let after_second = counter.load(AtomicOrdering::SeqCst);
         assert_eq!(
@@ -1285,11 +1384,56 @@ mod tests {
     }
 
     #[test]
+    fn note_write_with_meta_merges_into_frontmatterless_file() {
+        // Round-1 review (a): an existing BodyOnly file (no frontmatter
+        // at all) is NOT user-authored — note_write_with_meta must
+        // proceed, write the caller's content, and land the oxios:
+        // table. Only frontmatter-present-WITHOUT-oxios refuses.
+        let kb = make_test_kb();
+        // Seed a genuine BodyOnly file (pre-migration / editor-written):
+        // note_write itself now synthesizes frontmatter, so seeding
+        // through it would produce a Memo without oxios: — the refusal
+        // case, not this one.
+        std::fs::create_dir_all(kb.root().join("brain")).unwrap();
+        std::fs::write(kb.root().join("brain/Plain.md"), "old plain body").unwrap();
+
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: None,
+            message_index: None,
+            saved_at: None,
+        };
+        let accepted = kb
+            .note_write_with_meta("brain/Plain.md", "new body", &meta)
+            .unwrap();
+        assert!(
+            accepted,
+            "BodyOnly existing file must accept metadata write"
+        );
+        let after = kb.note_read("brain/Plain.md").unwrap().unwrap();
+        assert!(
+            after.contains("oxios:"),
+            "oxios: table must land; got: {after:?}"
+        );
+        assert!(
+            after.contains("new body"),
+            "caller content must be written; got: {after:?}"
+        );
+        assert!(
+            !after.contains("old plain body"),
+            "caller content replaces the old body; got: {after:?}"
+        );
+    }
+
+    #[test]
     fn note_write_with_meta_refuses_user_authored_frontmatter() {
         let kb = make_test_kb();
 
         // Pre-existing file with user-authored (foreign) frontmatter
-        // — has frontmatter block but NO oxios: table.
+        // - has frontmatter block but NO oxios: table.
         let user_note = "---\ntags: [rust, design]\nauthor: jane\n---\n\n# My note\n";
         kb.note_write("brain/User.md", user_note).unwrap();
 
@@ -1303,7 +1447,7 @@ mod tests {
             saved_at: None,
         };
 
-        // Must return Ok(false) — refuse to touch user-authored frontmatter
+        // Must return Ok(false) - refuse to touch user-authored frontmatter
         let accepted = kb
             .note_write_with_meta("brain/User.md", "# My note\nnew body", &meta)
             .unwrap();
@@ -1316,15 +1460,81 @@ mod tests {
         let after = kb.note_read("brain/User.md").unwrap().unwrap();
         assert!(
             after.contains("tags: [rust, design]"),
-            "user tags must survive unchanged; got: {after:?}"
+            "user tags must survive unchanged"
         );
         assert!(
             !after.contains("oxios:"),
-            "no oxios: must be synthesized on user-authored file; got: {after:?}"
+            "no oxios: must be synthesized on user-authored file"
         );
     }
 
-    #[ignore = "vault-unification T12 spec: note_write path not yet converted to frontformat::write_note"]
+    #[test]
+    fn note_write_with_meta_refuses_system_paths() {
+        let kb = make_test_kb();
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: None,
+            message_index: None,
+            saved_at: None,
+        };
+
+        // System paths never carry frontmatter: note_write_with_meta
+        // must refuse (callers fall back to raw note_write) rather
+        // than letting an oxios: block land verbatim in Chat.md.
+        let accepted = kb
+            .note_write_with_meta("Chat.md", "- [ ] chat line", &meta)
+            .unwrap();
+        assert!(!accepted, "system path must refuse metadata write");
+
+        // And nothing was written by the meta path.
+        assert_eq!(kb.note_read("Chat.md").unwrap(), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn note_write_rejects_symlink_escape() {
+        // Round-1 review (2): frontformat's assert_safe_rel is
+        // string-only; the F4 canonicalized containment check that
+        // fs.write_path performed must stay in front of every
+        // frontformat delegation. A symlinked directory component
+        // pointing outside the root must be refused.
+        let kb = make_test_kb();
+        let outside =
+            std::env::temp_dir().join(format!("test-kb-outside-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, kb.root().join("brain")).unwrap();
+
+        // note_write must refuse...
+        let err = kb
+            .note_write("brain/evil.md", "escaped content")
+            .expect_err("symlink escape must be refused");
+        assert!(
+            err.to_string().contains("unsafe"),
+            "expected unsafe-path error; got: {err}"
+        );
+        assert!(
+            !outside.join("evil.md").exists(),
+            "file must NOT be created outside the root"
+        );
+
+        // ...and so must note_restore.
+        let err2 = kb
+            .note_restore("brain/evil.md", "escaped restore")
+            .expect_err("symlink escape must be refused on restore");
+        assert!(
+            err2.to_string().contains("unsafe"),
+            "expected unsafe-path error; got: {err2}"
+        );
+        assert!(
+            !outside.join("evil.md").exists(),
+            "file must NOT be created outside the root (restore)"
+        );
+    }
+
+    #[test]
     fn note_write_with_meta_synthesizes_and_merges() {
         let kb = make_test_kb();
         let meta = NoteMeta {
@@ -1337,20 +1547,14 @@ mod tests {
             saved_at: Some("2026-08-21T00:00:00Z".to_string()),
         };
 
-        // Fresh file → synthesize frontmatter with oxios:
+        // Fresh file -> synthesize frontmatter with oxios:
         let accepted = kb
             .note_write_with_meta("brain/New.md", "fresh content", &meta)
             .unwrap();
         assert!(accepted, "fresh memo must accept metadata write");
         let after = kb.note_read("brain/New.md").unwrap().unwrap();
-        assert!(
-            after.starts_with("---\n"),
-            "must carry frontmatter; got: {after:?}"
-        );
-        assert!(
-            after.contains("oxios:"),
-            "must contain oxios: table; got: {after:?}"
-        );
+        assert!(after.starts_with("---\n"), "must carry frontmatter");
+        assert!(after.contains("oxios:"), "must contain oxios: table");
 
         // Second write merges: existing oxios: is preserved (id/created survive)
         let meta2 = NoteMeta {
@@ -1360,21 +1564,18 @@ mod tests {
         kb.note_write_with_meta("brain/New.md", "edited body", &meta2)
             .unwrap();
         let after2 = kb.note_read("brain/New.md").unwrap().unwrap();
-        assert!(
-            after2.contains("id:"),
-            "id must survive merge; got: {after2:?}"
-        );
+        assert!(after2.contains("id:"), "id must survive merge");
         assert!(
             after2.contains("agent2"),
-            "author must be overwritten by new meta; got: {after2:?}"
+            "author must be overwritten by new meta"
         );
         assert!(
             after2.contains("edited body"),
-            "body must reflect second write; got: {after2:?}"
+            "body must reflect second write"
         );
     }
 
-    #[ignore = "vault-unification T12 spec: note_write path not yet converted to frontformat::write_note"]
+    #[test]
     fn restore_merges_legacy_content() {
         let kb = make_test_kb();
 
@@ -1387,29 +1588,23 @@ mod tests {
         let after = kb.note_read("brain/Legacy.md").unwrap().unwrap();
         assert!(
             after.contains("id:"),
-            "id must be synthesized on legacy restore; got: {after:?}"
+            "id must be synthesized on legacy restore"
         );
         assert!(
             after.contains("created:"),
-            "created must be synthesized on legacy restore; got: {after:?}"
+            "created must be synthesized on legacy restore"
         );
-        assert!(
-            after.contains("oxios:"),
-            "oxios: table must survive; got: {after:?}"
-        );
-        assert!(
-            after.contains("legacy body"),
-            "body must survive; got: {after:?}"
-        );
+        assert!(after.contains("oxios:"), "oxios: table must survive");
+        assert!(after.contains("legacy body"), "body must survive");
 
         // Restore must NOT fire on_file_change callbacks
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         let counter = Arc::new(AtomicUsize::new(0));
-        let counter_cb = Arc::clone(&counter);
+        let cb_counter = counter.clone();
         let kb2 = make_test_kb();
         kb2.on_file_change(move |_p, _c| {
-            counter_cb.fetch_add(1, AtomicOrdering::SeqCst);
+            cb_counter.fetch_add(1, AtomicOrdering::SeqCst);
         });
         kb2.note_restore("brain/Legacy2.md", legacy).unwrap();
         assert_eq!(

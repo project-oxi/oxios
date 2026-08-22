@@ -2025,8 +2025,14 @@ async fn run(cli: Cli) -> Result<()> {
     let _ = term.write_str(&format!("  {} Starting Oxios...\r", style("⠋").cyan()));
     let _ = term.flush();
 
+    // RFC-050 §3 vault watcher is a daemon-surface concern only
+    // (whole-branch R2 P3): one-shot commands (run/chat/status/
+    // doctor/…) would pay the FSEvents subscription + debounce
+    // thread + join for nothing.
+    let daemon_command = matches!(cli.command.as_ref(), None | Some(Command::Start { .. }));
     let mut kernel = Kernel::builder()
         .config_path(config_path.clone())
+        .watch_vault(daemon_command)
         .build()
         .await?;
 
@@ -3031,7 +3037,12 @@ async fn start_daemon(
     }
     let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir);
     if foreground || effective_remote {
-        cmd_serve(kernel, config_path).await
+        let result = cmd_serve(kernel, config_path).await;
+        // RFC-050: stop the vault watcher after the supervised
+        // lifetime ends (both outcomes) so the debounce thread joins
+        // deterministically instead of at process teardown.
+        kernel.shutdown_vault_watcher();
+        result
     } else {
         daemon.start(config_path, config.gateway.port)
     }

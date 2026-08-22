@@ -203,20 +203,6 @@ impl BrainConnection {
             .await
     }
 
-    /// T17 (vault unification): register the shared vault directory as a
-    /// daemon-hosted pull source by issuing `BrainClient::sync_run(dir,
-    /// space)` — one registration + full watch pass. Degrades to `None`
-    /// (no panic) when the daemon is unreachable, mirroring the
-    /// `remember`/`recall`/`stats` degradation contract (C1).
-    pub async fn register_vault_source(&self, dir: &Path) -> Option<Value> {
-        let dir = dir.to_string_lossy().to_string();
-        let space = self.config.space.clone();
-        let outcome = self
-            .call(move |c| Box::pin(async move { c.sync_run(&dir, &space).await }))
-            .await?;
-        serde_json::to_value(outcome).ok()
-    }
-
     /// Aggregate counts for the space.
     pub async fn stats(&self) -> Option<Value> {
         let space = self.config.space.clone();
@@ -269,6 +255,30 @@ impl BrainConnection {
         }
     }
 
+    /// Register a vault directory as a pull source on the connected
+    /// daemon and run one sync pass. Mirrors the `remember` `call` pattern:
+    /// unavailable daemon ⇒ `None`, no panic (C1). The daemon adopts the
+    /// directory into a debounced watcher; registration survives restarts.
+    ///
+    /// T17 (vault unification): the single ingestion path. Replaces the
+    /// previous KnowledgeLens file-change → `remember` chain.
+    pub async fn register_vault_source(&self, dir: &Path) -> Option<oxibrain_client::SyncOutcome> {
+        let dir = dir.to_string_lossy().into_owned();
+        let space = self.config.space.clone();
+        let space_for_log = space.clone();
+        let outcome = self
+            .call(move |c| Box::pin(async move { c.sync_run(&dir, &space).await }))
+            .await?;
+        tracing::debug!(
+            space = %space_for_log,
+            new = outcome.new.len(),
+            modified = outcome.modified.len(),
+            unchanged = outcome.unchanged.len(),
+            "brain register: sync_run ok"
+        );
+        Some(outcome)
+    }
+
     /// Single-shot reconnect inside a held lock. `true` if a client is now present.
     async fn try_reconnect(&self, guard: &mut Option<BrainClient>) -> bool {
         if guard.is_some() {
@@ -290,6 +300,144 @@ impl BrainConnection {
                 false
             }
         }
+    }
+}
+
+/// Bounded retry policy for the boot-time vault registration.
+///
+/// The daemon may not be reachable at boot (user-managed daemon started
+/// after oxios, or the oxibrain installer still warming up). We retry
+/// the registration with capped exponential backoff instead of silently
+/// dropping the whole session's ingestion.
+///
+/// Defaults: 5s initial, 60s max backoff, 10 min total budget. Tests
+/// override via [`VaultRegisterPolicy`] fields.
+#[derive(Debug, Clone, Copy)]
+pub struct VaultRegisterPolicy {
+    /// First sleep between attempts.
+    pub initial_backoff: std::time::Duration,
+    /// Cap on the per-attempt sleep (exponential growth saturates here).
+    pub max_backoff: std::time::Duration,
+    /// Hard wall-clock budget. After this elapses, give up with
+    /// [`VaultRegisterOutcome::TimedOut`].
+    pub max_total: std::time::Duration,
+}
+
+impl Default for VaultRegisterPolicy {
+    fn default() -> Self {
+        Self {
+            initial_backoff: std::time::Duration::from_secs(5),
+            max_backoff: std::time::Duration::from_secs(60),
+            max_total: std::time::Duration::from_secs(600),
+        }
+    }
+}
+
+/// Result of a [`VaultRegisterPolicy::retry`] loop.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VaultRegisterOutcome {
+    /// Attempt returned `Some(_)` before the budget elapsed.
+    Ok,
+    /// Budget elapsed before any attempt succeeded.
+    TimedOut,
+}
+
+impl VaultRegisterPolicy {
+    /// Drive `attempt` with bounded exponential backoff until it returns
+    /// `Some(_)`, the budget elapses, or the vault dir appears (re-checked
+    /// each iteration — covers the "vault dir not yet created at first
+    /// boot" failure mode).
+    ///
+    /// `attempt` is an owned `Fn() -> Fut` so each retry builds a fresh
+    /// future; the closure is called once per attempt.
+    ///
+    /// R17 round 1 (P2): bounded retry replaces the prior one-shot
+    /// boot-time call. All failure paths log-only — the kernel must
+    /// boot even if the vault is never registered.
+    pub async fn retry<F, Fut>(&self, dir: &Path, attempt: F) -> VaultRegisterOutcome
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Option<()>>,
+    {
+        let started = std::time::Instant::now();
+        let mut backoff = self.initial_backoff;
+        let mut attempt_n = 0u32;
+        loop {
+            attempt_n += 1;
+            // Vault dir re-check — covers the "first-boot dir missing"
+            // case. The daemon's sync_vault() errors with "not a
+            // directory" when the path doesn't exist, so this re-check
+            // keeps the policy alive until the dir materializes.
+            if !dir.is_dir() {
+                tracing::info!(
+                    path = %dir.display(),
+                    attempt = attempt_n,
+                    "brain register: vault dir missing; will retry"
+                );
+            } else if let Some(()) = attempt().await {
+                tracing::info!(
+                    path = %dir.display(),
+                    attempt = attempt_n,
+                    "brain register: vault pull source registered (after retry)"
+                );
+                return VaultRegisterOutcome::Ok;
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= self.max_total {
+                tracing::warn!(
+                    path = %dir.display(),
+                    attempts = attempt_n,
+                    elapsed_secs = elapsed.as_secs(),
+                    "brain register: retry budget exhausted; vault not registered"
+                );
+                return VaultRegisterOutcome::TimedOut;
+            }
+            // Cap the sleep so we don't blow past max_total on a single
+            // long backoff.
+            let remaining = self.max_total.saturating_sub(elapsed);
+            let sleep_for = backoff.min(remaining);
+            tracing::debug!(
+                path = %dir.display(),
+                attempt = attempt_n,
+                sleep_secs = sleep_for.as_secs(),
+                "brain register: attempt failed; sleeping before retry"
+            );
+            tokio::time::sleep(sleep_for).await;
+            // Exponential growth, capped at max_backoff. The next
+            // iteration starts from the saturated value.
+            backoff = (backoff * 2).min(self.max_backoff);
+        }
+    }
+}
+
+/// Resolve the brain space with documented precedence.
+///
+/// 1. `~/.oxi/config.toml [vault].space` — ecosystem-wide override.
+/// 2. `fallback` — the kernel's `BrainConfig::space` default.
+///
+/// Best-effort: missing/unreadable/malformed ecosystem config returns
+/// the fallback. Never blocks the boot path.
+pub fn resolve_space(home: &std::path::Path, fallback: &str) -> String {
+    let path = home.join(".oxi").join("config.toml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return fallback.to_string();
+    };
+    #[derive(serde::Deserialize)]
+    struct VaultSection {
+        space: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Root {
+        vault: Option<VaultSection>,
+    }
+    match toml::from_str::<Root>(&text) {
+        Ok(r) => r
+            .vault
+            .and_then(|v| v.space)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| fallback.to_string()),
+        Err(_) => fallback.to_string(),
     }
 }
 
@@ -411,6 +559,188 @@ mod tests {
         std::fs::create_dir_all(&vault).expect("vault mkdir");
         // No daemon => None, no panic (C1).
         let result = conn.register_vault_source(&vault).await;
-        assert_eq!(result, None, "unreachable daemon => None");
+        assert!(result.is_none(), "unreachable daemon => None");
+    }
+
+    // ─── VaultRegisterPolicy tests (R17 round 1 P2) ──────────────────────
+
+    /// Fast retry policy: 10ms initial, 50ms max, 500ms total. Keeps tests fast.
+    fn fast_policy() -> VaultRegisterPolicy {
+        VaultRegisterPolicy {
+            initial_backoff: std::time::Duration::from_millis(10),
+            max_backoff: std::time::Duration::from_millis(50),
+            max_total: std::time::Duration::from_millis(500),
+        }
+    }
+
+    /// Succeeds immediately → no retries, no sleep.
+    #[tokio::test]
+    async fn vault_register_policy_succeeds_immediately() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_c = std::sync::Arc::clone(&attempts);
+        let outcome = fast_policy()
+            .retry(dir.path(), || {
+                let a = std::sync::Arc::clone(&attempts_c);
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Some(())
+                }
+            })
+            .await;
+        assert_eq!(outcome, VaultRegisterOutcome::Ok);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// Fails twice then succeeds → 3 attempts total.
+    #[tokio::test]
+    async fn vault_register_policy_succeeds_after_n_retries() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_c = std::sync::Arc::clone(&attempts);
+        let outcome = fast_policy()
+            .retry(dir.path(), || {
+                let a = std::sync::Arc::clone(&attempts_c);
+                async move {
+                    let n = a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 2 { None } else { Some(()) }
+                }
+            })
+            .await;
+        assert_eq!(outcome, VaultRegisterOutcome::Ok);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    /// Always fails → eventually times out with VaultDirMissing (the
+    /// vault path is real here so the policy gives up on time, not on
+    /// missing-dir).
+    #[tokio::test]
+    async fn vault_register_policy_times_out() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_c = std::sync::Arc::clone(&attempts);
+        let outcome = fast_policy()
+            .retry(dir.path(), || {
+                let a = std::sync::Arc::clone(&attempts_c);
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    None
+                }
+            })
+            .await;
+        assert_eq!(outcome, VaultRegisterOutcome::TimedOut);
+        assert!(attempts.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    }
+
+    /// Vault dir does not exist on the first attempts → policy waits for
+    /// the dir to appear. The test creates the dir after attempt 2 succeeds.
+    #[tokio::test]
+    async fn vault_register_policy_retries_when_vault_dir_missing_then_created() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let vault = dir.path().join("vault");
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_c = std::sync::Arc::clone(&attempts);
+
+        // Background creator: after ~30ms create the dir.
+        let creator_dir = vault.clone();
+        let creator = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            std::fs::create_dir_all(&creator_dir).expect("create vault");
+        });
+
+        let outcome = fast_policy()
+            .retry(&vault, || {
+                let a = std::sync::Arc::clone(&attempts_c);
+                async move {
+                    a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    None // every attempt fails (no daemon) — retry until timeout
+                }
+            })
+            .await;
+        creator.join().expect("creator join");
+        // The dir did appear during the retry window. Without the
+        // vault-existence re-check, the policy would still time out —
+        // which it does here because the attempt always returns None.
+        // The test asserts the retry WINDOW survives long enough for the
+        // dir to appear and the loop continues until max_total. (The
+        // boot path's `register_vault_source` returns Some once the
+        // daemon accepts the sync_run; the policy alone only knows about
+        // the dir's existence and the attempt's outcome.)
+        assert_eq!(
+            outcome,
+            VaultRegisterOutcome::TimedOut,
+            "no daemon => always None => timeout (dir check does not flip outcome)"
+        );
+        assert!(attempts.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        // Vault was created during the retry window.
+        assert!(vault.is_dir(), "creator thread made the vault");
+    }
+
+    // ─── resolve_space tests (R17 round 1 P3) ────────────────────────────
+
+    #[test]
+    fn resolve_space_returns_fallback_when_oxi_config_missing() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        assert_eq!(resolve_space(dir.path(), "personal"), "personal");
+    }
+
+    #[test]
+    fn resolve_space_returns_fallback_when_oxi_config_unreadable() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        // Directory where a file is expected → read fails with IsADirectory.
+        let cfg = oxi_dir.join("config.toml");
+        std::fs::create_dir(&cfg).unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "personal");
+    }
+
+    #[test]
+    fn resolve_space_returns_fallback_when_oxi_config_malformed() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        std::fs::write(oxi_dir.join("config.toml"), "this is not [valid toml").unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "personal");
+    }
+
+    #[test]
+    fn resolve_space_returns_fallback_when_space_is_whitespace() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        std::fs::write(oxi_dir.join("config.toml"), "[vault]\nspace = \"   \"\n").unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "personal");
+    }
+
+    #[test]
+    fn resolve_space_returns_fallback_when_vault_table_absent() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        std::fs::write(oxi_dir.join("config.toml"), "[some_other]\nkey = 1\n").unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "personal");
+    }
+
+    #[test]
+    fn resolve_space_returns_oxi_value_when_valid() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        std::fs::write(oxi_dir.join("config.toml"), "[vault]\nspace = \"work\"\n").unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "work");
+    }
+
+    #[test]
+    fn resolve_space_trims_whitespace_around_valid_value() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let oxi_dir = dir.path().join(".oxi");
+        std::fs::create_dir_all(&oxi_dir).unwrap();
+        std::fs::write(
+            oxi_dir.join("config.toml"),
+            "[vault]\nspace = \"  work  \"\n",
+        )
+        .unwrap();
+        assert_eq!(resolve_space(dir.path(), "personal"), "work");
     }
 }

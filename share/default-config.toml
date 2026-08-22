@@ -28,6 +28,12 @@
 [kernel]
 # Path to the workspace directory.
 # workspace = "~/.oxios/workspace"
+# Explicit override for the markdown knowledge base root.
+# Resolution order (see KernelConfig::resolved_knowledge_root):
+#   1. this key (after `~/` expansion)
+#   2. `~/.oxi/config.toml [vault].path` (ecosystem-canonical; shared with oximemo)
+#   3. fallback `~/.oxi/vault`
+# knowledge_root = "~/vault"
 event_bus_capacity = 256
 max_agents = 10
 

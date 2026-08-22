@@ -82,7 +82,8 @@ oxios/
 | `~/.oxios/` | Oxios home |
 | `~/.oxios/config.toml` | Configuration |
 | `~/.oxios/workspace/` | Agent working directory (sessions, skills) |
-| `~/.oxios/knowledge/` | User markdown knowledge base |
+| `~/.oxi/vault/` | Shared user knowledge vault (oxi ecosystem, RFC-050) |
+| `~/.oxios/backups/` | Pre-vault-unification knowledge backups (denied to agents) |
 | `~/.oxicode/auth.json` | oxicode-cli credentials (separate from Oxios) |
 
 ## Architecture (summary)
@@ -116,6 +117,7 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 | `docs/rfc-009-skill-unification.md` | Modifying skill system |
 | `docs/rfc-010-clawhub-marketplace.md` | Marketplace feature |
 | `docs/rfc-024-web-daemon-reliability.md` | Modifying web↔daemon delivery, SSE/WS, static asset serving, readiness |
+| `docs/rfc-050-vault-unification.md` | Modifying the shared vault path, format (`oxi-frontmatter`), or migration binary |
 | `docs/design-knowledge-ui.md` | Knowledge UI (frontend components, shortcuts, architecture) |
 | `docs/channel-plugin-guide.md` | Adding a new channel |
 | `docs/USER-GUIDE.md` | Changing user-facing features or CLI behavior |
@@ -159,7 +161,7 @@ in-process modules per RFC-026 — no separate crates to publish.
 - **Kernel binary vs library.** `src/kernel.rs` (assembler) is in the binary crate, not `oxios-kernel`.
 - **Agent lifecycle split.** `Supervisor` = low-level process. `AgentLifecycleManager` = full lifecycle (A2A, scheduling, permissions). Don't add lifecycle logic to Orchestrator.
 - **Tool registration.** All kernel tools → `tools/kernel_bridge.rs::register_all_kernel_tools()`. Not `registration.rs`.
-- **Two knowledge systems.** Agent memory = `oxibrain` daemon (Unix-socket JSON-RPC, RFC-047). User notes = KnowledgeBase (`.md` files, `~/.oxios/knowledge/`). See `docs/rfc-003-knowledge-separation.md`.
+- **Two knowledge systems.** Agent memory = `oxibrain` daemon (Unix-socket JSON-RPC, RFC-047). User notes = KnowledgeBase (`.md` files, `~/.oxi/vault/` per RFC-050). The retired `~/.oxios/workspace/knowledge/` path was replaced by the shared `~/.oxi/vault/` — see `docs/rfc-050-vault-unification.md` for the migration runbook.
 - **Unified skill model.** No separate `program/` module or `program.toml`. `SkillManager` handles everything. Each skill = `SKILL.md` + YAML frontmatter.
 - **Feature gates.** Web, CLI, Telegram, browser, telemetry are feature-gated. Check `cargo build -p oxios --features <feature>`.
 - **`--all-features` works.** oxicode-sdk 0.66.0 + wasmtime 24 migration — `cargo build/clippy --workspace --all-features` compiles. As of oxicode-sdk 0.45.x, `AgentConfig` gained `ttsr_engine`/`memory`/`todo`/`agent_pool` fields (all `#[serde(skip, default)]`); fill with `..Default::default()` to keep sites working. CI still uses per-crate features (`.github/workflows/ci.yml`) for precision. The prior wasm-sandbox `ResourceLimiter` regression (missing `table_growing` on wasmtime 24) is fixed in `crates/oxios-kernel/src/wasm_sandbox.rs`. As of oxicode-sdk 0.66.0, the project was renamed from `oxi` to `oxicode` (CHANGELOG §0.65.0 Breaking) — `oxi-sdk`/`oxi-ai`/`oxi-agent` → `oxicode-sdk`/`oxicode-ai`/`oxicode-agent`; `Oxi`/`OxiBuilder`/`OxiBrowserEngine` → `Oxicode`/`OxicodeBuilder`/`OxicodeBrowserEngine`; `OXI_*` → `OXICODE_*`; `~/.oxi/` → `~/.oxicode/`. oxibrowser-core bumped to 0.17. CI pulls oxicode-sdk from crates.io (no path dep, no separate `a7garden/oxicode` checkout — `Cargo.toml` `[patch.crates-io]` is intentionally uncommented).

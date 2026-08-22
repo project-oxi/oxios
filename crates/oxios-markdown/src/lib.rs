@@ -48,6 +48,7 @@ pub mod sync;
 pub mod tgtxt;
 pub mod tokens;
 pub mod types;
+pub mod watch;
 pub mod worker;
 
 // Re-export core types for convenience

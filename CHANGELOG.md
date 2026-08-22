@@ -5,6 +5,62 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased] - 2026-08-22
+
+### Added
+- **RFC-050: ecosystem vault unification** — one shared knowledge vault at
+  `~/.oxi/vault/`, converged on the new neutral `oxi-frontmatter` format
+  (constrained YAML subset). oxios, oximemo, and the oxibrain daemon read
+  and write the same `.md` files; each app keeps its own derived
+  indexes. Full design and migration runbook in
+  `docs/rfc-050-vault-unification.md`.
+- **`oxi-frontmatter` contract crate** (path dep during plan, swap to
+  crates.io at finishing) — single `write_document` atomic-preserving
+  API; nine oximemo write sites converted; `NoOp` is semantic, not
+  byte-level, so re-saving an unchanged editor buffer never churns
+  mtime.
+- **Vault watcher** (`oxios-markdown`) — debounced (400 ms),
+  read-only; refreshes the KnowledgeBase index on file change.
+  `WatchGuard` joins on drop.
+- **Vault-rooted GitLayer** — `~/.oxi/vault/.git/` (oxios-owned);
+  curation goes through `knowledge_git`; foreign-repo adoption gated
+  by `[git] adopt_foreign_repo` with a loud warn-and-degrade path.
+- **oxibrain vault registration** — `register_vault_source` with
+  5 s→60 s retry cap (10 min) and dir recheck;
+  `resolve_space` reads the canonical `~/.oxi/config.toml [vault]
+  space` first (per-app overrides warn loudly).
+- **One-time `oxios-migrate-vault` binary** — converts legacy oximemo
+  v3 TOML frontmatter (`+++`) into v4 YAML (`---`) blocks via the
+  shared contract; imports git history; cross-tree collision pre-write
+  refuses with `MergeRequired`; HEAD-tracked removal gated; atomic
+  verbatim copy. Default invocation is a dry-run; `--apply` performs
+  backup → move/convert → git history import.
+- **Agent deny list expanded (RFC-050 §3.1)** — covers the
+  `~/.oxi/` whole root and the `~/.oxios/` sensitive-subpath set
+  (workspace/mount grants preserved); backups relocate to
+  `~/.oxios/backups/` and are denied by construction.
+  `OXIOS_HOME_DENY_SUBPATHS` is a single source of truth shared by
+  the web/run gates.
+
+### Changed
+- **Default knowledge root** — `~/.oxios/workspace/knowledge/` →
+  `~/.oxi/vault/`. The retired `~/.oxios/knowledge/` path is gone;
+  `AGENTS.md` path table reflects the new location. See
+  `docs/rfc-050-vault-unification.md` for the migration runbook.
+- **`~/.oxios/backups/`** — new location for pre-vault-unification
+  knowledge backups; agents are denied by construction
+  (RFC-050 §3.1).
+
+### Fixed
+- **GitLayer commit/history/restore under new vault root** — `commit_file`
+  bailed on workspace/knowledge paths; kernel.rs prefix fallback removed;
+  seven prefix sites updated to the new canonical vault root.
+- **Vault-rooted repository detection** — `adopt_foreign_repo` warns
+  loudly when disabled; `disabled_reason` accessor added so the
+  Web/API surfaces the cause instead of a silent degradation.
+- **Adopt-branch degradation** — never blocks boot; vault remains usable
+  even when the foreign-branch strategy can't be applied.
+
 ## [1.43.0] - 2026-08-19
 
 ### Added

@@ -275,11 +275,23 @@ impl KnowledgeCuration {
         let mut notes = Vec::new();
         for (path, meta) in review_list.into_iter().take(self.config.batch_size) {
             let content = self.knowledge_base.note_read(&path)?;
+            // Body extraction on the v4 grammar via frontformat — no
+            // bespoke YAML sniffing. Malformed frontmatter is a hard
+            // error: warn and skip the note for this run (mirrors
+            // notes_needing_review) rather than silently feeding the
+            // frontmatter block to the curation LLM.
             let body = match content {
-                Some(c) => {
-                    let (_, body) = oxios_markdown::knowledge::parse_note_meta(&c);
-                    body
-                }
+                Some(c) => match oxios_markdown::frontformat::read_note_body(&c) {
+                    Ok(body) => body,
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %path,
+                            error = %e,
+                            "Skipping curation scan on malformed frontmatter"
+                        );
+                        continue;
+                    }
+                },
                 None => continue,
             };
             notes.push(RawNote { path, meta, body });

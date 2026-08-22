@@ -224,6 +224,55 @@ fn canonicalize_for_check(path: &Path) -> PathBuf {
     }
 }
 
+/// Lexically normalize a path — resolve `.` and `..` components
+/// without touching the filesystem. Absolute in ⇒ absolute out.
+/// Used by [`AccessGate::with_deny_root`] as the fallback when the
+/// root cannot be canonicalized because it does not exist yet.
+fn lexical_absolute(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Extract a path-like exec argument and resolve it the same way
+/// [`AccessGate::check_path`] would. Recognized forms: absolute
+/// (`/…`), home (`~/…`), and explicit relative (`./…`, `../…`).
+/// Bare words (`build`, `--release`, `foo`) are NOT paths — they are
+/// indistinguishable from ordinary flag values. See `check_exec` for
+/// the documented residual of that choice.
+fn exec_arg_path(arg: &str) -> Option<PathBuf> {
+    let home = std::env::var("HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir);
+    exec_arg_path_with_home(arg, home.as_deref())
+}
+
+/// Pure helper behind [`exec_arg_path`] with the home directory
+/// injected — testable without process-env mutation (same pattern as
+/// `path_promotion::expand_tilde_with_home`).
+fn exec_arg_path_with_home(arg: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let candidate = if let Some(rest) = arg.strip_prefix("~/") {
+        // No home resolvable → cannot expand; treat as non-path.
+        home?.join(rest)
+    } else if arg.starts_with('/') {
+        PathBuf::from(arg)
+    } else if arg.starts_with("./") || arg.starts_with("../") {
+        std::env::current_dir().ok()?.join(arg)
+    } else {
+        return None;
+    };
+    Some(canonicalize_for_check(&candidate))
+}
+
 // ─── Access Gate ────────────────────────────────────────────────────────────
 
 /// Single entry point for all authorization decisions.
@@ -247,6 +296,82 @@ fn canonicalize_for_check(path: &Path) -> PathBuf {
 /// //     mode: PathMode::Read,
 /// // })?;
 /// ```
+/// Default whole-root deny entries (T18 R4).
+///
+/// Single source of truth — `agent_runtime.rs` references this
+/// list at gate construction. Whole-root deny is appropriate for
+/// surfaces where NO sub-path is safe for file-tool Layer-2.
+///
+/// Entries covered (per brief + on-disk layout):
+/// - `~/.oxi` — shared vault (T15), brain index, settings, sessions
+/// - `~/.oxicode` — shared oxicode-cli credential store (legacy
+///   `auth.json` fallback that oxios's `CredentialStore` reads;
+///   R4 added this so a broadly-allowed agent cannot exfiltrate
+///   stored keys via `read`/`grep`)
+pub const OXI_HOME_DENY_ROOTS: &[&str] = &[".oxi", ".oxicode"];
+
+/// Default deny-subpath entries for `~/.oxios` (T18 R3).
+///
+/// Single source of truth — `agent_runtime.rs` and the parity test
+/// in `gate.rs::tests` both reference this list so additions cannot
+/// desync. Items in this list are present under `~/.oxios/` on a
+/// typical oxios home (see `docs/getting-started.md` and the
+/// `onboarding::WORKSPACE_SUBDIRS` constant) and MUST NOT be
+/// reachable by file-tool Layer-2 (read/write/edit/grep/find/ls
+/// through the AccessGate).
+///
+/// Items covered (per brief + on-disk layout):
+/// - `config.toml` + `config.toml.bak` — main config (API keys,
+///   model ids, paths)
+/// - `preferences.json` — user preferences (may contain tokens)
+/// - `auth.json` + `auth.json.bak` — credentials shared with oxi CLI
+/// - `agent_log.db` — tamper-evident audit chain (Merkle)
+/// - `oxios.lock`, `oxios.pid` — daemon runtime state
+/// - `state` — daemon state store (KernelDatabase + AgentLogDb)
+/// - `cache` — daemon caches
+/// - `catalog` — model catalog overrides
+/// - `logs` — daemon logs
+/// - `knowledge` — legacy knowledge dir (post-migration writes
+///   go to `~/.oxi/vault`)
+/// - `assets` — bundled assets
+/// - `web` (R3) — web-dist staging + `.active` restart marker
+///   (RFC-024 SP3); tampering with the served UI on non-embedded
+///   builds is the attack surface
+/// - `run` (R3) — RFC-042 local-control socket home; tampering
+///   with the owner-only control socket path lets a non-owner
+///   peer mint credentials.
+/// - `backups` (R4) — output dir for `POST /api/system/backup`
+///   tarballs (config + vault). Backups contain credential-bearing
+///   entries; the whole subtree is denied once established.
+///   Pre-R4 backups landed at `~/.oxios/oxios-backup-<ts>.tar.gz`
+///   (no deny entry); R4 relocates them under `backups/`.
+pub const OXIOS_HOME_DENY_SUBPATHS: &[&str] = &[
+    "config.toml",
+    "config.toml.bak",
+    "preferences.json",
+    "auth.json",
+    "auth.json.bak",
+    "agent_log.db",
+    "oxios.lock",
+    "oxios.pid",
+    "state",
+    "cache",
+    "catalog",
+    "logs",
+    "knowledge",
+    "assets",
+    // T18 R3 — added after a public-review pass noted the web-dist
+    // staging dir and the local-control socket home were both missing
+    // from the deny list:
+    "web",
+    "run",
+    // T18 R4 — `backups/` is where `POST /api/system/backup` writes
+    // its tarballs (config.toml + vault contents). The tar carries
+    // credential-bearing entries, so the whole subtree is denied
+    // once the directory exists on disk.
+    "backups",
+];
+
 pub struct AccessGate {
     /// Agent permission manager (includes RBAC internally).
     access: Arc<Mutex<AccessManager>>,
@@ -254,6 +379,23 @@ pub struct AccessGate {
     exec_config: Arc<ExecConfig>,
     /// Audit event destination.
     audit: Arc<dyn AuditSink>,
+    /// Canonicalized ecosystem roots whose contents are NEVER reachable by
+    /// file-tool Layer-2, regardless of any explicit allow-list entry.
+    ///
+    /// T18 (vault unification): the default `denied_paths` entry
+    /// `".oxi/**"` is a relative-literal glob — the gate feeds
+    /// canonicalized absolute paths into `is_path_denied`, which does
+    /// full-string glob matching and so never matches. The list-form
+    /// eco-root prefix check below is the actual enforcement: any
+    /// canonicalized absolute path at/under one of these roots is
+    /// denied with `DenyLayer::Permission`, short-circuiting BEFORE
+    /// the allow-list. Tests cover both absolute (canonical) and
+    /// symlinked-via-target paths.
+    deny_roots: Vec<PathBuf>,
+    /// Sub-path deny list — `(canonical_root, sub_path)` pairs.
+    /// See `with_deny_subpath` for the contract; used for
+    /// `~/.oxios/<sensitive>` entries (T18 R2).
+    deny_subpaths: Vec<(PathBuf, PathBuf)>,
 }
 
 impl AccessGate {
@@ -267,7 +409,101 @@ impl AccessGate {
             access,
             exec_config,
             audit,
+            deny_roots: Vec::new(),
+            deny_subpaths: Vec::new(),
         }
+    }
+
+    /// Whole-root deny: every canonicalized path at/under `root` is
+    /// denied to file-tool Layer-2 (and, since the whole-branch exec
+    /// fix, to path-like exec arguments too). Reserved for surfaces
+    /// where NO sub-path is safe (T18: `~/.oxi`).
+    ///
+    /// Roots are canonicalized once at construction. When
+    /// canonicalization fails (a root that does not exist YET — e.g. a
+    /// never-created `~/.oxi` on a fresh machine), the deny falls back
+    /// to the lexically-normalized absolute root instead of being
+    /// dropped: request paths go through `canonicalize_for_check`,
+    /// which canonicalizes the nearest existing ancestor and re-appends
+    /// the missing tail, so a canonical request path still prefix-
+    /// matches the lexical root as long as no symlink sits inside the
+    /// missing tail (documented residual; canonicalize would have
+    /// resolved it were the root present). A warn is still logged so
+    /// the fallback is observable.
+    pub fn with_deny_root<P: AsRef<Path>>(mut self, root: P) -> Self {
+        let root = root.as_ref();
+        match root.canonicalize() {
+            Ok(canon) => self.deny_roots.push(canon),
+            Err(_) => {
+                let lexical = lexical_absolute(root);
+                tracing::warn!(
+                    root = %root.display(),
+                    fallback = %lexical.display(),
+                    "deny_root canonicalize failed (root missing?); enforcing lexically-normalized root"
+                );
+                self.deny_roots.push(lexical);
+            }
+        }
+        self
+    }
+
+    /// Sub-path deny under `root`: any request whose canonical path
+    /// starts with `root/<sub_path>` (or equals it) is denied. Used
+    /// for `~/.oxios/<sensitive>` entries — the per-app root also
+    /// contains the legitimate workspace tree (T18 R2).
+    ///
+    /// The root is canonicalized at construction so a `~/.oxios`
+    /// symlink pointing elsewhere cannot escape the deny. The
+    /// `sub_path` is a relative path component; "a/b" matches both
+    /// the literal `root/a/b` and everything under it.
+    pub fn with_deny_subpath<P, S>(mut self, root: P, sub_path: S) -> Self
+    where
+        P: AsRef<Path>,
+        S: AsRef<Path>,
+    {
+        let sub_path = sub_path.as_ref();
+        match root.as_ref().canonicalize() {
+            Ok(canon_root) => {
+                // Defensive check: empty sub_path would degenerate to
+                // a whole-root deny, which is what `with_deny_root`
+                // is for. Skip rather than silently flip semantics.
+                if sub_path.as_os_str().is_empty() {
+                    tracing::warn!(
+                        root = %canon_root.display(),
+                        "deny_subpath called with empty sub_path; skipping"
+                    );
+                    return self;
+                }
+                self.deny_subpaths
+                    .push((canon_root, sub_path.to_path_buf()));
+            }
+            Err(_) => tracing::warn!(
+                root = %root.as_ref().display(),
+                "deny_subpath root canonicalize failed; skipping deny"
+            ),
+        }
+        self
+    }
+
+    /// True iff `canonical_path` matches any deny policy: at/under a
+    /// whole-root deny, OR at/under `<deny_root>/<deny_sub>` for any
+    /// configured pair. All sides are already canonical so the
+    /// check is a pure path-component prefix walk — no symlink
+    /// bypass, no `..` traversal, no string-collision false positives.
+    fn is_denied_by_policy(&self, canonical_path: &Path) -> bool {
+        for root in &self.deny_roots {
+            if canonical_path == root.as_path() || canonical_path.starts_with(root.as_path()) {
+                return true;
+            }
+        }
+        for (root, sub) in &self.deny_subpaths {
+            let mut denied = root.to_path_buf();
+            denied.push(sub);
+            if canonical_path == denied.as_path() || canonical_path.starts_with(denied.as_path()) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Clone the inner access manager Arc (for ExecTool fallback).
@@ -428,6 +664,24 @@ impl AccessGate {
             });
         }
 
+        // Layer 2 (pre): ecosystem deny — whole-root + sub-path.
+        // See `with_deny_root` and `with_deny_subpath` for the
+        // contracts. Short-circuits BEFORE the existing
+        // `can_access_path` allow/deny check so an admin-supplied
+        // `allowed_paths = ["/**"]` cannot grant access to the
+        // ecosystem's vault or sensitive config subtrees.
+        if self.is_denied_by_policy(&resolved) {
+            return Err(AccessDenied {
+                agent: ctx.agent_name.clone(),
+                resource: path_str.to_string(),
+                layer: DenyLayer::Permission,
+                reason: format!(
+                    "Path '{path_str}' is under a protected ecosystem subpath (vault/config)"
+                ),
+                suggestion: None,
+            });
+        }
+
         // Layer 2: Path permissions (allowed_paths / denied_paths)
         if !access.can_access_path(&ctx.agent_name, &path_str) {
             return Err(AccessDenied {
@@ -524,6 +778,36 @@ impl AccessGate {
                 reason: "Arguments contain shell metacharacters or path traversal patterns".into(),
                 suggestion: None,
             });
+        }
+
+        // Layer 2 (pre): ecosystem deny — the SAME canonical-prefix
+        // policy `check_path` applies (vault-unification design
+        // §5.3.6). Without this, exec argv was a full bypass:
+        // `cat ~/.oxi/config.toml` read deny-listed secrets and
+        // `cp x ~/.oxi/vault/y.md` wrote the vault, dodging every
+        // file-tool invariant. Path-like arguments (absolute, `~/…`,
+        // `./…`, `../…`) are resolved with the same
+        // canonicalize-for-check helper `check_path` uses.
+        //
+        // RESIDUAL (best-effort by design): bare relative words
+        // (`cat .oxi/config.toml` with cwd = home) are not extracted
+        // — they are indistinguishable from ordinary flag values;
+        // closing that requires tracking the exec cwd, which the
+        // structured exec tool does not expose to the gate.
+        for arg in args {
+            if let Some(path) = exec_arg_path(arg)
+                && self.is_denied_by_policy(&path)
+            {
+                return Err(AccessDenied {
+                    agent: ctx.agent_name.clone(),
+                    resource: binary.to_string(),
+                    layer: DenyLayer::Permission,
+                    reason: format!(
+                        "Exec argument '{arg}' resolves under a protected ecosystem subpath (vault/config)"
+                    ),
+                    suggestion: None,
+                });
+            }
         }
 
         Ok(())
@@ -872,6 +1156,112 @@ mod tests {
         assert!(result.is_ok(), "listed binary should be allowed");
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // Whole-branch review fixes: exec-argument deny (P1) and
+    // missing-root lexical fallback (P2).
+    // ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn wb_exec_cat_denied_secret_is_denied() {
+        // `cat <deny-root>/config.toml` — reading deny-listed secrets
+        // through exec argv must hit the same Permission-layer deny
+        // that check_path enforces (vault-unification design §5.3.6:
+        // exec with cat/cp/tee was a full bypass of every invariant).
+        let tmp = tempfile::tempdir().unwrap();
+        let (gate, ctx, canon) = make_r2_gate(tmp.path());
+        let secret = canon.join(".oxi").join("config.toml");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, "api_key = \"x\"").unwrap();
+        let err = gate
+            .check(CheckRequest::Exec {
+                context: &ctx,
+                binary: "cat",
+                args: &[secret.to_string_lossy().to_string()],
+            })
+            .expect_err("cat of a deny-listed secret must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission, "{err}");
+    }
+
+    #[test]
+    fn wb_exec_cp_into_vault_via_home_tilde_is_denied() {
+        // `cp foo ~/.oxi/vault/x.md` — the destination resolves under
+        // the whole-root deny. HOME is injected through the pure
+        // helper (no process-env mutation: parallel-test safety,
+        // same pattern as path_promotion::expand_tilde_with_home).
+        let tmp = tempfile::tempdir().unwrap();
+        let (gate, _ctx, canon) = make_r2_gate(tmp.path());
+        let resolved =
+            exec_arg_path_with_home("~/.oxi/vault/x.md", Some(&canon)).expect("~ form resolves");
+        assert_eq!(
+            resolved,
+            canon.join(".oxi").join("vault").join("x.md"),
+            "canonicalize_for_check appends the missing tail"
+        );
+        assert!(
+            gate.is_denied_by_policy(&resolved),
+            "cp destination under ~/.oxi must be denied"
+        );
+    }
+
+    #[test]
+    fn wb_exec_normal_command_unaffected() {
+        // Plain builds/flags carry no path-like argument — the deny
+        // probe must not reject ordinary exec.
+        let tmp = tempfile::tempdir().unwrap();
+        let (gate, ctx, _canon) = make_r2_gate(tmp.path());
+        let result = gate.check(CheckRequest::Exec {
+            context: &ctx,
+            binary: "cargo",
+            args: &["build".to_string(), "--release".to_string()],
+        });
+        assert!(result.is_ok(), "normal exec must stay allowed");
+    }
+
+    #[test]
+    fn wb_deny_root_missing_root_falls_back_to_lexical_prefix() {
+        // A root that does not exist YET (fresh machine, never-created
+        // `~/.oxi`) used to be warn-skipped, leaving the security
+        // control absent. The lexically-normalized fallback must still
+        // deny paths under it. canon parent + missing leaf: no symlink
+        // indirection (the documented residual).
+        let tmp = tempfile::tempdir().unwrap();
+        let canon = tmp.path().canonicalize().unwrap();
+        let oxi = canon.join(".oxi"); // deliberately NOT created
+
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon.display())];
+        perms.allowed_tools = ["read", "write", "exec"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+        let gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        )
+        .with_deny_root(&oxi);
+
+        let secret = canon.join(".oxi").join("config.toml"); // also not created
+        let err = gate
+            .check(CheckRequest::Path {
+                context: &ctx,
+                path: &secret,
+                mode: PathMode::Read,
+            })
+            .expect_err("never-created deny root must still deny");
+        assert_eq!(err.layer, DenyLayer::Permission, "{err}");
+    }
+
     // ─── Path checks ────────────────────────────────────────────────
 
     #[test]
@@ -883,6 +1273,626 @@ mod tests {
             mode: PathMode::Read,
         });
         assert!(result.is_ok(), "workspace path should be readable");
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // T18 R2: scoped ecosystem-deny policy.
+    //
+    // `~/.oxi` ⇒ whole-root deny (no safe sub-path).
+    // `~/.oxios` ⇒ sub-path deny only, scoped to the sensitive
+    //   subtrees (config, auth, audit, daemon state, etc.) — leaves
+    //   `~/.oxios/workspace/**` and RFC-025 mount paths accessible,
+    //   preserving the legitimate grants wired at agent_runtime.rs
+    //   and agent_lifecycle.rs.
+    //
+    // Helpers below wire these two policies so the gate tests can
+    // exercise them through `CheckRequest::Path` with absolute
+    // canonical paths — exactly the flow that R1 caught as broken.
+    // ────────────────────────────────────────────────────────────────
+
+    /// Construct an AccessGate wired with the T18 R4 production
+    /// policy. Mirrors `agent_runtime.rs` exactly:
+    ///
+    /// * whole-root deny at `~/.oxi` (R1) and `~/.oxicode` (R4 —
+    ///   shared credential fallback)
+    /// * sub-path deny at `~/.oxios/<OXIOS_HOME_DENY_SUBPATHS>` (R2/R3)
+    ///
+    /// The whole-root deny list and the sub-path list are the
+    /// single-source-of-truth `OXI_HOME_DENY_ROOTS` /
+    /// `OXIOS_HOME_DENY_SUBPATHS` constants from this module so the
+    /// production wiring and the parity test here cannot drift.
+    ///
+    /// Returns `(gate, ctx, canon_tmp)`. Callers MUST use the
+    /// canonicalized path for any request path they intend to
+    /// query — macOS `tempfile::tempdir` returns a `/var/folders/...`
+    /// symlink target that resolves to `/private/var/folders/...`,
+    /// and the gate canonicalizes request paths through
+    /// `canonicalize_for_check`. A non-canonical request path
+    /// will fail to match the broad allow-list we install here.
+    fn make_r2_gate(tmp: &std::path::Path) -> (AccessGate, AgentContext, std::path::PathBuf) {
+        let canon_tmp = tmp.canonicalize().unwrap_or_else(|_| tmp.to_path_buf());
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+
+        // Grant EVERYTHING under the canonicalized tempdir — the
+        // deny rules have to overrule anyway.
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon_tmp.display())];
+        perms.allowed_tools = [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "bash",
+            "exec",
+            "web_search",
+            "get_search_results",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+
+        // Mirror the production wiring: install ALL deny-roots
+        // listed in `OXI_HOME_DENY_ROOTS` and ALL deny-subpaths
+        // listed in `OXIOS_HOME_DENY_SUBPATHS`. The directory
+        // existence check at canonicalize-time gates whether the
+        // root registers (a non-existing home/<leaf> simply
+        // canonicalizes-fails and is logged, not dropped).
+        for leaf in OXI_HOME_DENY_ROOTS {
+            std::fs::create_dir_all(canon_tmp.join(leaf)).unwrap();
+        }
+        let oxios_root = canon_tmp.join(".oxios");
+        std::fs::create_dir_all(&oxios_root).unwrap();
+        // Some entries in `OXIOS_HOME_DENY_SUBPATHS` reference
+        // sub-paths that may not exist yet (the deny is
+        // policy-level, not data-level). The directory is created
+        // on demand; for the test, a no-op canonicalize on
+        // `home/<leaf>` is enough — `with_deny_subpath` invokes
+        // canonicalize on the root (here, `~/.oxios`), not the
+        // subpath.
+        let mut gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        );
+        for leaf in OXI_HOME_DENY_ROOTS {
+            gate = gate.with_deny_root(canon_tmp.join(leaf));
+        }
+        for sub in OXIOS_HOME_DENY_SUBPATHS {
+            gate = gate.with_deny_subpath(&oxios_root, sub);
+        }
+
+        (gate, ctx, canon_tmp)
+    }
+
+    #[test]
+    fn r2_deny_root_denies_absolute_path_under_oxi() {
+        // R2 (c): the `~/.oxi` whole-root deny is unchanged from R1.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let vault_note = canon_tmp_for_path
+            .join(".oxi")
+            .join("vault")
+            .join("notes")
+            .join("foo.md");
+        std::fs::create_dir_all(vault_note.parent().unwrap()).unwrap();
+        std::fs::write(&vault_note, b"# secret note\n").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &vault_note,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err("vault note under ~/.oxi must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r2_deny_subpath_denies_oxios_config_toml() {
+        // R2 (b): `~/.oxios/config.toml` is in the sensitive list and
+        // MUST be denied even with a broad allow-list.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let target = canon_tmp_for_path.join(".oxios").join("config.toml");
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&target, b"api_key = \"sk-test\"").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &target,
+            mode: PathMode::Write,
+        });
+        let err = result.expect_err("~/.oxios/config.toml must be denied (sub-path policy)");
+        assert_eq!(err.layer, DenyLayer::Permission);
+        assert!(
+            err.reason.contains("protected ecosystem"),
+            "reason should name the deny source; got {:?}",
+            err.reason,
+        );
+    }
+
+    #[test]
+    fn r2_workspace_subtree_is_not_denied() {
+        // R2 (a): `~/.oxios/workspace/<session>/x` MUST remain
+        // accessible. This is the regression that R2 fixed — the
+        // agent-runtime workspace grant (`~/.oxios/workspace/**`,
+        // wired at agent_runtime.rs:824-826 and agent_lifecycle.rs
+        // :305-307) and RFC-025 mount paths land here. Whole-root
+        // denial would silently break the agent's documented
+        // operating context.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let session_file = canon_tmp_for_path
+            .join(".oxios")
+            .join("workspace")
+            .join("session-7")
+            .join("notes.md");
+        std::fs::create_dir_all(session_file.parent().unwrap()).unwrap();
+        std::fs::write(&session_file, b"# session").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &session_file,
+            mode: PathMode::Read,
+        });
+        assert!(
+            result.is_ok(),
+            "~/.oxios/workspace/<session>/x must remain accessible; got {:?}",
+            result,
+        );
+    }
+
+    #[test]
+    fn r2_parity_with_oxios_home_deny_subpaths_constant() {
+        // T18 R3 — parity-by-construction. The expected list is
+        // derived from the same production constant
+        // (`OXIOS_HOME_DENY_SUBPATHS`) used by `agent_runtime.rs`,
+        // so a future addition cannot desync this test from the
+        // production wiring. A separate plain-data assertion at
+        // the end of the function guarantees the constant has
+        // non-trivial content (and would scream if someone
+        // accidentally emptied it).
+        for sensitive in OXIOS_HOME_DENY_SUBPATHS {
+            let tmp = tempfile::tempdir().unwrap();
+            let canon_tmp_for_path = tmp
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| tmp.path().to_path_buf());
+            let target = canon_tmp_for_path.join(".oxios").join(sensitive);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&target, b"x").unwrap();
+
+            let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+            let result = gate.check(CheckRequest::Path {
+                context: &ctx,
+                path: &target,
+                mode: PathMode::Read,
+            });
+            assert!(
+                result.is_err(),
+                "sensitive subpath ~/.oxios/{} must be denied; got {:?}",
+                sensitive,
+                result,
+            );
+        }
+        // Belt-and-braces: also catch any future dropping below
+        // a sane minimum. Production needs ALL of the items below;
+        // a missing entry is a security regression.
+        let required = [
+            "config.toml",
+            "auth.json",
+            "agent_log.db",
+            "state",
+            // T18 R3: web-dist staging + RFC-042 control socket
+            "web",
+            "run",
+            // T18 R4: backup output directory
+            "backups",
+        ];
+        for r in required {
+            assert!(
+                OXIOS_HOME_DENY_SUBPATHS.contains(&r),
+                "OXIOS_HOME_DENY_SUBPATHS must contain `{}`; got {:?}",
+                r,
+                OXIOS_HOME_DENY_SUBPATHS,
+            );
+        }
+    }
+
+    #[test]
+    fn r3_oxios_web_dir_is_denied() {
+        // T18 R3 (a): web-dist staging + `.active` restart marker
+        // is in the deny list — under R1's whole-root deny it was
+        // covered, R2's narrowing dropped it. On non-embedded
+        // builds (`cargo install`), the served UI comes from
+        // `~/.oxios/web/dist-<version>/` + `~/.oxios/web/.active`.
+        // An agent with broad allow can otherwise tamper the
+        // served assets.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let marker = canon_tmp_for_path
+            .join(".oxios")
+            .join("web")
+            .join(".active");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, b"/tmp/staged-dist").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &marker,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err("~/.oxios/web/.active must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r3_oxios_run_dir_is_denied() {
+        // T18 R3 (a): the RFC-042 local-control socket home
+        // (`~/.oxios/run/control.sock`) is added now as cheap
+        // future-proofing — same surface class as the rest.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let sock = canon_tmp_for_path
+            .join(".oxios")
+            .join("run")
+            .join("control.sock");
+        std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+        std::fs::write(&sock, b"").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &sock,
+            mode: PathMode::Write,
+        });
+        let err = result.expect_err("~/.oxios/run/control.sock must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r4_oxicode_auth_json_is_denied() {
+        // T18 R4 (a): `~/.oxicode/auth.json` is the shared oxicode-cli
+        // credential store that oxios's `CredentialStore` reads as a
+        // legacy fallback. A broadly-allowed agent must not be able
+        // to exfiltrate stored keys via `read`/`grep`. Whole-root
+        // deny on `~/.oxicode` is appropriate (no safe sub-path).
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let auth = canon_tmp_for_path.join(".oxicode").join("auth.json");
+        std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
+        std::fs::write(&auth, b"{\"anthropic\":{\"key\":\"sk-ant-x\"}}").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &auth,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err("~/.oxicode/auth.json must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r4_oxicode_neighboring_files_remain_allowable_in_deny_root() {
+        // After R4 whole-root-deny on `~/.oxicode`, even files
+        // outside the credential store under `~/.oxicode` are
+        // blocked — that's the whole point of the policy (no safe
+        // sub-path exists). This test pins the policy so a future
+        // relaxation back to `with_deny_subpath` would require an
+        // explicit test change AND a doc-comment update.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let unrelated = canon_tmp_for_path.join(".oxicode").join("unrelated.txt");
+        std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+        std::fs::write(&unrelated, b"x").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &unrelated,
+            mode: PathMode::Read,
+        });
+        let err =
+            result.expect_err("R4 denies the whole ~/.oxicode root, including unrelated files");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r4_oxios_backups_subtree_is_denied() {
+        // T18 R4 (b): `~/.oxios/backups/` is where POST
+        // `/api/system/backup` writes its tarballs
+        // (config.toml + vault contents). The tar carries
+        // credential-bearing entries; the whole subtree is denied.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let backup_tar = canon_tmp_for_path
+            .join(".oxios")
+            .join("backups")
+            .join("oxios-backup-20260821.tar.gz");
+        std::fs::create_dir_all(backup_tar.parent().unwrap()).unwrap();
+        std::fs::write(&backup_tar, b"tar contents").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &backup_tar,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err("~/.oxios/backups/<tarball> must be denied");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r4_oxios_root_workspace_still_allowable() {
+        // Regression: the R4 additions (whole-root `~/.oxicode`,
+        // sub-path `backups`) must not affect anything that was
+        // already passing in R2/R3. In particular, the workspace
+        // subtree under `~/.oxios` keeps its allowance.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let workspace_file = canon_tmp_for_path
+            .join(".oxios")
+            .join("workspace")
+            .join("session")
+            .join("notes.md");
+        std::fs::create_dir_all(workspace_file.parent().unwrap()).unwrap();
+        std::fs::write(&workspace_file, b"# note").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &workspace_file,
+            mode: PathMode::Read,
+        });
+        assert!(
+            result.is_ok(),
+            "R4 must not regress: workspace grant preserved; got {:?}",
+            result,
+        );
+    }
+
+    #[test]
+    fn r4_oxi_home_deny_roots_constant_contains_required_entries() {
+        // T18 R4 — the production wiring uses `OXI_HOME_DENY_ROOTS`
+        // as the single source of truth for whole-root denies. Make
+        // sure the bare minimum (the two roots we know we need) is
+        // present so a future hand-edit cannot silently drop one
+        // and deny nothing or deny everything.
+        for required_root in [".oxi", ".oxicode"] {
+            assert!(
+                OXI_HOME_DENY_ROOTS.contains(&required_root),
+                "OXI_HOME_DENY_ROOTS must contain `{}`; got {:?}",
+                required_root,
+                OXI_HOME_DENY_ROOTS,
+            );
+        }
+    }
+
+    #[test]
+    fn r2_deny_subpath_with_subdirectory_tree() {
+        // A sensitive directory entry (e.g. `state`) must deny the
+        // whole subtree — `state/agents/<id>.json` is also a deny.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp_for_path = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let deep = canon_tmp_for_path
+            .join(".oxios")
+            .join("state")
+            .join("agents")
+            .join("a1b2.json");
+        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        std::fs::write(&deep, b"{}").unwrap();
+
+        let (gate, ctx, _canon_tmp) = make_r2_gate(tmp.path());
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &deep,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err("subtree of a denied dir must be denied too");
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r2_deny_root_canonicalizes_symlinked_oxi() {
+        // R2 (d): if `~/.oxi` is a symlink to elsewhere, the
+        // canonicalized root IS that target and every request path
+        // is canonicalized through `canonicalize_for_check` — the
+        // deny still holds.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_vault = tmp.path().join("real-vault");
+        std::fs::create_dir_all(&real_vault).unwrap();
+        let note = real_vault.join("note.md");
+        std::fs::write(&note, b"x").unwrap();
+        let oxi_link = tmp.path().join("oxi");
+        std::os::unix::fs::symlink(&real_vault, &oxi_link).unwrap();
+
+        let canon_tmp = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon_tmp.display())];
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+
+        let gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        )
+        .with_deny_root(&oxi_link);
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &note,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err(
+            "request through a symlinked ~/.oxi must still be denied (canonicalize both sides)",
+        );
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r2_deny_subpath_canonicalizes_symlinked_oxios() {
+        // R2 (d) sub-path variant: `~/.oxios` symlink pointing
+        // elsewhere; the canonicalized root IS the target and a
+        // sensitive subpath under it is still denied.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_oxios = tmp.path().join("real-oxios");
+        std::fs::create_dir_all(&real_oxios).unwrap();
+        let real_config = real_oxios.join("config.toml");
+        std::fs::write(&real_config, b"api_key = \"x\"").unwrap();
+        let oxios_link = tmp.path().join(".oxios");
+        std::os::unix::fs::symlink(&real_oxios, &oxios_link).unwrap();
+
+        let canon_tmp = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon_tmp.display())];
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+
+        let gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        )
+        .with_deny_subpath(&oxios_link, "config.toml");
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &real_config,
+            mode: PathMode::Read,
+        });
+        let err = result.expect_err(
+            "request through a symlinked ~/.oxios to a sensitive file must still be denied",
+        );
+        assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn r2_gate_without_any_deny_is_a_no_op() {
+        // Regression: a gate built without any deny policy (legacy
+        // callers, tests) must NOT suddenly start denying everything.
+        // Existing allow-list semantics apply unchanged.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let project = canon_tmp.join("project").join("file.rs");
+        std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+        std::fs::write(&project, b"x").unwrap();
+
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon_tmp.display())];
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+
+        let gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        );
+        // No deny policy.
+
+        let result = gate.check(CheckRequest::Path {
+            context: &ctx,
+            path: &project,
+            mode: PathMode::Read,
+        });
+        assert!(
+            result.is_ok(),
+            "no deny configured ⇒ deny must not fire; got {:?}",
+            result,
+        );
     }
 
     // ─── Network checks ─────────────────────────────────────────────

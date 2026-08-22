@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 /// Infrastructure system calls.
 pub struct InfraApi {
     pub(crate) git_layer: Arc<GitLayer>,
+    /// Vault-rooted `GitLayer` (T16) — `kb.root()` is its own repo, so
+    /// `commit_file` / `log_for_file` / `restore_file` use paths computed
+    /// by [`crate::git_layer::rel_path`] with no `knowledge/` prefix.
+    pub(crate) knowledge_git: Arc<GitLayer>,
     pub(crate) cron_scheduler: Arc<CronScheduler>,
     pub(crate) resource_monitor: Arc<ResourceMonitor>,
     pub(crate) event_bus: EventBus,
@@ -43,6 +47,7 @@ impl InfraApi {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         git_layer: Arc<GitLayer>,
+        knowledge_git: Arc<GitLayer>,
         cron_scheduler: Arc<CronScheduler>,
         resource_monitor: Arc<ResourceMonitor>,
         event_bus: EventBus,
@@ -55,6 +60,7 @@ impl InfraApi {
     ) -> Self {
         Self {
             git_layer,
+            knowledge_git,
             cron_scheduler,
             resource_monitor,
             event_bus,
@@ -72,6 +78,15 @@ impl InfraApi {
     /// Get a reference to the GitLayer.
     pub fn git(&self) -> &GitLayer {
         &self.git_layer
+    }
+
+    /// Get a reference to the vault-rooted knowledge `GitLayer` (T16).
+    /// Distinct from [`Self::git`] which tracks workspace artifacts
+    /// (audit trail, agent work). The knowledge layer commits to the
+    /// vault itself, so callers MUST route paths through
+    /// [`crate::git_layer::rel_path`] to stay relative to the vault root.
+    pub fn knowledge_git(&self) -> &GitLayer {
+        &self.knowledge_git
     }
 
     pub fn approval_config_handle(
@@ -254,6 +269,10 @@ mod tests {
     fn minimal_infra(approval_config: Arc<parking_lot::RwLock<ApprovalConfig>>) -> InfraApi {
         let dir = tempfile::tempdir().unwrap();
         InfraApi::new(
+            Arc::new(GitLayer::new(dir.path().join("git"), false).unwrap()),
+            // T16: knowledge_git — same Arc is fine for the unit test; the
+            // contract under test is approval_config Arc sharing, not git
+            // topology.
             Arc::new(GitLayer::new(dir.path().join("git"), false).unwrap()),
             Arc::new(CronScheduler::new(
                 Arc::new(StateStore::new(dir.path().join("state")).unwrap()),

@@ -701,7 +701,6 @@ mod tests {
         let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
         assert_eq!(actions.len(), 28);
     }
-
     fn make_tool() -> (Arc<oxios_markdown::KnowledgeBase>, KnowledgeTool) {
         let dir = std::env::temp_dir().join(format!("test-kb-tool-{}", uuid::Uuid::new_v4()));
         let kb = Arc::new(oxios_markdown::KnowledgeBase::new(dir).unwrap());
@@ -728,7 +727,6 @@ mod tests {
     /// write must refuse such notes and still succeed on its own
     /// notes (frontmatter WITH an `oxios:` table).
     #[tokio::test]
-    #[ignore = "vault-unification T12 spec: note_write_with_meta merge path not yet converted to frontformat"]
     async fn write_refuses_user_authored_and_accepts_agent_notes() {
         let (kb, tool) = make_tool();
 
@@ -739,7 +737,7 @@ mod tests {
         std::fs::create_dir_all(kb.root().join("brain")).unwrap();
         std::fs::write(kb.root().join("brain").join("User.md"), user_note).unwrap();
 
-        // Agent write to the user note ⇒ refusal message, file untouched.
+        // Agent write to the user note => refusal message, file untouched.
         let res = tool_write(&tool, "brain/User.md", "# overwritten").await;
         assert!(!res.success, "agent write to user note must be refused");
         assert!(
@@ -753,7 +751,25 @@ mod tests {
             "refused write must leave the user note byte-identical"
         );
 
-        // Agent write to its own note (lands an `oxios:` table) ⇒ succeeds.
+        // Existing note with NO frontmatter at all is NOT user-authored
+        // under the redefined contract (frontmatter alone no longer
+        // implies user-authored — every note now has id/created/updated).
+        // The agent write proceeds and lands the `oxios:` table.
+        std::fs::write(kb.root().join("brain").join("Bare.md"), "Just a body\n").unwrap();
+        let res = tool_write(&tool, "brain/Bare.md", "# curated body").await;
+        assert!(
+            res.success,
+            "write to frontmatterless note must proceed; got: {}",
+            res.output
+        );
+        let bare = kb.note_read("brain/Bare.md").unwrap().unwrap();
+        assert!(
+            bare.contains("oxios:"),
+            "frontmatterless note must gain the oxios: table"
+        );
+        assert!(bare.contains("# curated body"));
+
+        // Agent write to its own note (lands an `oxios:` table) => succeeds.
         let res = tool_write(&tool, "brain/Agent.md", "# Agent note").await;
         assert!(
             res.success,

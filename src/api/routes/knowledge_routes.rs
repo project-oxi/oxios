@@ -71,6 +71,11 @@ use serde::{Deserialize, Serialize};
 use crate::api::error::AppError;
 use crate::api::server::AppState;
 
+// T16: path helper for vault-rooted git routing — see
+// `oxios_kernel::git_layer::rel_path` doc for why this lives outside
+// the `InfraApi` accessor.
+use oxios_kernel::git_layer::rel_path;
+
 // ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
@@ -826,13 +831,9 @@ async fn handle_knowledge_file_history_impl(
     state: &Arc<AppState>,
     file_path: &str,
 ) -> Result<axum::response::Response<axum::body::Body>, AppError> {
-    let git = state.kernel.infra.git();
+    let git = state.kernel.infra.knowledge_git();
     let kb_root = state.kernel.knowledge.root();
-    let prefix = kb_root
-        .strip_prefix(git.root())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "knowledge".to_string());
-    let git_rel = format!("{prefix}/{file_path}");
+    let git_rel = rel_path(&kb_root, git.root(), file_path);
 
     let log = git
         .log_for_file(&git_rel, 50)
@@ -868,13 +869,9 @@ async fn handle_knowledge_file_restore_impl(
     file_path: &str,
     hash: &str,
 ) -> Result<axum::response::Response<axum::body::Body>, AppError> {
-    let git = state.kernel.infra.git();
+    let git = state.kernel.infra.knowledge_git();
     let kb_root = state.kernel.knowledge.root();
-    let prefix = kb_root
-        .strip_prefix(git.root())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "knowledge".to_string());
-    let git_rel = format!("{prefix}/{file_path}");
+    let git_rel = rel_path(&kb_root, git.root(), file_path);
 
     git.restore_file(&git_rel, hash)
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -911,13 +908,9 @@ pub(crate) async fn handle_knowledge_file_diff(
     state: State<Arc<AppState>>,
     Query(params): Query<KnowledgeFileDiffQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let git = state.kernel.infra.git();
+    let git = state.kernel.infra.knowledge_git();
     let kb_root = state.kernel.knowledge.root();
-    let prefix = kb_root
-        .strip_prefix(git.root())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "knowledge".to_string());
-    let git_rel = format!("{prefix}/{}", params.path);
+    let git_rel = rel_path(&kb_root, git.root(), &params.path);
 
     // Reuse diff_commits to get all file changes between the specified
     // commit and HEAD, then filter for this file.
@@ -1432,13 +1425,9 @@ pub(crate) async fn handle_knowledge_file_history(
     state: State<Arc<AppState>>,
     Path(path): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let git = state.kernel.infra.git();
+    let git = state.kernel.infra.knowledge_git();
     let kb_root = state.kernel.knowledge.root();
-    let prefix = kb_root
-        .strip_prefix(git.root())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "knowledge".to_string());
-    let git_rel = format!("{prefix}/{path}");
+    let git_rel = rel_path(&kb_root, git.root(), &path);
 
     let log = git
         .log(100)
@@ -1469,18 +1458,14 @@ pub(crate) async fn handle_knowledge_file_restore(
     Path(path): Path<String>,
     Json(body): Json<KnowledgeRestoreBody>,
 ) -> Result<StatusCode, AppError> {
-    let git = state.kernel.infra.git();
+    let git = state.kernel.infra.knowledge_git();
     let kb_root = state.kernel.knowledge.root();
-    let prefix = kb_root
-        .strip_prefix(git.root())
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "knowledge".to_string());
-    let git_rel = format!("{prefix}/{path}");
+    let git_rel = rel_path(&kb_root, git.root(), &path);
 
     // I-4: Read blob content from git WITHOUT writing to disk, then write
-    // through note_restore (which acquires the VirtualFs write lock).
+    // through note_restore (atomic temp+rename write via frontformat).
     // The old path called git.restore_file → std::fs::write directly,
-    // bypassing the VirtualFs lock and racing with concurrent note_write.
+    // racing with concurrent note_write.
     let data = git
         .file_at_commit(&git_rel, &body.hash)
         .map_err(|e| AppError::Internal(e.to_string()))?;

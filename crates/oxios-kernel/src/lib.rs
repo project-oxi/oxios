@@ -171,6 +171,7 @@ pub use mcp::{
 // ─── Intelligence ───────────────────────────────────────────────────
 pub use brain::{
     BrainConfig, BrainConnection, BrainSupervisor, SupervisorConfig, SupervisorStatus,
+    VaultRegisterOutcome, VaultRegisterPolicy, resolve_space,
 };
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
 pub use memory_agent::sona::{

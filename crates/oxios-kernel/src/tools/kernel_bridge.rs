@@ -141,6 +141,8 @@ mod tests {
             crate::McpApi::new(Arc::new(crate::mcp::McpBridge::new())),
             crate::InfraApi::new(
                 Arc::new(crate::git_layer::GitLayer::new(base.join("git"), false).unwrap()),
+                // T16: knowledge_git — vault-rooted layer for the test bridge.
+                Arc::new(crate::git_layer::GitLayer::new(base.join("kb_git"), false).unwrap()),
                 Arc::new(crate::cron::CronScheduler::new(state_store.clone(), 60)),
                 Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 60)),
                 crate::event_bus::EventBus::new(256),

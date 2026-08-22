@@ -37,7 +37,10 @@ use std::sync::Arc;
 // RFC-014 Phase D: `ToolRegistry::register_arc` is used in the AgentBuilder
 // path to attach CSpace tools after `builder.build()` returns.
 
-use crate::access_manager::{AccessGate, AgentContext, TracingAuditSink, TrailAuditSink};
+use crate::access_manager::{
+    AccessGate, AgentContext, OXI_HOME_DENY_ROOTS, OXIOS_HOME_DENY_SUBPATHS, TracingAuditSink,
+    TrailAuditSink,
+};
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
 use crate::persona::PersonaManager;
@@ -910,12 +913,54 @@ async fn run_agent(
     } else {
         Arc::new(TracingAuditSink)
     };
-    // Build access gate from kernel's security infrastructure
-    let access_gate = Arc::new(AccessGate::new(
+    // Build access gate from kernel's security infrastructure.
+    //
+    // T18 (R2 reconciliation): the gate carries two scoped deny
+    // policies — whole-root for `~/.oxi` (a surface where NO sub-path
+    // is safe — vault, brain index, settings, sessions) and
+    // sub-path for `~/.oxios` (a surface whose workspace subtree is
+    // the agent's documented operating context and whose RFC-025
+    // mount paths land). Whole-root denial on `~/.oxios` would kill
+    // legitimate grants (`~/.oxios/workspace/**` at
+    // agent_runtime.rs:824-826 + agent_lifecycle.rs:305-307, plus
+    // RFC-025 mount paths) while the mount manager still reported
+    // mounts accessible — see R2 review feedback.
+    //
+    // Each deny rule canonicalizes its root at construction, so a
+    // `~/.oxi` or `~/.oxios` symlink pointing elsewhere cannot escape
+    // the deny. See gate.rs for the full contract.
+    let mut deny_gate_builder = AccessGate::new(
         kernel_handle.exec.access_manager().clone(),
         Arc::new(kernel_handle.exec.config_snapshot()),
         audit_sink,
-    ));
+    );
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        // Whole-root deny for surfaces where NO sub-path is safe.
+        // Both lists come from the single-source-of-truth constants
+        // in gate.rs so the production wiring and the parity test in
+        // gate.rs cannot drift apart. T18 R4 adds `~/.oxicode` —
+        // the shared oxicode-cli credential store that oxios's
+        // CredentialStore reads as a legacy `auth.json` fallback;
+        // a broadly-allowed agent should not be able to exfiltrate
+        // stored keys via `read`/`grep`.
+        for leaf in OXI_HOME_DENY_ROOTS {
+            deny_gate_builder = deny_gate_builder.with_deny_root(home.join(leaf));
+        }
+
+        // Sub-path deny for `~/.oxios/<sensitive>`. Each entry is
+        // the sensitive subtree; agents retain access to `workspace/`
+        // and any RFC-025 mount path. See [`OXIOS_HOME_DENY_SUBPATHS`]
+        // doc for the per-entry rationale. T18 R4 adds `backups/` —
+        // the output dir for `POST /api/system/backup` tarballs,
+        // which carry credential-bearing entries.
+        let oxios_root = home.join(".oxios");
+        for sub in OXIOS_HOME_DENY_SUBPATHS {
+            deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+        }
+    } else {
+        tracing::warn!("HOME unset at gate construction; ecosystem deny is disabled for this run");
+    }
+    let access_gate = Arc::new(deny_gate_builder);
 
     // Build the RFC-035 ApprovalGate: declared policies + config overrides +
     // the always-on SecurityBlacklist as the single global resolver, plus

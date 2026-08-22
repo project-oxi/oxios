@@ -6,8 +6,11 @@
 //!
 //! **RFC-003: Knowledge Base Independent Separation**
 //! - Semantic search lives in the kernel (AI layer), not oxios-markdown
-//! - `KnowledgeLens` subscribes to `KnowledgeBase.on_file_change()` so new
-//!   notes are indexed into the brain automatically
+//! - Vault ingestion (the daemon watching the markdown vault) is the
+//!   oxibrain daemon's job — `BrainConnection::register_vault_source` on
+//!   boot, registered once. The lens is a read-side overlay only; the
+//!   previous file-change → `remember` chain (index_to_brain) was removed
+//!   in T17 (vault unification) so a single ingestion path owns it.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,7 +19,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 
 use crate::brain::BrainConnection;
 
@@ -70,9 +72,11 @@ pub struct CopilotResponse {
 
 /// KnowledgeLens — semantic overlay over KnowledgeBase.
 ///
-/// Keeps the brain in sync with the markdown knowledge base via file-change
-/// callbacks. The brain connection is optional so tests and preliminary
-/// handles can build the lens before the daemon connects.
+/// Read-side: combines markdown note search (via `KnowledgeBase`) with
+/// brain recall (via the daemon). Vault ingestion is the oxibrain
+/// daemon's job (T17 single ingestion path); the lens never writes to the
+/// brain on file-change. The brain connection is optional so tests and
+/// preliminary handles can build the lens before the daemon connects.
 pub struct KnowledgeLens {
     /// The underlying knowledge base.
     kb: Arc<oxios_markdown::KnowledgeBase>,
@@ -80,13 +84,6 @@ pub struct KnowledgeLens {
     brain: Option<Arc<BrainConnection>>,
     /// Tracks which files were written by agents.
     agent_writes: Arc<RwLock<HashSet<String>>>,
-    /// Holds the file-change channel sender. The field itself is never read;
-    /// its sole purpose is to keep the sender alive so the background
-    /// file-watcher task draining the receiver does not exit early. Drop this
-    /// and index sync silently stops. Named with a leading underscore to
-    /// signal "intentionally unused" to maintainers.
-    #[allow(dead_code)]
-    _callback_keepalive: Option<mpsc::Sender<oxios_markdown::knowledge::FileChange>>,
 }
 
 impl std::fmt::Debug for KnowledgeLens {
@@ -98,37 +95,17 @@ impl std::fmt::Debug for KnowledgeLens {
 impl KnowledgeLens {
     /// Create a new KnowledgeLens wrapping the given knowledge base.
     ///
-    /// Registers a file-change callback to keep the brain index in sync.
+    /// No file-change subscription: vault ingestion is the daemon's job
+    /// (T17 single ingestion path). The lens is purely read-side.
     pub fn new(
         kb: Arc<oxios_markdown::KnowledgeBase>,
         brain: Option<Arc<BrainConnection>>,
     ) -> anyhow::Result<Self> {
-        let (tx, mut rx) = mpsc::channel::<oxios_markdown::knowledge::FileChange>(64);
-        let tx_for_cb = tx.clone();
-        kb.on_file_change(move |_path, event| {
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                let _ = tx.send(event).await;
-            });
-        });
-
-        let lens = Self {
+        Ok(Self {
             kb,
             brain,
             agent_writes: Arc::new(RwLock::new(HashSet::new())),
-            _callback_keepalive: Some(tx_for_cb),
-        };
-
-        // Spawn background task to process file-change events
-        let brain = lens.brain.clone();
-        let kb = lens.kb.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                lens_handle_event(kb.clone(), brain.clone(), event);
-            }
-        });
-
-        Ok(lens)
+        })
     }
 
     /// Get the root path of the knowledge base.
@@ -316,47 +293,6 @@ impl KnowledgeLens {
             referenced_memories,
         })
     }
-}
-
-// ─── File change event handler ────────────────────────────────────────────────
-
-fn lens_handle_event(
-    kb: Arc<oxios_markdown::KnowledgeBase>,
-    brain: Option<Arc<BrainConnection>>,
-    event: oxios_markdown::knowledge::FileChange,
-) {
-    use oxios_markdown::knowledge::FileChange::*;
-    match event {
-        Created(path) | Updated(path) => {
-            if let Ok(Some(content)) = kb.note_read(&path) {
-                index_to_brain(&path, &content, brain.as_ref());
-            }
-        }
-        // Episodes are immutable in the brain — there is no forget-by-note-id.
-        // Deleted notes simply stop being re-indexed; their episodes remain
-        // as historical traces (source "knowledge:lens").
-        Deleted(_path) => {}
-        Moved { old: _, new } => {
-            let kb = kb.clone();
-            let brain = brain.clone();
-            let new_path = new.clone();
-            tokio::spawn(async move {
-                if let Ok(Some(content)) = kb.note_read(&new_path) {
-                    index_to_brain(&new_path, &content, brain.as_ref());
-                }
-            });
-        }
-    }
-}
-
-fn index_to_brain(path: &str, content: &str, brain: Option<&Arc<BrainConnection>>) {
-    let Some(brain) = brain else { return };
-    let source = format!("knowledge:lens:{path}");
-    let content = content.to_string();
-    let brain = brain.clone();
-    tokio::spawn(async move {
-        let _ = brain.remember(&content, &source).await;
-    });
 }
 
 #[cfg(test)]

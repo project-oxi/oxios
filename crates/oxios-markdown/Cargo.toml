@@ -13,10 +13,10 @@ tokio = { workspace = true, features = ["fs", "sync", "rt"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
-# Vault-unification (T19): shared frontmatter contract (see workspace dep).
+# TODO(vault-unification): swap to crates.io "0.1" or git rev at finishing
 oxi-frontmatter = { workspace = true }
+indexmap = "2"
 anyhow = { workspace = true }
-time = "0.3"
 thiserror = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 chrono-tz = "0.9"
@@ -34,6 +34,8 @@ unicode-normalization = "0.1"
 percent-encoding = "2"
 rand = "0.8"
 once_cell = "1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+notify = "7"
 
 [dev-dependencies]
 tempfile = { workspace = true }

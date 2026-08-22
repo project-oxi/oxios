@@ -23,7 +23,26 @@ const GITIGNORE: &str = r#"# Oxios
 *.lock
 .env
 api-keys.json
+.oxios-git
 "#;
+
+/// Marker file oxios writes at the vault git root to claim ownership of the
+/// repo. Used by [`GitLayer::new_for_vault`] to distinguish an oxios-initialized
+/// repo from a foreign one (Obsidian git-sync, hand-managed dotfile repo, etc.).
+/// Without this marker, auto-commit + S-4 reconcile would sweep the user's
+/// uncommitted edits one-commit-per-file, bypassing `.gitignore`. Foreign
+/// repos are opened read-only-equivalent (the layer reports `enabled=false`)
+/// so the user gets a loud warning and can opt in explicitly via config.
+pub(crate) const GIT_OWNERSHIP_MARKER: &str = ".oxios-git";
+
+/// Body of the ownership marker. Plain text so users can recognize the
+/// claim even if they poke around with `ls` or `cat`.
+pub(crate) const GIT_OWNERSHIP_MARKER_BODY: &str = "oxios vault git ownership marker
+
+This file tells oxios that the surrounding repo is owned by it.
+Deleting it returns the repo to foreign mode (auto-commit disabled).
+
+Do not commit secrets or filenames here.";
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -217,6 +236,11 @@ pub struct GitLayer {
     #[allow(dead_code)]
     committer_email: String,
     enabled: bool,
+    /// R16 review F2 (a): when `enabled` is false, this carries a
+    /// human-readable explanation (foreign repo, corrupt .git, init
+    /// failure, etc.). `None` when enabled. Callers can introspect
+    /// via [`Self::disabled_reason`].
+    disabled_reason: Option<String>,
 }
 
 impl GitLayer {
@@ -247,7 +271,201 @@ impl GitLayer {
             root,
             committer_email: DEFAULT_EMAIL.into(),
             enabled,
+            disabled_reason: if enabled {
+                None
+            } else {
+                Some("explicitly disabled by caller".to_string())
+            },
         })
+    }
+
+    /// Construct a vault-rooted  with ownership-aware adoption.
+    ///
+    /// Distinguishes an oxios-initialized repo (one carrying the
+    /// [] we wrote at init) from a foreign repo
+    /// already present at the vault path (Obsidian git-sync, hand-managed
+    /// dotfile repo, etc.). Without this gate, auto-commit + S-4 reconcile
+    /// would sweep the user's uncommitted edits one-commit-per-file,
+    /// bypassing `.gitignore`.
+    ///
+    /// Behavior:
+    /// - Marker present → layer is enabled ().
+    /// - Marker absent on a pre-existing repo → layer is disabled with a
+    ///   loud warning; the user can opt in via config or by deleting the
+    ///   repo and letting oxios re-init.
+    /// - Marker absent on a fresh dir → we initialise the repo, write the
+    ///   marker, and enable the layer.
+    pub fn new_with_ownership(root: PathBuf, enabled: bool) -> Result<Self> {
+        let owned_marker_present = root.join(GIT_OWNERSHIP_MARKER).exists();
+        let repo_existed = root.join(".git").exists();
+
+        if repo_existed && !owned_marker_present {
+            // Foreign repo: open read-only-equivalent. `gix::open` is
+            // intentionally NOT wrapped in a graceful fallback here — if
+            // the foreign repo is corrupt, the operator chose to put
+            // git at the vault path and should fix it. Auto-commit is
+            // disabled regardless (the marker is the source of truth).
+            let layer = Self::new(root.clone(), false)?;
+            tracing::warn!(
+                root = %root.display(),
+                "vault contains a foreign git repo (no {marker} ownership marker);                  auto-commit + S-4 reconcile DISABLED.                  Delete the repo or set `[git] adopt_foreign_repo = true` in                  config.toml to opt in.",
+                marker = GIT_OWNERSHIP_MARKER,
+            );
+            return Ok(layer);
+        }
+
+        let layer = Self::new(root.clone(), enabled)?;
+        if !owned_marker_present {
+            // Fresh init — claim ownership so the next boot sees us as the
+            // owner and the S-4 reconcile sweeper can run.
+            let marker_path = root.join(GIT_OWNERSHIP_MARKER);
+            std::fs::write(&marker_path, GIT_OWNERSHIP_MARKER_BODY)?;
+            // Commit the marker (so the S-4 sweeper knows the repo is
+            // tracked and does not re-create it under the same path).
+            let _ = layer.commit_file(GIT_OWNERSHIP_MARKER, "oxios: claim vault git ownership");
+        }
+        Ok(layer)
+    }
+
+    /// Vault-aware layer constructor — corruption-resilient AND
+    /// foreign-repo-aware (R16 review F2).
+    ///
+    /// Wraps [`Self::new_with_ownership`] with a corrupt-`.git` fallback
+    /// so a malformed gix state at the vault path NEVER blocks oxios boot.
+    /// The workspace layer's fail-fast contract is preserved by
+    /// [`Self::new`].
+    ///
+    /// `adopt_foreign_repo` is the explicit opt-in for repos that exist
+    /// at the vault path but lack the `.oxios-git` ownership marker
+    /// (Obsidian git-sync, hand-managed dotfile repo, etc.). When `true`,
+    /// the marker is written into the foreign repo and the layer is
+    /// enabled. When `false` (default), the layer is opened disabled
+    /// with a loud `tracing::warn!` AND a populated `disabled_reason()`
+    /// so callers can introspect.
+    pub fn new_for_vault(root: PathBuf, enabled: bool, adopt_foreign_repo: bool) -> Result<Self> {
+        let repo_existed = root.join(".git").exists();
+        let marker_present = root.join(GIT_OWNERSHIP_MARKER).exists();
+        let is_foreign = repo_existed && !marker_present;
+
+        if is_foreign && !adopt_foreign_repo {
+            // R16 review F2 (a): foreign repo with default config
+            // DISABLED with a loud warn AND a populated
+            // `disabled_reason`. History remains readable; the marker
+            // is NOT written.
+            tracing::warn!(
+                root = %root.display(),
+                "vault contains a foreign git repo (no {} ownership marker);                  auto-commit + S-4 reconcile DISABLED. Set `[git]                  adopt_foreign_repo = true` in config.toml to opt in,                  or write the marker file manually.",
+                GIT_OWNERSHIP_MARKER,
+            );
+            return Self::open_or_disabled_with_reason(
+                root,
+                "foreign git repo at vault root; auto-commit DISABLED.                  Set `[git] adopt_foreign_repo = true` or write the                  `.oxios-git` marker to opt in.",
+            );
+        }
+
+        if is_foreign && adopt_foreign_repo {
+            // R16 review F2 (b): operator explicitly opted in. Open the
+            // foreign repo (preserving history), write the marker, and
+            // enable the layer. We do NOT delegate to new_with_ownership
+            // here because that helper unconditionally disables foreign
+            // repos — the caller already decided to adopt.
+            //
+            // R3 review: any error from `gix::open` or marker write
+            // MUST degrade to a disabled layer rather than propagate out
+            // of `new_for_vault` — the function's doc contract promises a
+            // malformed gix state never blocks oxios boot. Same shape as
+            // the corrupt-repo fallback below.
+            tracing::info!(
+                root = %root.display(),
+                "adopting foreign git repo at vault root (adopt_foreign_repo=true);                  writing {} marker and enabling layer",
+                GIT_OWNERSHIP_MARKER,
+            );
+            let adopt_result = (|| -> Result<Self> {
+                let layer = Self::new(root.clone(), enabled)?;
+                let marker_path = root.join(GIT_OWNERSHIP_MARKER);
+                std::fs::write(&marker_path, GIT_OWNERSHIP_MARKER_BODY)?;
+                let _ = layer.commit_file(
+                    GIT_OWNERSHIP_MARKER,
+                    "oxios: claim vault git ownership (adopted via config)",
+                );
+                Ok(layer)
+            })();
+            return match adopt_result {
+                Ok(layer) => Ok(layer),
+                Err(e) => {
+                    tracing::warn!(
+                        root = %root.display(),
+                        error = %e,
+                        "vault contains a foreign git repo but adoption FAILED                          (corrupt .git or marker write error); layer DISABLED to                          preserve boot. Fix the underlying repo or remove .git                          to re-init, then restart oxios.",
+                    );
+                    Ok(Self::disabled(
+                        root,
+                        "foreign git repo adoption failed (corrupt .git or marker                          write error); layer disabled to preserve boot",
+                    ))
+                }
+            };
+        }
+
+        // Owned path or fresh init — let new_with_ownership decide.
+        match Self::new_with_ownership(root.clone(), enabled) {
+            Ok(layer) => Ok(layer),
+            Err(e) => {
+                tracing::warn!(
+                    root = %root.display(),
+                    error = %e,
+                    "vault git init failed; layer DISABLED to preserve boot.",
+                );
+                Ok(Self::disabled(
+                    root,
+                    "vault git init failed; layer disabled to preserve boot",
+                ))
+            }
+        }
+    }
+
+    /// Open a foreign repo in disabled mode with a populated
+    /// `disabled_reason`. Falls back to a fully-disabled dummy if
+    /// the foreign repo is corrupt.
+    fn open_or_disabled_with_reason(root: PathBuf, reason: &str) -> Result<Self> {
+        match Self::new(root.clone(), false) {
+            Ok(mut layer) => {
+                layer.disabled_reason = Some(reason.to_string());
+                Ok(layer)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    root = %root.display(),
+                    error = %e,
+                    "vault contains a corrupt or unparseable .git;                      foreign-repo layer DISABLED (no auto-commit, no reconcile).                      Fix the underlying repo or remove .git to re-init.",
+                );
+                Ok(Self::disabled(
+                    root,
+                    "corrupt .git at vault root; layer disabled",
+                ))
+            }
+        }
+    }
+
+    /// Build a disabled layer pointing at `root` without touching the
+    /// filesystem. Used as the last-resort fallback when even
+    /// open_or_disabled would itself fail to construct.
+    fn disabled(root: PathBuf, reason: &str) -> Self {
+        // Build a disabled layer that never touches the filesystem at
+        // `root`. We borrow a freshly-initialised repo from a private
+        // tempdir so the struct invariant (`repo: gix::Repository`) holds
+        // without claiming the user's vault. The tempdir is leaked so it
+        // outlives the layer — acceptable because disabled layers are
+        // rare and the alternative is panicking.
+        let dummy_dir = tempfile::tempdir().expect("tempdir for disabled git layer");
+        let dummy_repo = gix::init(dummy_dir.path()).expect("dummy gix init for disabled layer");
+        let _ = Box::leak(Box::new(dummy_dir));
+        Self {
+            repo: Arc::new(Mutex::new(dummy_repo)),
+            root,
+            committer_email: DEFAULT_EMAIL.into(),
+            enabled: false,
+            disabled_reason: Some(reason.to_string()),
+        }
     }
 
     // ── Private helpers (repo-level) ──────────────────────────────────────
@@ -944,6 +1162,13 @@ impl GitLayer {
         &self.root
     }
 
+    /// Why this layer is disabled. `Some(_)` only when `is_enabled()`
+    /// returns false. R16 review F2 (a) — callers can introspect
+    /// instead of relying on tracing capture.
+    pub fn disabled_reason(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
     // ── Private info builders ─────────────────────────────────────────────
 
     fn noop_commit(&self, ctx: &CommitContext, message: &str) -> Result<CommitInfo> {
@@ -991,22 +1216,37 @@ fn compute_unified_diff(old: &[u8], new: &[u8], path: &str) -> Option<String> {
     Some(output)
 }
 
-/// T16 (vault-rooted git): compute the git-relative path for a knowledge
-/// file. `kb_root` is the knowledge/vault root; `git_root` is the layer's
-/// repository root. When `kb_root` sits inside `git_root`, the stripped
-/// prefix is prepended; when the two coincide (the vault-rooted default) —
-/// or `kb_root` is outside the repo — `path` is returned as-is, so an
-/// auto-commit of `<vault>/a/b.md` targets the existing `a/b.md` instead
-/// of silently falling back to a `knowledge/` prefix.
+// ── rel_path helper (T16) ───────────────────────────────────────────────────
+
+/// Compute a knowledge file path relative to the git repository root.
+///
+/// Pre-T16 the kernel used `kb_root.strip_prefix(git_root)` and silently
+/// fell back to the literal `"knowledge"` whenever the strip failed. That
+/// fallback was harmless while the git repo sat at the workspace root and
+/// the vault nested at `<workspace>/knowledge`, but broke once the vault
+/// moved to `~/.oxi/vault` (T15) — every `commit_file`, `log_for_file`,
+/// and `restore_file` call would target `knowledge/<rel>` inside the
+/// workspace, miss the actual file, and `git_layer.rs` would bail with
+/// `"File not found"`, silently dropping the auto-commit, history, and
+/// restore data.
+///
+/// When the vault IS the git root (`kb_root == git_root`, the new default),
+/// `strip_prefix` succeeds and yields an empty relative path; we MUST then
+/// return `path` as-is rather than prepending `"knowledge/"`.
+///
+/// NOTE [R16 P3 legacy-layout]: in the legacy nested layout (vault inside
+/// the workspace, e.g. `kb_root = /w/v`, `git_root = /w`), the non-empty
+/// branch (`Ok(rel)`) returns `<rel>/<path>`. Users who migrate from the
+/// legacy layout will start with a NEW empty vault repo while their old
+/// history remains in the workspace repo. Detect-and-import from the legacy
+/// repo is deferred to final triage — see task-16-report.md R16 section.
 pub fn rel_path(kb_root: &Path, git_root: &Path, path: &str) -> String {
     match kb_root.strip_prefix(git_root) {
-        Ok(prefix) if !prefix.as_os_str().is_empty() => {
-            format!("{}/{}", prefix.display(), path)
-        }
-        _ => path.to_string(),
+        Ok(rel) if rel.as_os_str().is_empty() => path.to_string(),
+        Ok(rel) => format!("{}/{path}", rel.to_string_lossy()),
+        Err(_) => path.to_string(),
     }
 }
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1376,68 +1616,442 @@ mod tests {
             .unwrap();
         assert_eq!(content, b"{\"v\":1}");
     }
+}
 
-    // ── T16 vault-rooted git: rel_path helper + P1 closure ──────────────
+// ── T16 vault-rooted git: rel_path helper + P1 closure ──────────────
 
-    /// `rel_path` must compute a path relative to `git_root` without an
-    /// empty-string `kb_root.strip_prefix(git_root)` fallback. When
-    /// `kb_root == git_root` (the new default — vault-rooted repo) the
-    /// `path` is returned as-is, so an auto-commit of `<vault>/a/b.md`
-    /// targets the existing `a/b.md` file instead of silently falling
-    /// back to `knowledge/a/b.md`.
-    #[test]
-    fn rel_path_empty_prefix_is_path_as_is() {
-        let root = Path::new("/v");
-        assert_eq!(rel_path(root, root, "a/b.md"), "a/b.md");
-        assert_eq!(
-            rel_path(Path::new("/w/v"), Path::new("/w"), "a/b.md"),
-            "v/a/b.md"
-        );
-    }
+/// `rel_path` must compute a path relative to `git_root` without an
+/// empty-string `kb_root.strip_prefix(git_root)` fallback. When
+/// `kb_root == git_root` (the new default — vault-rooted repo) the
+/// `path` is returned as-is, so an auto-commit of `<vault>/a/b.md`
+/// targets the existing `a/b.md` file instead of silently falling
+/// back to `knowledge/a/b.md`.
+#[test]
+fn rel_path_empty_prefix_is_path_as_is() {
+    let root = Path::new("/v");
+    assert_eq!(rel_path(root, root, "a/b.md"), "a/b.md");
+    assert_eq!(
+        rel_path(Path::new("/w/v"), Path::new("/w"), "a/b.md"),
+        "v/a/b.md"
+    );
+}
 
-    /// P1 closure: a vault-rooted `GitLayer` (i.e. `GitLayer::new(kb_root, …)`
-    /// with `kb_root` OUTSIDE any workspace) must accept `commit_file`,
-    /// expose history via `log_for_file`, and restore via `restore_file`
-    /// using paths computed by `rel_path`. This is the round-trip T15
-    /// review flagged as silently broken under the default config
-    /// (`auto_commit = true`, `kb_root = ~/.oxi/vault`).
-    #[test]
-    fn vault_rooted_commit_history_restore_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        // Vault is its own git root (NOT nested inside another repo).
-        let vault = dir.path().to_path_buf();
-        let layer = GitLayer::new(vault.clone(), true).unwrap();
+/// P1 closure: a vault-rooted `GitLayer` (i.e. `GitLayer::new(kb_root, …)`
+/// with `kb_root` OUTSIDE any workspace) must accept `commit_file`,
+/// expose history via `log_for_file`, and restore via `restore_file`
+/// using paths computed by `rel_path`. This is the round-trip T15
+/// review flagged as silently broken under the default config
+/// (`auto_commit = true`, `kb_root = ~/.oxi/vault`).
+#[test]
+fn vault_rooted_commit_history_restore_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    // Vault is its own git root (NOT nested inside another repo).
+    let vault = dir.path().to_path_buf();
+    let layer = GitLayer::new(vault.clone(), true).unwrap();
 
-        // Seed a knowledge file at the vault root.
-        let rel = "notes/hello.md";
-        std::fs::create_dir_all(vault.join("notes")).unwrap();
-        std::fs::write(vault.join(rel), b"# v1\n").unwrap();
+    // Seed a knowledge file at the vault root.
+    let rel = "notes/hello.md";
+    std::fs::create_dir_all(vault.join("notes")).unwrap();
+    std::fs::write(vault.join(rel), b"# v1\n").unwrap();
 
-        // Compute the path the way the kernel does — no `knowledge/` prefix.
-        let git_rel = rel_path(&vault, layer.root(), rel);
-        assert_eq!(git_rel, rel);
+    // Compute the path the way the kernel does — no `knowledge/` prefix.
+    let git_rel = rel_path(&vault, layer.root(), rel);
+    assert_eq!(git_rel, rel);
 
-        let v1 = layer
-            .commit_file(&git_rel, "knowledge: update notes/hello.md")
-            .unwrap();
-        assert_ne!(v1.hash, "(disabled)");
+    let v1 = layer
+        .commit_file(&git_rel, "knowledge: update notes/hello.md")
+        .unwrap();
+    assert_ne!(v1.hash, "(disabled)");
 
-        // History — kernel route equivalent of /history.
-        let log = layer.log_for_file(&git_rel, 50).unwrap();
-        assert!(
-            log.iter().any(|e| e.hash == v1.hash),
-            "log_for_file must surface the just-committed entry"
-        );
+    // History — kernel route equivalent of /history.
+    let log = layer.log_for_file(&git_rel, 50).unwrap();
+    assert!(
+        log.iter().any(|e| e.hash == v1.hash),
+        "log_for_file must surface the just-committed entry"
+    );
 
-        // Mutate, commit v2, then restore v1.
-        std::fs::write(vault.join(rel), b"# v2\n").unwrap();
-        let v2 = layer
-            .commit_file(&git_rel, "knowledge: update notes/hello.md")
-            .unwrap();
-        assert_ne!(v2.hash, v1.hash);
+    // Mutate, commit v2, then restore v1.
+    std::fs::write(vault.join(rel), b"# v2\n").unwrap();
+    let v2 = layer
+        .commit_file(&git_rel, "knowledge: update notes/hello.md")
+        .unwrap();
+    assert_ne!(v2.hash, v1.hash);
 
-        layer.restore_file(&git_rel, &v1.short_hash).unwrap();
-        let restored = std::fs::read_to_string(vault.join(rel)).unwrap();
-        assert_eq!(restored, "# v1\n");
-    }
+    layer.restore_file(&git_rel, &v1.short_hash).unwrap();
+    let restored = std::fs::read_to_string(vault.join(rel)).unwrap();
+    assert_eq!(restored, "# v1\n");
+}
+
+/// When the vault sits OUTSIDE the workspace (default config — `~/.oxi/vault`
+/// is not a child of `~/.oxios/workspace`), `rel_path` MUST return `path`
+/// unchanged. This is the regression T15 review flagged: the old
+/// `strip_prefix().unwrap_or("knowledge")` would have prefixed every
+/// knowledge path with `"knowledge/"` and broken `commit_file`.
+#[test]
+fn rel_path_vault_outside_workspace_passthrough() {
+    // Vault at `/v/vault`, workspace at `/w`. Not nested.
+    let kb_root = Path::new("/v/vault");
+    let git_root = Path::new("/w");
+    assert_eq!(rel_path(kb_root, git_root, "a/b.md"), "a/b.md");
+}
+
+/// When the vault IS the git root (the new default — vault is its own
+/// repo), `strip_prefix` returns an empty path and the helper must hand
+/// `path` back unchanged (no leading `/`).
+#[test]
+fn rel_path_vault_is_git_root() {
+    let kb_root = Path::new("/v/vault");
+    let git_root = Path::new("/v/vault");
+    assert_eq!(rel_path(kb_root, git_root, "notes/x.md"), "notes/x.md");
+}
+
+/// When the vault IS nested inside the workspace (legacy config), the
+/// helper must produce the correct relative path (e.g. `v/a/b.md`).
+#[test]
+fn rel_path_vault_inside_workspace() {
+    let kb_root = Path::new("/w/v");
+    let git_root = Path::new("/w");
+    assert_eq!(rel_path(kb_root, git_root, "a/b.md"), "v/a/b.md");
+}
+
+/// P1 closure regression: reproduce the exact T15-flagged failure mode
+/// at the unit level — workspace git (old) + vault outside it (default
+/// config). Without the fix, `commit_file` would target
+/// `knowledge/<rel>` inside the workspace and bail "File not found".
+/// With the fix (vault-rooted `GitLayer` + `rel_path`), the commit
+/// lands at `<vault>/<rel>` as expected.
+#[test]
+fn p1_closure_no_knowledge_prefix_under_default_config() {
+    // Simulate default config: workspace and vault are siblings, not
+    // nested (vault at `~/.oxi/vault`, workspace at `~/.oxios/workspace`).
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("workspace");
+    let vault = tmp.path().join("vault");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(&vault).unwrap();
+
+    // Old path: workspace-rooted git (the T15 buggy line 1235).
+    let workspace_git = GitLayer::new(workspace.clone(), true).unwrap();
+    // New path: vault-rooted git (T16 fix).
+    let vault_git = GitLayer::new(vault.clone(), true).unwrap();
+
+    // Seed a real knowledge file inside the vault.
+    std::fs::create_dir_all(vault.join("notes")).unwrap();
+    let rel = "notes/hello.md";
+    std::fs::write(vault.join(rel), b"# v1\n").unwrap();
+
+    // OLD kernel.rs handle() logic: kb_root.strip_prefix(git_root)
+    // would have FAILED (vault is not inside workspace), then fell
+    // back to the literal "knowledge" prefix. That gave
+    // `knowledge/notes/hello.md` inside the workspace — file does
+    // NOT exist there → bail "File not found".
+    let _kb_root = vault.as_path();
+    let bad = workspace_git.root().join("knowledge").join(rel);
+    assert!(
+        !bad.exists(),
+        "regression sanity: workspace/knowledge/<rel> must NOT exist \
+             in the default-config layout (this is the silent drop T15 flagged)"
+    );
+    // The old `format!("knowledge/{path}")` path is therefore guaranteed
+    // to bail at the workspace git layer.
+    let bogus_rel = format!("knowledge/{rel}");
+    let old_err = workspace_git.commit_file(&bogus_rel, "should fail");
+    assert!(
+        old_err.is_err(),
+        "old workspace git MUST fail for missing `knowledge/<rel>` \
+             (this is the silent drop the P1 fix removes)"
+    );
+
+    // NEW kernel.rs handle() logic: vault-rooted git + `rel_path`.
+    // With the vault as its own git root, `rel_path` returns `path`
+    // unchanged, so `commit_file` targets `<vault>/<rel>` (which IS
+    // where the file lives) and succeeds.
+    let new_rel = rel_path(&vault, vault_git.root(), rel);
+    assert_eq!(new_rel, rel);
+    let new_info = vault_git
+        .commit_file(&new_rel, "knowledge: create")
+        .unwrap();
+    assert_ne!(
+        new_info.hash, "(disabled)",
+        "vault-rooted git MUST commit successfully — P1 is closed"
+    );
+
+    // History + restore must work through the same path.
+    let log = vault_git.log_for_file(&new_rel, 50).unwrap();
+    assert!(log.iter().any(|e| e.hash == new_info.hash));
+
+    std::fs::write(vault.join(rel), b"# v2\n").unwrap();
+    let v2 = vault_git
+        .commit_file(&new_rel, "knowledge: update")
+        .unwrap();
+    vault_git
+        .restore_file(&new_rel, &new_info.short_hash)
+        .unwrap();
+    let restored = std::fs::read_to_string(vault.join(rel)).unwrap();
+    assert_eq!(restored, "# v1\n");
+    // v2 should still be reachable in history.
+    let log2 = vault_git.log_for_file(&new_rel, 50).unwrap();
+    assert!(log2.iter().any(|e| e.hash == v2.hash));
+}
+
+// ── T16 round 1: foreign-repo adoption (P2) ──────────────────────────
+
+/// An existing vault repo that LACKS the `.oxios-git` ownership marker
+/// is treated as foreign (Obsidian git-sync, hand-managed repo, etc.).
+/// The returned layer MUST be disabled (`enabled=false`) so the auto-
+/// commit consumer and S-4 reconcile skip it entirely — never sweep
+/// a user's uncommitted edits one-commit-per-file. The layer must
+/// still expose the root + initial commit so callers can introspect.
+#[test]
+fn foreign_repo_without_marker_is_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+
+    // Seed an existing repo with a foreign commit (no marker).
+    let setup = GitLayer::new(vault.clone(), true).unwrap();
+    std::fs::write(vault.join("foreign.md"), b"alien\n").unwrap();
+    setup
+        .commit_file("foreign.md", "imported from elsewhere")
+        .unwrap();
+
+    // Strip the marker so the next layer treats it as foreign.
+    let marker = vault.join(GIT_OWNERSHIP_MARKER);
+    let _ = std::fs::remove_file(&marker);
+
+    // Open with ownership awareness.
+    let layer = GitLayer::new_with_ownership(vault.clone(), true).unwrap();
+    assert!(
+        !layer.is_enabled(),
+        "foreign repo adoption must not enable auto-commit"
+    );
+    assert_eq!(layer.root(), vault);
+    // The original foreign commit must still be reachable (open
+    // succeeded; we only disable the flag).
+    let log = layer.log(10).unwrap();
+    assert!(
+        log.iter()
+            .any(|e| e.message.contains("imported from elsewhere"))
+    );
+}
+
+/// A repo with the marker is owned by oxios and operates normally.
+#[test]
+fn owned_repo_with_marker_is_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+    let layer = GitLayer::new_with_ownership(vault.clone(), true).unwrap();
+    assert!(layer.is_enabled(), "owned repo must be enabled");
+
+    // The marker must be present and contain the adoption info.
+    let marker = std::fs::read_to_string(vault.join(GIT_OWNERSHIP_MARKER)).unwrap();
+    assert!(marker.contains("oxios"));
+    assert!(marker.contains("vault"));
+}
+
+/// A corrupt `.git` at the vault root (foreign, partially-overwritten,
+/// or otherwise unparseable) must NOT block boot. Falls back to a
+/// disabled layer with a loud warning; the workspace layer keeps its
+/// current behavior unchanged.
+#[test]
+fn corrupt_vault_git_degrades_to_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+    std::fs::create_dir_all(&vault).unwrap();
+
+    // Construct a fake `.git` directory that `gix::open` cannot parse.
+    std::fs::create_dir_all(vault.join(".git")).unwrap();
+    std::fs::write(vault.join(".git").join("HEAD"), b"not a valid ref\n").unwrap();
+    std::fs::write(vault.join(".git").join("config"), b"not a valid config").unwrap();
+
+    // The caller MUST be able to construct a GitLayer even with a
+    // corrupt .git at the vault root. T16 round-1: degrade gracefully.
+    let layer = GitLayer::new_for_vault(vault.clone(), true, false).unwrap();
+    assert!(!layer.is_enabled(), "corrupt vault git must be disabled");
+    assert_eq!(layer.root(), vault);
+}
+
+/// A corrupt `.git` in a NON-vault (workspace) layer is still fatal —
+/// the workspace layer's existing fail-fast behavior is preserved.
+#[test]
+fn corrupt_workspace_git_still_fatal() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().to_path_buf();
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(workspace.join(".git")).unwrap();
+    std::fs::write(workspace.join(".git").join("HEAD"), b"corrupt").unwrap();
+
+    // Standard `GitLayer::new` (workspace path) MUST fail loudly
+    // because the workspace contract hasn't changed.
+    let r = GitLayer::new(workspace, true);
+    assert!(
+        r.is_err(),
+        "workspace git must keep fail-fast on corruption"
+    );
+}
+
+/// Curation pre-write snapshot regression (R16 P2 #1): the
+/// `KnowledgeCuration::dream` Phase-3 commit writes the original
+/// KB-relative path into the vault git. Verify the vault repo
+/// contains the snapshot commit (not the workspace repo, which
+/// would have the exact silent-drop P1 shape).
+#[test]
+fn curation_pre_write_snapshot_lands_in_vault_repo() {
+    // Two distinct roots: vault (where knowledge lives) and a
+    // pretend workspace (where the OLD curation would have committed).
+    let vault_root = tempfile::tempdir().unwrap();
+    let workspace_root = tempfile::tempdir().unwrap();
+    let vault = vault_root.path().to_path_buf();
+    let workspace = workspace_root.path().to_path_buf();
+
+    let vault_git = GitLayer::new_for_vault(vault.clone(), true, false).unwrap();
+    let workspace_git = GitLayer::new(workspace.clone(), true).unwrap();
+
+    // Seed a KB-relative file inside the vault.
+    let rel = "notes/dream.md";
+    std::fs::create_dir_all(vault.join("notes")).unwrap();
+    std::fs::write(vault.join(rel), b"original\n").unwrap();
+
+    // Simulate the new KnowledgeCuration pre-write snapshot call:
+    // `commit_file(&note.path, ...)` where `note.path` is KB-relative.
+    vault_git
+        .commit_file(rel, "curation: pre-write snapshot (test-fixture-uuid)")
+        .unwrap();
+
+    // The snapshot MUST be in the vault repo.
+    let vault_log = vault_git.log(10).unwrap();
+    assert!(
+        vault_log
+            .iter()
+            .any(|e| e.message.contains("curation: pre-write snapshot")),
+        "vault repo must contain the curation pre-write snapshot commit"
+    );
+
+    // The workspace repo MUST NOT contain it (the old buggy path
+    // would have targeted `<workspace>/<rel>` which doesn't exist
+    // and silently dropped — this is the R16 P2 #1 fix).
+    let workspace_log = workspace_git.log(10).unwrap();
+    assert!(
+        workspace_log
+            .iter()
+            .all(|e| !e.message.contains("curation: pre-write snapshot")),
+        "workspace repo must NOT contain the curation snapshot — \
+             R16 P2 #1 regression: the old path silently dropped here"
+    );
+}
+
+/// R2 review F2 (a): foreign repo + DEFAULT config ⇒ layer is disabled
+/// AND `disabled_reason` returns a `Some(_)` string explaining why
+/// (so callers can introspect and the user gets a real log entry
+/// instead of a silent layer-disable).
+#[test]
+fn foreign_repo_default_config_is_disabled_with_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+    let setup = GitLayer::new(vault.clone(), true).unwrap();
+    std::fs::write(vault.join("alien.md"), b"x").unwrap();
+    setup.commit_file("alien.md", "foreign seed").unwrap();
+    let _ = std::fs::remove_file(vault.join(GIT_OWNERSHIP_MARKER));
+
+    // Default config: do NOT adopt.
+    let layer = GitLayer::new_for_vault(vault.clone(), true, false).unwrap();
+    assert!(
+        !layer.is_enabled(),
+        "foreign repo + default config must be disabled"
+    );
+    let reason = layer.disabled_reason();
+    assert!(
+        reason.is_some(),
+        "disabled_reason must be populated for foreign repos"
+    );
+    let reason_str = reason.unwrap();
+    assert!(
+        reason_str.contains("foreign") || reason_str.contains(GIT_OWNERSHIP_MARKER),
+        "disabled_reason must mention the cause: {reason_str}"
+    );
+}
+
+/// R2 review F2 (b): foreign repo + adopt_foreign_repo=true ⇒ layer
+/// is ENABLED and the marker file has been written into the repo.
+#[test]
+fn foreign_repo_with_adopt_flag_is_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+    let setup = GitLayer::new(vault.clone(), true).unwrap();
+    std::fs::write(vault.join("alien.md"), b"x").unwrap();
+    setup.commit_file("alien.md", "foreign seed").unwrap();
+    let _ = std::fs::remove_file(vault.join(GIT_OWNERSHIP_MARKER));
+
+    let layer = GitLayer::new_for_vault(vault.clone(), true, true).unwrap();
+    assert!(
+        layer.is_enabled(),
+        "foreign repo + adopt flag must enable the layer"
+    );
+    assert!(
+        vault.join(GIT_OWNERSHIP_MARKER).exists(),
+        "marker must be written"
+    );
+    assert!(
+        layer.disabled_reason().is_none(),
+        "enabled layer has no disabled_reason"
+    );
+}
+
+/// R2 review F2 (c): an OWNED repo is unaffected by the adopt flag —
+/// it stays enabled and does NOT re-write the marker (idempotent).
+#[test]
+fn owned_repo_unaffected_by_adopt_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+
+    // First init WITHOUT adopt flag → marker is written, layer enabled.
+    let layer_default = GitLayer::new_for_vault(vault.clone(), true, false).unwrap();
+    assert!(layer_default.is_enabled());
+    let marker_bytes_first = std::fs::read(vault.join(GIT_OWNERSHIP_MARKER)).unwrap();
+
+    // Second init WITH adopt flag → marker should be identical (no
+    // rewrite churn) and layer still enabled.
+    let layer_adopt = GitLayer::new_for_vault(vault.clone(), true, true).unwrap();
+    assert!(layer_adopt.is_enabled());
+    let marker_bytes_second = std::fs::read(vault.join(GIT_OWNERSHIP_MARKER)).unwrap();
+    assert_eq!(
+        marker_bytes_first, marker_bytes_second,
+        "marker must not be re-written when already present"
+    );
+}
+
+/// R3 review: with `adopt_foreign_repo=true` AND a corrupt foreign
+/// repo at the vault root, construction MUST still succeed (boot
+/// must not block) — the layer degrades to disabled with a
+/// `disabled_reason`. Mirrors `corrupt_vault_git_degrades_to_disabled`
+/// but with the explicit opt-in flag set.
+#[test]
+fn corrupt_foreign_repo_with_adopt_flag_degrades_to_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().to_path_buf();
+    std::fs::create_dir_all(&vault).unwrap();
+
+    // Construct a corrupt foreign repo: a `.git` dir that gix::open
+    // cannot parse, and no `.oxios-git` marker (so it counts as foreign).
+    std::fs::create_dir_all(vault.join(".git")).unwrap();
+    std::fs::write(vault.join(".git").join("HEAD"), b"not a valid ref\n").unwrap();
+    std::fs::write(vault.join(".git").join("config"), b"not a valid config").unwrap();
+    assert!(
+        !vault.join(GIT_OWNERSHIP_MARKER).exists(),
+        "sanity: marker must be absent for foreign detection"
+    );
+
+    // Caller opted in via adopt_foreign_repo=true. Boot MUST still
+    // succeed (Kernel::build() unwraps the result); the layer MUST
+    // be disabled with a populated disabled_reason().
+    let layer = GitLayer::new_for_vault(vault.clone(), true, true)
+        .expect("adopt failure must NOT block boot");
+    assert!(
+        !layer.is_enabled(),
+        "corrupt foreign repo + adopt flag must produce a disabled layer"
+    );
+    let reason = layer.disabled_reason();
+    assert!(
+        reason.is_some(),
+        "disabled_reason must be populated for the adopt-failure case"
+    );
 }

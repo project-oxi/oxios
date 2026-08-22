@@ -711,6 +711,13 @@ mod tests {
                 Arc::new(
                     crate::git_layer::GitLayer::new(tmp.join("git"), false).expect("git layer"),
                 ),
+                // T16: knowledge_git — distinct layer for vault-rooted commits.
+                // In tests we point it at a sibling temp dir so repo init does
+                // not race with the workspace git layer above.
+                Arc::new(
+                    crate::git_layer::GitLayer::new(tmp.join("kb_git"), false)
+                        .expect("knowledge git layer"),
+                ),
                 Arc::new(crate::cron::CronScheduler::new(
                     Arc::new(
                         crate::state_store::StateStore::new(tmp.join("cron")).expect("cron state"),

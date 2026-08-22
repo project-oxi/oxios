@@ -12,11 +12,13 @@ use oxios_kernel::{
     BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
     EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
     OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
-    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
-    auth::AuthManager, config::load_config, mcp::validate_mcp_command,
+    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, VaultRegisterPolicy,
+    access_manager::AccessManager, auth::AuthManager, config::load_config, git_layer::rel_path,
+    mcp::validate_mcp_command, resolve_space,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
+use oxios_markdown::watch::WatchGuard;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,6 +48,10 @@ pub struct Kernel {
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
     cron_scheduler: Arc<CronScheduler>,
     git_layer: Arc<GitLayer>,
+    /// T16: vault-rooted `GitLayer` used for knowledge auto-commit,
+    /// history, and restore. Distinct from `git_layer` (workspace). See
+    /// [`oxios_kernel::git_layer::rel_path`] for path computation rules.
+    knowledge_git: Arc<GitLayer>,
     audit_trail: Arc<AuditTrail>,
     budget_manager: Arc<BudgetManager>,
     /// RFC-031: the shared QuotaTracker (self-tracker + recalibration).
@@ -99,6 +105,13 @@ pub struct Kernel {
     a2a_protocol: Arc<A2AProtocol>,
     /// Hot-swappable engine reference — shared between EngineApi and AgentRuntime.
     engine_handle: Arc<EngineHandle>,
+    /// Shared markdown KnowledgeBase — built once in `Kernel::build()` from
+    /// `config.kernel.resolved_knowledge_root()`. Both the preliminary
+    /// handle (AgentRuntime / PersistenceHook) and the cached
+    /// `Kernel::handle()` reuse this same `Arc` so writes through the
+    /// control-plane and the agent path land in one vault
+    /// (vault-unification task 15).
+    knowledge_base: Arc<KnowledgeBase>,
     /// SQLite-backed agent history query index.
     agent_log_db: Option<Arc<oxios_kernel::agent_log_db::AgentLogDb>>,
     /// RFC-025 Phase 5: cancellation sender for the Mount auto-promotion
@@ -109,6 +122,13 @@ pub struct Kernel {
     /// graceful shutdown can trigger it.
     #[allow(dead_code)] // wired via `shutdown_promotion_scanner` on graceful shutdown
     promo_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// RFC-050 §3: vault watcher guard — re-indexes external edits
+    /// (Obsidian, oximemo, vim) into the shared KnowledgeBase.
+    /// Spawned in `build()` via `spawn_vault_watcher`; held here so
+    /// the watcher runs for the kernel lifetime and the debounce
+    /// thread joins on drop (explicitly via `shutdown_vault_watcher`
+    /// on the serve shutdown path, otherwise when the Kernel drops).
+    vault_watch: Option<WatchGuard>,
 }
 
 impl Kernel {
@@ -116,6 +136,7 @@ impl Kernel {
     pub fn builder() -> KernelBuilder {
         KernelBuilder {
             config_path: oxios_kernel::config::expand_home("~/.oxios/config.toml"),
+            watch_vault: false,
         }
     }
 
@@ -127,105 +148,17 @@ impl Kernel {
     pub fn handle(&self) -> Arc<oxios_kernel::KernelHandle> {
         self.handle_cache
             .get_or_init(|| {
-                // KnowledgeBase — single source of truth (RFC-003)
-                // Shared between KernelHandle.knowledge and KnowledgeLens.
-                let knowledge = Arc::new(
-                    KnowledgeBase::new(
-                        std::path::PathBuf::from(&self.config.kernel.workspace).join("knowledge"),
-                    )
-                    .expect("KnowledgeBase init failed"),
-                );
+                // KnowledgeBase — single source of truth (RFC-003, T15).
+                // Built once in `build()` and reused here so the cached
+                // control-plane handle and the preliminary handle share
+                // the same Arc<KnowledgeBase>. See Kernel struct field.
+                let knowledge = self.knowledge_base.clone();
                 let knowledge_lens = Arc::new(
                     oxios_kernel::KnowledgeLens::new(knowledge.clone(), Some(self.brain.clone()))
                         .expect("KnowledgeLens init failed"),
                 );
 
-                // Git auto-commit for knowledge files (async channel pattern)
-                // Same pattern as KnowledgeLens — non-blocking to avoid delaying HTTP responses.
-                {
-                    let git = self.git_layer.clone();
-                    let kb_root = knowledge.root();
-                    let git_root = git.root().to_path_buf();
-                    let prefix = kb_root
-                        .strip_prefix(&git_root)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| "knowledge".to_string());
-
-                    let (git_tx, mut git_rx) =
-                        tokio::sync::mpsc::channel::<(String, FileChange)>(64);
-
-                    // Register callback — spawns a task to avoid blocking note_write()
-                    knowledge.on_file_change(move |path: &str, change: FileChange| {
-                        let tx = git_tx.clone();
-                        let path = path.to_string();
-                        tokio::spawn(async move {
-                            let _ = tx.send((path, change)).await;
-                        });
-                    });
-                    let reconcile_prefix = prefix.clone();
-
-                    // Background consumer — commits knowledge changes to git
-                    tokio::spawn(async move {
-                        while let Some((path, change)) = git_rx.recv().await {
-                            if !git.is_enabled() {
-                                continue;
-                            }
-                            let rel = format!("{prefix}/{path}");
-                            let msg = match &change {
-                                FileChange::Created(p) => format!("knowledge: create {p}"),
-                                FileChange::Updated(p) => format!("knowledge: update {p}"),
-                                FileChange::Deleted(p) => format!("knowledge: delete {p}"),
-                                FileChange::Moved { old, new } => {
-                                    format!("knowledge: rename {old} → {new}")
-                                }
-                            };
-                            match change {
-                                FileChange::Deleted(_) => {
-                                    if let Err(e) = git.remove_file(&rel, &msg) {
-                                        tracing::warn!(error = %e, "knowledge git delete failed");
-                                    }
-                                }
-                                FileChange::Moved { old, .. } => {
-                                    let old_rel = format!("{prefix}/{old}");
-                                    let _ = git.remove_file(&old_rel, &msg);
-                                    let _ = git.commit_file(&rel, &msg);
-                                }
-                                _ => {
-                                    if let Err(e) = git.commit_file(&rel, &msg) {
-                                        tracing::warn!(error = %e, "knowledge git commit failed");
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    // S-4: Post-crash reconciliation — commit knowledge files
-                    // whose disk content diverged from git HEAD (e.g. process
-                    // crashed between note_write and the async commit consumer).
-                    // The I-3 dedup in commit_file_with skips files whose
-                    // content matches HEAD, so this only creates commits for
-                    // genuinely diverged files.
-                    let reconcile_git = self.git_layer.clone();
-                    if reconcile_git.is_enabled()
-                        && let Ok(files) = knowledge.list_all_md_files()
-                    {
-                        let mut count = 0;
-                        for (path, _) in &files {
-                            let rel = format!("{reconcile_prefix}/{path}");
-                            if let Ok(info) =
-                                reconcile_git.commit_file(&rel, "knowledge: post-crash reconcile")
-                                && info.hash != "(disabled)"
-                            {
-                                count += 1;
-                            }
-                        }
-                        if count > 0 {
-                            tracing::info!(
-                                "Post-crash git reconcile: {count} diverged files re-committed"
-                            );
-                        }
-                    }
-                }
+                register_knowledge_git_autocommit(&knowledge, &self.knowledge_git);
 
                 let mut agent_api = oxios_kernel::AgentApi::new(
                     self.supervisor.clone(),
@@ -251,6 +184,7 @@ impl Kernel {
                     oxios_kernel::McpApi::new(self.mcp_bridge.clone()),
                     oxios_kernel::InfraApi::new(
                         self.git_layer.clone(),
+                        self.knowledge_git.clone(),
                         self.cron_scheduler.clone(),
                         self.resource_monitor.clone(),
                         self.event_bus.clone(),
@@ -671,6 +605,18 @@ impl Kernel {
         }
     }
 
+    /// RFC-050: stop the vault watcher — sends the debounce-thread
+    /// shutdown and joins it. Called on the serve shutdown path (see
+    /// `start_daemon`); also safe when the watcher never started, and
+    /// idempotent. If never called, the guard drops with the Kernel
+    /// and joins then.
+    pub fn shutdown_vault_watcher(&mut self) {
+        if let Some(guard) = self.vault_watch.take() {
+            drop(guard);
+            tracing::debug!("vault watcher stopped");
+        }
+    }
+
     /// Execute a prompt with an optional session ID for multi-turn conversations.
     ///
     /// Pass `Some(session_id)` to continue an existing interview;
@@ -1051,12 +997,25 @@ async fn daily_health_check(web_dist: oxios_gateway::ActiveWebDist) -> anyhow::R
 /// Builder for assembling the Oxios kernel.
 pub struct KernelBuilder {
     config_path: PathBuf,
+    /// RFC-050 §3 vault watcher — long-lived daemon surface only
+    /// (whole-branch R2 fix for the P3): one-shot CLI commands
+    /// (run/chat/status/doctor/…) would otherwise pay the FSEvents
+    /// subscription + debounce thread + join for nothing. Defaults
+    /// to `false`; `main` enables it on the daemon paths.
+    watch_vault: bool,
 }
 
 impl KernelBuilder {
     /// Set the config file path.
     pub fn config_path(mut self, path: PathBuf) -> Self {
         self.config_path = path;
+        self
+    }
+
+    /// Enable the RFC-050 §3 vault watcher (external-edit reindex).
+    /// Daemon/serve lifecycle only.
+    pub fn watch_vault(mut self, on: bool) -> Self {
+        self.watch_vault = on;
         self
     }
 
@@ -1235,6 +1194,23 @@ impl KernelBuilder {
             config.git.auto_commit,
         )?);
 
+        // T16: vault-rooted `GitLayer` for knowledge auto-commit / history /
+        // restore. The vault is its own git repo; paths land at the vault
+        // root via `rel_path(kb.root(), git.root(), path)` with no
+        // `knowledge/` prefix. Without this, the default config (vault at
+        // `~/.oxi/vault`, OUTSIDE the workspace) would silently drop every
+        // commit because `kb_root.strip_prefix(workspace)` fails and the
+        // old fallback bails on `File not found` (T15 P1 closure).
+        let knowledge_git = Arc::new(GitLayer::new_for_vault(
+            PathBuf::from(&config.kernel.resolved_knowledge_root()),
+            config.git.auto_commit,
+            // R16 review F2 (b): explicit opt-in for foreign repos at
+            // the vault root. Default false ⇒ loud warn + disabled layer
+            // (the user must write the .oxios-git marker or set this to
+            // true to opt in).
+            config.git.adopt_foreign_repo,
+        )?);
+
         let skills_dir = PathBuf::from(&config.kernel.workspace).join("skills");
         let bundled_dir = PathBuf::from(&config.kernel.workspace).join("share/skills");
         // RFC-048 §4: attach the Foundation shared-package registry so
@@ -1272,9 +1248,13 @@ impl KernelBuilder {
             // Fully degraded: connect against a socket that will never exist.
             PathBuf::from("/nonexistent/oxibrain.sock")
         };
+        // T17 (vault unification): resolve the brain space with the
+        // documented precedence — `~/.oxi/config.toml [vault].space` wins
+        // over the kernel's brain config. Best-effort, never blocks boot.
+        let space = resolve_space(&home, &config.brain.space);
+
         let mut brain_conn =
-            BrainConnection::connect(BrainConfig::new(socket_path, config.brain.space.clone()))
-                .await;
+            BrainConnection::connect(BrainConfig::new(socket_path, space.clone())).await;
         // On lazy-reconnect failure, ask the supervisor to respawn the daemon
         // (rate-limited 30s). Only when the surface is enabled — a disabled
         // surface must never trigger an auto-start.
@@ -1288,6 +1268,29 @@ impl KernelBuilder {
             }));
         }
         let brain = Arc::new(brain_conn);
+
+        // T17 (vault unification): single ingestion path. Register the
+        // resolved vault as a daemon-side pull source on boot. Detached so
+        // an unreachable daemon never blocks startup (C1); bounded retry
+        // (R17 round 1 P2) handles the user-managed daemon case and the
+        // vault-dir-not-yet-created case without dead-ending ingestion.
+        // Skipped when the surface is disabled — a fully-degraded process
+        // must not try to contact the daemon.
+        if config.brain.enabled {
+            let brain_for_register = brain.clone();
+            let knowledge_root = config.kernel.resolved_knowledge_root();
+            tokio::spawn(async move {
+                let dir = knowledge_root;
+                let policy = VaultRegisterPolicy::default();
+                let _ = policy
+                    .retry(&dir, || {
+                        let brain = brain_for_register.clone();
+                        let dir = dir.clone();
+                        async move { brain.register_vault_source(&dir).await.map(|_| ()) }
+                    })
+                    .await;
+            });
+        }
 
         // KernelDatabase — shared SQLite connection for mount/project tables.
         // Forward-only migration: the legacy `memory.db` is preserved untouched
@@ -1506,11 +1509,28 @@ impl KernelBuilder {
         ));
         let persona_api = Arc::new(oxios_kernel::PersonaApi::new(Arc::clone(&persona_manager)));
 
-        // Shared KnowledgeBase — single source of truth (RFC-003)
+        // Shared KnowledgeBase — single source of truth (RFC-003, T15).
+        // Resolved through KernelConfig::resolved_knowledge_root: explicit
+        // `kernel.knowledge_root` → `~/.oxi/config.toml [vault].path`
+        // → `~/.oxi/vault`. Both KB construction sites in `build()`
+        // (here) and `handle()` reuse the same `Arc` so the agent path
+        // (PersistenceHook) and the control-plane path see one vault.
         let knowledge_base = Arc::new(
-            KnowledgeBase::new(PathBuf::from(&config.kernel.workspace).join("knowledge"))
+            KnowledgeBase::new(config.kernel.resolved_knowledge_root())
                 .expect("KnowledgeBase init failed"),
         );
+
+        // RFC-050 §3: watch the resolved vault root for external
+        // edits and re-index them into the shared KnowledgeBase. The
+        // guard is stored on the returned Kernel so the watcher runs
+        // for the process lifetime and joins on shutdown drop.
+        // (Whole-branch review fix: `KnowledgeBase::watch` previously
+        // had zero production call sites while RFC-050/CHANGELOG
+        // claimed the behavior.)
+        let vault_watch = self
+            .watch_vault
+            .then(|| spawn_vault_watcher(&knowledge_base))
+            .flatten();
 
         // Shared HitL registries — created ONCE so the preliminary handle
         // (used by AgentRuntime to register tool approvals) and the cached
@@ -1549,6 +1569,7 @@ impl KernelBuilder {
                 oxios_kernel::McpApi::new(mcp_bridge.clone()),
                 oxios_kernel::InfraApi::new(
                     git_layer.clone(),
+                    knowledge_git.clone(),
                     cron_scheduler.clone(),
                     resource_monitor.clone(),
                     event_bus.clone(),
@@ -1629,7 +1650,13 @@ impl KernelBuilder {
             let kd_config = config.memory.knowledge_curation.clone();
             match oxios_kernel::knowledge_curation::KnowledgeCuration::new(
                 kb,
-                git_layer.clone(),
+                // T16 round-1 (P2 #1): pre-write snapshot commits land in
+                // the vault repo. `note.path` is KB-relative and the vault
+                // IS the KB root, so no rel_path needed — the file lives at
+                // `<vault>/<note.path>`. The previous workspace git layer
+                // would have bailed 'File not found' here, silently dropping
+                // every curated snapshot (the same P1 shape, dead RFC-022).
+                knowledge_git.clone(),
                 engine_handle.clone(),
                 kd_config,
             ) {
@@ -1845,6 +1872,7 @@ impl KernelBuilder {
             auth_manager,
             cron_scheduler,
             git_layer,
+            knowledge_git,
             audit_trail,
             budget_manager,
             quota_tracker,
@@ -1872,6 +1900,8 @@ impl KernelBuilder {
             engine_handle,
             agent_log_db,
             promo_shutdown_tx,
+            knowledge_base: knowledge_base.clone(),
+            vault_watch,
         };
 
         // Eagerly assemble the fully-wired KernelHandle (real supervisor +
@@ -2238,5 +2268,284 @@ fn unique_mount_name(mount_manager: &oxios_kernel::MountManager, base: &str) -> 
             return candidate;
         }
         n += 1;
+    }
+}
+
+/// Register the knowledge git auto-commit pipeline (bounded channel
+/// + async commit consumer + S-4 post-crash reconcile) on the shared
+/// - **`KnowledgeBase`** (T16: vault-rooted `knowledge_git`).
+///
+/// Extracted from `Kernel::handle()` (whole-branch R2) so the
+/// watcher-thread safety of the callback — spawning through a runtime
+/// handle captured at registration, never a bare `tokio::spawn` — is
+/// testable without booting a full Kernel.
+fn register_knowledge_git_autocommit(
+    knowledge: &Arc<KnowledgeBase>,
+    knowledge_git: &Arc<GitLayer>,
+) {
+    let git = knowledge_git.clone();
+    // T16: vault-rooted git + shared roots for both the async
+    // commit consumer AND the S-4 reconcile loop. Cloned
+    // because each branch moves its own copy into its closure
+    // (PathBuf isn't Copy).
+    let kb_root = knowledge.root();
+    let git_root = git.root().to_path_buf();
+
+    let (git_tx, mut git_rx) = tokio::sync::mpsc::channel::<(String, FileChange)>(64);
+
+    // Register callback — spawns a task to avoid blocking
+    // note_write(). Whole-branch R2 fix: this callback also runs
+    // on the vault watcher's plain std::thread, where a bare
+    // `tokio::spawn` PANICS ("must be called from the context of
+    // a Tokio 1.x runtime") and kills the dispatching thread —
+    // the watcher silently died on the first settled event.
+    // Capture the runtime handle at registration (we run inside
+    // the runtime here) and spawn through it; if registration
+    // ever happens outside a runtime, fall back to a blocking
+    // send instead of panicking.
+    let rt_handle = tokio::runtime::Handle::try_current();
+    knowledge.on_file_change(move |path: &str, change: FileChange| {
+        let tx = git_tx.clone();
+        let path = path.to_string();
+        match &rt_handle {
+            Ok(h) => {
+                h.clone().spawn(async move {
+                    let _ = tx.send((path, change)).await;
+                });
+            }
+            Err(_) => {
+                let _ = tx.blocking_send((path, change));
+            }
+        }
+    });
+    // Local copies for the async commit consumer.
+    let consumer_kb_root = kb_root.clone();
+    let consumer_git_root = git_root.clone();
+
+    // Background consumer — commits knowledge changes to git
+    tokio::spawn(async move {
+        while let Some((path, change)) = git_rx.recv().await {
+            if !git.is_enabled() {
+                continue;
+            }
+            let rel = rel_path(&consumer_kb_root, &consumer_git_root, &path);
+            let msg = match &change {
+                FileChange::Created(p) => format!("knowledge: create {p}"),
+                FileChange::Updated(p) => format!("knowledge: update {p}"),
+                FileChange::Deleted(p) => format!("knowledge: delete {p}"),
+                FileChange::Moved { old, new } => {
+                    format!("knowledge: rename {old} → {new}")
+                }
+            };
+            match change {
+                FileChange::Deleted(_) => {
+                    if let Err(e) = git.remove_file(&rel, &msg) {
+                        tracing::warn!(error = %e, "knowledge git delete failed");
+                    }
+                }
+                FileChange::Moved { old, .. } => {
+                    let old_rel = rel_path(&consumer_kb_root, &consumer_git_root, &old);
+                    let _ = git.remove_file(&old_rel, &msg);
+                    let _ = git.commit_file(&rel, &msg);
+                }
+                _ => {
+                    if let Err(e) = git.commit_file(&rel, &msg) {
+                        tracing::warn!(error = %e, "knowledge git commit failed");
+                    }
+                }
+            }
+        }
+    });
+
+    // S-4: Post-crash reconciliation — commit knowledge files
+    // whose disk content diverged from git HEAD (e.g. process
+    // crashed between note_write and the async commit consumer).
+    // The I-3 dedup in commit_file_with skips files whose
+    // content matches HEAD, so this only creates commits for
+    // genuinely diverged files.
+    // Local copies for S-4 reconcile loop (kb_root / git_root
+    // are moved into the consumer closure above).
+    let reconcile_kb_root = kb_root.clone();
+    let reconcile_git_root = git_root.clone();
+    let reconcile_git = knowledge_git.clone();
+    if reconcile_git.is_enabled()
+        && let Ok(files) = knowledge.list_all_md_files()
+    {
+        let mut count = 0;
+        for (path, _) in &files {
+            let rel = rel_path(&reconcile_kb_root, &reconcile_git_root, path);
+            if let Ok(info) = reconcile_git.commit_file(&rel, "knowledge: post-crash reconcile")
+                && info.hash != "(disabled)"
+            {
+                count += 1;
+            }
+        }
+        if count > 0 {
+            tracing::info!("Post-crash git reconcile: {count} diverged files re-committed");
+        }
+    }
+}
+
+/// Settle window for the vault watcher (RFC-050 §3: "debounced
+/// (400 ms), read-only").
+const VAULT_WATCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Spawn the RFC-050 §3 vault watcher on the shared KnowledgeBase.
+///
+/// Called from `KernelBuilder::build` right after the shared
+/// `Arc<KnowledgeBase>` is constructed; the returned guard is stored
+/// on the `Kernel` so the watcher runs for the process lifetime and
+/// the debounce thread joins on shutdown drop. (Whole-branch review
+/// fix: `KnowledgeBase::watch` previously had zero production call
+/// sites while RFC-050/CHANGELOG claimed the behavior.)
+///
+/// Degrades to `None` with a warn when the fs watcher cannot start —
+/// a broken watcher must never take the kernel down; external edits
+/// then stay unindexed until restart.
+fn spawn_vault_watcher(kb: &Arc<KnowledgeBase>) -> Option<WatchGuard> {
+    match kb.watch(VAULT_WATCH_SETTLE) {
+        Ok(guard) => {
+            tracing::debug!(root = %kb.root().display(), "vault watcher started");
+            Some(guard)
+        }
+        Err(e) => {
+            tracing::warn!(
+                root = %kb.root().display(),
+                error = %e,
+                "vault watcher failed to start; external vault edits will not be reindexed until restart"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Focused builder-level wiring test for the RFC-050 §3 vault
+    //! watcher (whole-branch review fix): `KnowledgeBase::watch`
+    //! existed with zero production call sites while RFC-050 and the
+    //! CHANGELOG claimed the behavior. `KernelBuilder::build` now
+    //! spawns it via `spawn_vault_watcher`; a full `build()` in a
+    //! unit test would boot the engine/brain/launchd stack, so this
+    //! drives the same helper `build()` calls (T14 pattern: external
+    //! fs write → index refresh).
+
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn wait_until<F: Fn() -> bool>(cond: F) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    #[test]
+    fn builder_vault_watcher_reindexes_external_writes() {
+        let dir = std::env::temp_dir().join(format!("oxios-kb-wire-{}", uuid::Uuid::new_v4()));
+        let kb = Arc::new(KnowledgeBase::new(dir.clone()).unwrap());
+        kb.note_write("Target.md", "# Target").unwrap();
+        kb.index_all().unwrap();
+
+        // Exactly what KernelBuilder::build does after constructing
+        // the shared Arc<KnowledgeBase>: spawn the RFC-050 watcher on
+        // the resolved vault root and hold the guard.
+        let guard = spawn_vault_watcher(&kb).expect("watcher must start on a healthy vault root");
+
+        // External editor write — bypasses every KnowledgeBase method.
+        std::fs::write(
+            dir.join("ext.md"),
+            "---\nid: e\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n[[Target]]",
+        )
+        .unwrap();
+        assert!(
+            wait_until(|| !kb.backlinks_for("Target.md").is_empty()),
+            "external write was never reindexed through the builder wiring"
+        );
+
+        // Guard drop = shutdown join (WatchGuard contract).
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whole-branch R2 fix (P1): the production git auto-commit
+    /// consumer registers an `on_file_change` callback that spawns
+    /// onto the tokio runtime. When the WATCHER's plain std::thread
+    /// dispatches that callback, a bare `tokio::spawn` panics ("must
+    /// be called from the context of a Tokio 1.x runtime") and kills
+    /// the debounce thread on the first settled event. This test
+    /// drives the REAL registration (`register_knowledge_git_autocommit`,
+    /// exactly what `Kernel::handle()` installs) plus the REAL builder
+    /// watcher, then proves (a) the auto-commit landed — the spawn
+    /// path worked from the watcher thread — and (b) the watcher is
+    /// still alive after the event. multi_thread flavor so spawned
+    /// consumer tasks progress while the test thread polls.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vault_watcher_survives_runtime_spawn_callbacks() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = home.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let git = Arc::new(
+            oxios_kernel::GitLayer::new_for_vault(vault.clone(), true, false).expect("git layer"),
+        );
+        assert!(git.is_enabled(), "fresh vault repo must be enabled");
+
+        let kb = Arc::new(KnowledgeBase::new(vault.clone()).unwrap());
+        kb.note_write("Target.md", "# Target").unwrap();
+        kb.index_all().unwrap();
+
+        // The REAL consumer registration (runs inside the runtime —
+        // Handle::try_current() succeeds, as in Kernel::handle()).
+        register_knowledge_git_autocommit(&kb, &git);
+
+        let guard = spawn_vault_watcher(&kb).expect("watcher must start");
+
+        // External editor write — dispatched by the watcher's plain
+        // std::thread. Before the fix this panicked the thread and no
+        // auto-commit ever landed.
+        std::fs::write(
+            vault.join("ext.md"),
+            "---\nid: e\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n[[Target]]",
+        )
+        .unwrap();
+
+        let log_has_commit = || {
+            std::process::Command::new("git")
+                .current_dir(&vault)
+                .args(["log", "--oneline"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("knowledge: update ext.md"))
+                .unwrap_or(false)
+        };
+        assert!(
+            wait_until(log_has_commit),
+            "auto-commit for the external write never landed — the spawn-based \
+             callback died on the watcher thread"
+        );
+
+        // Watcher still ALIVE after the first event: a panicked
+        // debounce thread would be gone. A delete must still reindex.
+        std::fs::remove_file(vault.join("ext.md")).unwrap();
+        assert!(
+            wait_until(|| kb.backlinks_for("Target.md").is_empty()),
+            "watcher died after the first settled event"
+        );
+
+        drop(guard);
+    }
+
+    /// Whole-branch R2 fix (P3): the watcher must NOT spawn for
+    /// one-shot commands — the builder defaults to disabled and only
+    /// the daemon paths (`main`'s `watch_vault(true)`) opt in.
+    #[test]
+    fn vault_watcher_defaults_off_for_one_shot_builds() {
+        assert!(
+            !Kernel::builder().watch_vault,
+            "one-shot CLI commands must not pay FSEvents + thread + join"
+        );
     }
 }

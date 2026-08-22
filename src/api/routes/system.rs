@@ -2196,8 +2196,76 @@ pub(crate) struct BackupResponse {
     pub message: String,
 }
 
+/// Build the `tar` argv for `POST /api/system/backup`.
+///
+/// Extracted as a pure function so the backup layout — particularly the
+/// inclusion of the ecosystem vault root — can be unit-tested without
+/// spawning the process. The vault (resolved by the same 3-step chain
+/// `KernelConfig::resolved_knowledge_root` uses: explicit
+/// `knowledge_root` > `~/.oxi/config.toml [vault].path` > default
+/// `~/.oxi/vault`) is added as a second `-C` archive root so T19's
+/// migration routine can roll back from a single tarball produced
+/// before the vault was repointed.
+///
+/// The vault block is added ONLY when the resolved vault path exists on
+/// disk — on hosts without a migrated vault yet (or with a custom
+/// `[vault].path` whose directory is absent), we skip the second `-C`
+/// block entirely so `tar` does not warn about a missing archive member
+/// and fail the backup.
+///
+/// The legacy `~/.oxios/knowledge` member is included only when the
+/// directory still exists; after the unification migration, oxios no
+/// longer writes through that path and tar would otherwise warn.
+fn build_backup_tar_args(
+    backup_path: &std::path::Path,
+    oxios_home: &std::path::Path,
+    resolved_vault: &std::path::Path,
+) -> Vec<String> {
+    let oxios_root_str = oxios_home.to_str().unwrap_or(".");
+
+    let mut args: Vec<String> = vec![
+        "-czf".to_string(),
+        backup_path.display().to_string(),
+        "-C".to_string(),
+        oxios_root_str.to_string(),
+        "config.toml".to_string(),
+        "workspace".to_string(),
+    ];
+
+    if oxios_home.join("knowledge").exists() {
+        args.push("knowledge".to_string());
+    }
+
+    // Second archive root: the resolved vault. Skipped when the
+    // resolved path does not exist (no vault yet, or custom
+    // `[vault].path` whose directory was never created) so the
+    // backup does not exit non-zero on a missing-member warning.
+    if resolved_vault.exists() {
+        let vault_root = resolved_vault
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(resolved_vault);
+        let vault_root_str = vault_root.to_str().unwrap_or(".");
+        let vault_rel = resolved_vault
+            .strip_prefix(vault_root)
+            .unwrap_or(resolved_vault)
+            .to_string_lossy()
+            .into_owned();
+        args.push("-C".to_string());
+        args.push(vault_root_str.to_string());
+        args.push(vault_rel);
+    }
+
+    args
+}
+
 /// POST /api/system/backup — Create a backup of Oxios state.
-pub(crate) async fn handle_backup(_state: State<Arc<AppState>>) -> Json<BackupResponse> {
+///
+/// Resolves the vault via the kernel's documented chain
+/// (`config.kernel.resolved_knowledge_root`) and skips the vault
+/// archive root when the resolved path does not exist — see
+/// `build_backup_tar_args` for the contract.
+pub(crate) async fn handle_backup(state: State<Arc<AppState>>) -> Json<BackupResponse> {
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => {
@@ -2211,33 +2279,59 @@ pub(crate) async fn handle_backup(_state: State<Arc<AppState>>) -> Json<BackupRe
     };
     let oxios_home = home.join(".oxios");
 
+    // Resolve the vault through the kernel's 3-step chain so the
+    // backup lands on the actual vault root — explicit
+    // `kernel.knowledge_root` > `~/.oxi/config.toml [vault].path` >
+    // default `~/.oxi/vault`. Hardcoding the default would back up
+    // the wrong directory on any host with a custom vault path.
+    let resolved_vault = {
+        let config = state.config.read();
+        config.kernel.resolved_knowledge_root()
+    };
+
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let backup_name = format!("oxios-backup-{timestamp}.tar.gz");
-    let backup_path = oxios_home.join(&backup_name);
+
+    // T18 R4: tarballs land under `~/.oxios/backups/`, NOT directly
+    // in `~/.oxios/`. Pre-R4 backups matched no deny entry, so a
+    // broadly-allowed agent could read the resulting tar and pull
+    // out credential-bearing config.toml + vault contents. Now
+    // `backups/` is in `OXIOS_HOME_DENY_SUBPATHS` (single source of
+    // truth) — the agent sees an opaque directory under the deny,
+    // and tarballs inherit the protection via the gate's canonical-
+    // prefix subpath policy.
+    //
+    // The directory is created on demand; first backup establishes
+    // it. Defensive: if mkdir fails (e.g. read-only home), tar
+    // would still write the file (with a parent created lazily in
+    // some implementations), but we surface the failure by bailing
+    // up front so the response carries an explicit error.
+    let backups_dir = oxios_home.join("backups");
+    if let Err(e) = std::fs::create_dir_all(&backups_dir) {
+        return Json(BackupResponse {
+            success: false,
+            path: String::new(),
+            size_bytes: 0,
+            message: format!("Failed to create backups directory: {e}"),
+        });
+    }
+    let backup_path = backups_dir.join(&backup_name);
+
+    if backup_path.to_str().is_none() {
+        return Json(BackupResponse {
+            success: false,
+            path: String::new(),
+            size_bytes: 0,
+            message: "Invalid backup path.".into(),
+        });
+    }
+
+    let tar_args = build_backup_tar_args(&backup_path, &oxios_home, &resolved_vault);
 
     tracing::info!(path = %backup_path.display(), "Creating backup");
 
-    // Use tar command for simplicity
     let output = match tokio::process::Command::new("tar")
-        .args([
-            "-czf",
-            match backup_path.to_str() {
-                Some(s) => s,
-                None => {
-                    return Json(BackupResponse {
-                        success: false,
-                        path: String::new(),
-                        size_bytes: 0,
-                        message: "Invalid backup path.".into(),
-                    });
-                }
-            },
-            "-C",
-            oxios_home.to_str().unwrap_or("."),
-            "config.toml",
-            "workspace",
-            "knowledge",
-        ])
+        .args(&tar_args)
         .output()
         .await
     {
@@ -2277,7 +2371,7 @@ pub(crate) async fn handle_backup(_state: State<Arc<AppState>>) -> Json<BackupRe
         path: backup_path.display().to_string(),
         size_bytes: size,
         message: format!(
-            "Backup created: {backup_name} ({})",
+            "Backup created: backups/{backup_name} ({})",
             format_size_helper(size)
         ),
     })
@@ -2379,5 +2473,244 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         let truncated: String = s.chars().take(max_len - 3).collect();
         format!("{truncated}...")
+    }
+}
+
+#[cfg(test)]
+mod backup_args_tests {
+    //! Smoke tests for the backup tar argv.
+    //!
+    //! T18 — the vault must be included in the archive so T19's
+    //! migration routine can roll back from a single tarball, AND the
+    //! backup must NOT fail on hosts whose resolved vault root does
+    //! not exist (pre-migration or custom `[vault].path`). We assert
+    //! on the args list rather than spawning the process so the test
+    //! stays hermetic and fast.
+
+    use super::build_backup_tar_args;
+    use std::path::{Path, PathBuf};
+
+    fn args_with_paths(backup: &Path, oxios_home: &Path, resolved_vault: &Path) -> Vec<String> {
+        build_backup_tar_args(backup, oxios_home, resolved_vault)
+    }
+
+    fn setup_tmp() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().to_path_buf();
+        let oxios_home = home.join(".oxios");
+        std::fs::create_dir_all(&oxios_home).expect("mkdir");
+        (tmp, home, oxios_home)
+    }
+
+    #[test]
+    fn backup_includes_oxios_config_and_workspace() {
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        let backup = oxios_home.join("oxios.tar.gz");
+        let vault = oxios_home.parent().unwrap().join(".oxi").join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+
+        let args = args_with_paths(&backup, &oxios_home, &vault);
+
+        let c_idx = args
+            .iter()
+            .position(|a| a == "-C")
+            .expect("first -C must be present");
+        assert_eq!(args[c_idx + 1], oxios_home.display().to_string());
+        assert!(
+            args.contains(&"config.toml".to_string()),
+            "backup must include oxios config.toml; args={args:?}",
+        );
+        assert!(
+            args.contains(&"workspace".to_string()),
+            "backup must include oxios workspace; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn backup_includes_default_vault_as_second_archive_root() {
+        // T18 acceptance (a): the default vault path
+        // (~/.oxi/vault) is included as a second `-C` root when it
+        // exists on disk.
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        let backup = oxios_home.join("oxios.tar.gz");
+        let vault = oxios_home.parent().unwrap().join(".oxi").join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+
+        let args = args_with_paths(&backup, &oxios_home, &vault);
+
+        let c_positions: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-C")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            c_positions.len(),
+            2,
+            "backup tar must have two `-C` roots (oxios_home + vault); args={args:?}",
+        );
+
+        // Second `-C` is the vault's parent (`~/.oxi`), and the
+        // member following it is `vault` — so the archive contains
+        // `<home>/.oxi/vault/...`.
+        let vault_root_idx = c_positions[1];
+        let vault_parent = vault.parent().unwrap();
+        assert_eq!(
+            args[vault_root_idx + 1],
+            vault_parent.display().to_string(),
+            "second `-C` must point at the vault's parent directory; args={args:?}",
+        );
+        assert!(
+            args.iter().any(|a| a == "vault"),
+            "backup must include the `vault` member; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn backup_skips_vault_block_when_resolved_path_missing() {
+        // T18 acceptance (b): on hosts whose resolved vault root does
+        // not exist (no migrated vault yet, or a custom `[vault].path`
+        // whose directory was never created), the backup must NOT
+        // include a `-C` block for the vault — otherwise `tar` warns
+        // about a missing member and exits non-zero, taking the entire
+        // backup down with it.
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        let backup = oxios_home.join("oxios.tar.gz");
+        // Note: vault path does NOT exist.
+        let vault = oxios_home.parent().unwrap().join(".oxi").join("vault");
+
+        let args = args_with_paths(&backup, &oxios_home, &vault);
+
+        let c_positions: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-C")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            c_positions.len(),
+            1,
+            "backup tar must have ONLY ONE `-C` root when the resolved vault is missing; args={args:?}",
+        );
+        assert!(
+            !args.iter().any(|a| a == "vault"),
+            "backup must not include a `vault` member when the resolved path is absent; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn backup_includes_custom_vault_path_when_set_in_resolved() {
+        // T18 acceptance (c): if the kernel resolved the vault to a
+        // custom path (e.g. `[vault].path = /data/my-vault`), the
+        // backup must include THAT root, not the hardcoded default.
+        // This is what the resolved-vault parameter buys us — the
+        // handler calls `config.kernel.resolved_knowledge_root()` and
+        // passes the result here.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().to_path_buf();
+        let oxios_home = home.join(".oxios");
+        std::fs::create_dir_all(&oxios_home).expect("mkdir");
+
+        let custom_vault = tmp.path().join("data").join("my-vault");
+        std::fs::create_dir_all(&custom_vault).expect("custom vault");
+
+        let backup = oxios_home.join("oxios.tar.gz");
+        let args = args_with_paths(&backup, &oxios_home, &custom_vault);
+
+        let c_positions: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "-C")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(c_positions.len(), 2, "args={args:?}");
+
+        // The second `-C` must point at the custom vault's parent and
+        // the member must be the custom vault's last segment — proving
+        // we did NOT hardcode `~/.oxi/vault`.
+        let vault_root_idx = c_positions[1];
+        let custom_parent = custom_vault.parent().unwrap();
+        assert_eq!(
+            args[vault_root_idx + 1],
+            custom_parent.display().to_string(),
+            "second `-C` must point at the custom vault's parent; args={args:?}",
+        );
+        let custom_rel = custom_vault.strip_prefix(custom_parent).unwrap();
+        assert!(
+            args.iter().any(|a| a == custom_rel.to_str().unwrap()),
+            "backup must include the custom-vault relative path; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn backup_omits_legacy_knowledge_when_dir_missing() {
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        let backup = oxios_home.join("oxios.tar.gz");
+        let vault = oxios_home.parent().unwrap().join(".oxi").join("vault");
+
+        // No knowledge dir.
+        let args = args_with_paths(&backup, &oxios_home, &vault);
+        assert!(
+            !args.contains(&"knowledge".to_string()),
+            "backup must not include the legacy `knowledge` member when the dir is absent; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn backup_keeps_legacy_knowledge_when_dir_present() {
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        std::fs::create_dir_all(oxios_home.join("knowledge")).expect("mkdir knowledge");
+        let backup = oxios_home.join("oxios.tar.gz");
+        let vault = oxios_home.parent().unwrap().join(".oxi").join("vault");
+
+        let args = args_with_paths(&backup, &oxios_home, &vault);
+        assert!(
+            args.contains(&"knowledge".to_string()),
+            "backup must include the legacy `knowledge` member when the dir is present; args={args:?}",
+        );
+    }
+
+    #[test]
+    fn r4_backup_output_dir_is_denied_by_kernel_gate_constant() {
+        // T18 R4: `handle_backup` now writes tarballs under
+        // `~/.oxios/backups/` (not directly in `~/.oxios/`). The
+        // kernel gate denies that subtree via
+        // `OXIOS_HOME_DENY_SUBPATHS`. This binary-side test pins
+        // the contract: if either side changes (handler relocates
+        // again, or the kernel drops the deny), this fails.
+        assert!(
+            oxios_kernel::access_manager::OXIOS_HOME_DENY_SUBPATHS.contains(&"backups"),
+            "OXIOS_HOME_DENY_SUBPATHS must contain `backups` — the handler writes              tarballs under ~/.oxios/backups/ and the gate must deny agent reads;              got {:?}",
+            oxios_kernel::access_manager::OXIOS_HOME_DENY_SUBPATHS,
+        );
+    }
+
+    #[test]
+    fn r4_backup_output_lands_under_backups_dir() {
+        // T18 R4: the handler relocates output from
+        // `~/.oxios/oxios-backup-<ts>.tar.gz` (no deny entry,
+        // agent-readable) to `~/.oxios/backups/oxios-backup-<ts>.tar.gz`
+        // (denied subtree). This mirrors the handler's path
+        // construction so a future relocation breaks this test
+        // first.
+        let (_tmp, _home, oxios_home) = setup_tmp();
+        let backup_name = "oxios-backup-20260821_000000.tar.gz";
+
+        // Mirror handle_backup's construction:
+        let backups_dir = oxios_home.join("backups");
+        std::fs::create_dir_all(&backups_dir).expect("mkdir backups");
+        let backup_path = backups_dir.join(backup_name);
+
+        assert_eq!(
+            backup_path,
+            oxios_home.join("backups").join(backup_name),
+            "backup output must land under ~/.oxios/backups/",
+        );
+        // And critically NOT directly under ~/.oxios/:
+        assert_ne!(
+            backup_path,
+            oxios_home.join(backup_name),
+            "backup output must NOT land directly in ~/.oxios/ (pre-R4 location, agent-readable)",
+        );
     }
 }

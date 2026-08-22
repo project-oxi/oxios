@@ -6366,6 +6366,7 @@ dependencies = [
 [[package]]
 name = "oxi-frontmatter"
 version = "0.1.0"
+source = "git+https://github.com/project-oxi/oximemo.git?rev=6c32c30590b223deaa993abb41e130022a6946ba#6c32c30590b223deaa993abb41e130022a6946ba"
 dependencies = [
  "indexmap",
  "thiserror 2.0.20",
@@ -6668,7 +6669,7 @@ dependencies = [
 
 [[package]]
 name = "oxios"
-version = "1.43.1"
+version = "1.43.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6840,7 +6841,9 @@ dependencies = [
  "chrono-tz 0.9.0",
  "filetime",
  "hex",
+ "indexmap",
  "md-5 0.10.6",
+ "notify",
  "once_cell",
  "oxi-frontmatter",
  "parking_lot",

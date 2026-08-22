@@ -346,6 +346,9 @@ mod tests {
             enabled: true,
             personality_traits: vec!["pragmatic".into()],
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
+            category: "general".into(),
+            genre: None,
+            default_mount_ids: vec![],
         };
         let json = serde_json::to_value(&summary).expect("serialize");
         let caps: Vec<String> = json

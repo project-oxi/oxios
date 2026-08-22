@@ -148,9 +148,7 @@ export function PersonaPicker({
           )}
         >
           <Sparkles className="h-3.5 w-3.5" />
-          <span className="max-w-28 truncate">
-            {active ? active.name : t('chat.persona.auto')}
-          </span>
+          <span className="max-w-28 truncate">{active ? active.name : t('chat.persona.auto')}</span>
           <ChevronDown className="h-3 w-3 opacity-60" />
         </button>
       </PopoverTrigger>

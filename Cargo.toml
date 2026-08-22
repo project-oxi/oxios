@@ -131,10 +131,8 @@ oxibrain-client = { version = "0.6", git = "https://github.com/a7garden/oxibrain
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
 oxicode-sdk = { version = "0.73.0", features = ["delegation", "circuit-breaker", "router"] }
-# Vault-unification: shared frontmatter contract crate. Local path
-# until the oxi ecosystem publishes v0.1 to crates.io (TODO at finishing).
-# TODO(vault-unification): swap to crates.io "0.1" after publish
-oxi-frontmatter = { git = "https://github.com/project-oxi/oximemo.git", rev = "6c32c30590b223deaa993abb41e130022a6946ba" }
+# Vault-unification: shared frontmatter contract crate (oximemo 0.9.3).
+oxi-frontmatter = "0.1"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }

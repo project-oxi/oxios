@@ -3500,7 +3500,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a791e6620676a875f362f3156ed213e73ca099a09bf992c18812abe65cc37b1"
 dependencies = [
  "bstr",
- "hashbrown 0.17.1",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -6366,7 +6366,8 @@ dependencies = [
 [[package]]
 name = "oxi-frontmatter"
 version = "0.1.0"
-source = "git+https://github.com/project-oxi/oximemo.git?rev=6c32c30590b223deaa993abb41e130022a6946ba#6c32c30590b223deaa993abb41e130022a6946ba"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb16b6717ea9afd8b45fb1b416a3d912f0e81c4bbd23db416707ae179baa7cfe"
 dependencies = [
  "indexmap",
  "thiserror 2.0.20",
@@ -9562,7 +9563,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

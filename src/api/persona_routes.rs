@@ -31,6 +31,14 @@ pub struct PersonaSummary {
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
+    /// UI taxonomy bucket (normal | coding | writing | research |
+    /// operations | general; free string).
+    category: String,
+    /// Writing sub-category (novel | scenario | essay | blog).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    genre: Option<String>,
+    /// Mount IDs auto-attached by the chat composer when selected.
+    default_mount_ids: Vec<String>,
 }
 
 /// GET /api/personas — List all personas.
@@ -47,6 +55,9 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
                 enabled: p.enabled,
                 personality_traits: p.personality_traits,
                 capabilities: p.capabilities,
+                category: p.category,
+                genre: p.genre,
+                default_mount_ids: p.default_mount_ids,
             })
             .collect(),
     )
@@ -68,11 +79,13 @@ pub async fn handle_persona_get(
             "model": p.model,
             "personality_traits": p.personality_traits,
             "capabilities": p.capabilities,
+            "category": p.category,
+            "genre": p.genre,
+            "default_mount_ids": p.default_mount_ids,
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
-
 /// Request body for creating a persona.
 #[derive(Debug, Deserialize)]
 pub struct PersonaCreateRequest {
@@ -87,10 +100,23 @@ pub struct PersonaCreateRequest {
     personality_traits: Vec<String>,
     #[serde(default)]
     capabilities: Option<Vec<String>>,
+    /// UI taxonomy bucket. Defaults to `general` when absent.
+    #[serde(default)]
+    category: Option<String>,
+    /// Writing sub-category (novel | scenario | essay | blog).
+    #[serde(default)]
+    genre: Option<String>,
+    /// Mount IDs auto-attached by the chat composer when selected.
+    #[serde(default)]
+    default_mount_ids: Option<Vec<String>>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_category() -> String {
+    "general".to_string()
 }
 
 /// POST /api/personas — Create a new persona.
@@ -109,6 +135,9 @@ pub async fn handle_persona_create(
         model: body.model,
         personality_traits: body.personality_traits,
         capabilities: body.capabilities.unwrap_or_default(),
+        category: body.category.unwrap_or_else(default_category),
+        genre: body.genre,
+        default_mount_ids: body.default_mount_ids.unwrap_or_default(),
     };
     let created_id = persona.id.clone();
     let created_name = persona.name.clone();
@@ -139,6 +168,9 @@ pub struct PersonaUpdateRequest {
     model: Option<String>,
     personality_traits: Option<Vec<String>>,
     capabilities: Option<Vec<String>>,
+    category: Option<String>,
+    genre: Option<String>,
+    default_mount_ids: Option<Vec<String>>,
 }
 
 /// PUT /api/personas/:id — Update a persona.
@@ -166,6 +198,11 @@ pub async fn handle_persona_update(
             .personality_traits
             .unwrap_or(existing.personality_traits),
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
+        category: body.category.unwrap_or(existing.category),
+        genre: body.genre.or(existing.genre),
+        default_mount_ids: body
+            .default_mount_ids
+            .unwrap_or(existing.default_mount_ids),
     };
 
     state

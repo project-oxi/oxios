@@ -96,6 +96,13 @@ pub struct ExecEnv {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
 
+    /// Session-scoped persona override (optional). When set, the agent
+    /// runtime resolves THIS persona (prompt + role) instead of the global
+    /// active persona for the turn. `None` → inherit the global default.
+    /// Populated by the gateway from the WS / POST `persona_id` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_id: Option<String>,
+
     /// Agent conversation state to restore on retry (RFC-029 P2b).
     ///
     /// When `Some`, the recovery coordinator captured the previous run's
@@ -165,6 +172,12 @@ pub struct MsgCtx {
     /// resolves the model via `engine.role_routing[role]`. Populated
     /// by the gateway from the WS `role` field.
     pub role: Option<String>,
+    /// Session-scoped persona override (optional). When set, the orchestrator
+    /// carries it into [`ExecEnv::persona_id`] so the agent runtime resolves
+    /// this persona (prompt + role) instead of the global active persona.
+    /// `None` → inherit the global default. Populated by the gateway from
+    /// the WS / POST `persona_id` field.
+    pub persona_id: Option<String>,
     /// Per-message model override (optional). When set, the orchestrator
     /// carries it into [`ExecEnv::model_override`] so the agent runtime
     /// uses this model instead of `role_routing[role]` or the engine

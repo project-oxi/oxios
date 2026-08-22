@@ -187,6 +187,7 @@ async fn test_orchestrator_happy_path() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -222,6 +223,7 @@ async fn test_session_continuation() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -239,6 +241,7 @@ async fn test_session_continuation() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -262,6 +265,7 @@ async fn test_multiple_sessions_independent() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -276,6 +280,7 @@ async fn test_multiple_sessions_independent() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -305,6 +310,7 @@ async fn test_session_cleaned_after_completion() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -321,6 +327,7 @@ async fn test_session_cleaned_after_completion() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await
@@ -346,6 +353,7 @@ async fn test_phase_events_published() {
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
             "test-req",
         )
         .await

@@ -334,6 +334,7 @@ impl AgentRuntime {
             Some(directive),
             env.model_override.as_deref(),
             env.role.as_deref(),
+            env.persona_id.as_deref(),
             env.restore_state.as_ref(),
         )
         .await
@@ -362,22 +363,33 @@ impl AgentRuntime {
         persistence_directive: Option<&Directive>,
         model_override: Option<&str>,
         role: Option<&str>,
+        persona_id: Option<&str>,
         restore_state: Option<&serde_json::Value>,
     ) -> Result<ExecutionResult> {
         let prompt = build_user_prompt_inner(goal, acceptance_criteria);
 
-        // Get active persona system prompt.
-        let persona_prompt = self
-            .persona_manager
+        // Resolve the turn's persona: an explicit session-scoped override
+        // (chat persona picker) wins when it exists and is enabled;
+        // otherwise fall back to the global active persona (RFC-039).
+        // Invalid/disabled overrides degrade to the global default rather
+        // than failing the turn — ingress layers validate up front.
+        let persona = persona_id
+            .and_then(|id| {
+                self.persona_manager
+                    .as_ref()
+                    .and_then(|pm| pm.store().get(id))
+                    .filter(|p| p.enabled)
+            })
+            .or_else(|| self.persona_manager.as_ref().and_then(|pm| pm.get_active_persona()));
+
+        // Get persona system prompt.
+        let persona_prompt = persona
             .as_ref()
-            .map(|pm| pm.active_system_prompt())
+            .map(|p| p.system_prompt.clone())
             .filter(|s| !s.trim().is_empty());
 
         // Determine persona role for CSpace resolution.
-        let persona_role = self
-            .persona_manager
-            .as_ref()
-            .and_then(|pm| pm.get_active_persona().map(|p| p.role.clone()));
+        let persona_role = persona.as_ref().map(|p| p.role.clone());
 
         // Resolve CSpace from persona role, hint, or default.
         let cspace = resolve_cspace(
@@ -386,7 +398,6 @@ impl AgentRuntime {
             Some("worker"),
             agent_id,
         );
-
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
         let mut system_prompt = build_system_prompt_inner(

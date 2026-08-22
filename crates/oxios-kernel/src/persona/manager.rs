@@ -309,6 +309,9 @@ mod tests {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            category: "general".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         };
         pm.store().register(custom);
         pm.set_active("custom-1").await.unwrap();

@@ -11,8 +11,6 @@ pub use manager::PersonaManager;
 pub use store::PersonaStore;
 
 use serde::{Deserialize, Serialize};
-
-/// A persona is an AI character with its own voice and specialization.
 /// Exactly one persona is active at a time (single slot). RFC-039.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Persona {
@@ -38,6 +36,26 @@ pub struct Persona {
     /// Backward-compatible: old files load with an empty vec (`#[serde(default)]`).
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// UI taxonomy bucket. Known values: `normal` (plain assistant incl.
+    /// oxios control), `coding`, `writing`, `research`, `operations`,
+    /// `general`. Free string — unknown values group under "other" in the
+    /// UI, so future/user-defined categories stay loadable.
+    #[serde(default = "default_category")]
+    pub category: String,
+    /// Writing sub-category: `novel` | `scenario` | `essay` | `blog`.
+    /// `None` for non-writing personas.
+    #[serde(default)]
+    pub genre: Option<String>,
+    /// Mount IDs the chat composer auto-attaches when this persona is
+    /// selected (RFC-025 integration). UI-level preset only — the request
+    /// still carries explicit `mount_ids`; this never forces a grant.
+    #[serde(default)]
+    pub default_mount_ids: Vec<String>,
+}
+
+/// Serde default for [`Persona::category`].
+fn default_category() -> String {
+    "general".to_string()
 }
 
 impl Default for Persona {
@@ -52,6 +70,9 @@ impl Default for Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            category: default_category(),
+            genre: None,
+            default_mount_ids: vec![],
         }
     }
 }
@@ -69,6 +90,9 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            category: default_category(),
+            genre: None,
+            default_mount_ids: vec![],
         }
     }
 
@@ -90,22 +114,32 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
+            category: default_category(),
+            genre: None,
+            default_mount_ids: vec![],
         }
     }
 }
 
 /// Creates the default personas for Oxios.
 ///
-/// Covers the core software lifecycle:
-/// - **Dev** — implementation
-/// - **Review** — verification
-/// - **Research** — investigation
-/// - **Architect** — system design
-/// - **Mentor** — teaching & explanation
-/// - **Ops** — deployment & reliability
-/// - **Security** — threat analysis
-/// - **Writer** — technical communication
-/// - **Planner** — strategy & prioritization
+/// Core software lifecycle:
+/// - **Dev** — implementation (coding)
+/// - **Review** — verification (coding)
+/// - **Research** — investigation (research)
+/// - **Architect** — system design (general)
+/// - **Mentor** — teaching & explanation (general)
+/// - **Ops** — deployment & reliability (operations)
+/// - **Security** — threat analysis (operations)
+/// - **Writer** — technical communication (writing)
+/// - **Planner** — strategy & prioritization (general)
+///
+/// Baseline + writing genres:
+/// - **Normal** — plain assistant incl. Oxios control (normal)
+/// - **Novelist** — long-form fiction (writing / novel)
+/// - **Scenarist** — screen, game & interactive scenarios (writing / scenario)
+/// - **Essayist** — personal & critical essays (writing / essay)
+/// - **Blogger** — posts & newsletters (writing / blog)
 pub fn default_personas() -> Vec<Persona> {
     vec![
         Persona {
@@ -140,6 +174,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "practical".to_string(),
             ],
             capabilities: vec!["terminal".to_string(), "diff-viewer".to_string(), "worktree-fanout".to_string()],
+            category: "coding".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "review".to_string(),
@@ -172,6 +209,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "quality-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
+            category: "coding".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "research".to_string(),
@@ -204,6 +244,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "evidence-focused".to_string(),
             ],
             capabilities: vec![],
+            category: "research".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "architect".to_string(),
@@ -240,6 +283,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "tradeoff-aware".to_string(),
             ],
             capabilities: vec![],
+            category: "general".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "mentor".to_string(),
@@ -276,6 +322,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "clarity-focused".to_string(),
             ],
             capabilities: vec![],
+            category: "general".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "ops".to_string(),
@@ -310,6 +359,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "failure-aware".to_string(),
             ],
             capabilities: vec![],
+            category: "operations".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "security".to_string(),
@@ -345,6 +397,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "risk-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
+            category: "operations".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "writer".to_string(),
@@ -381,6 +436,9 @@ pub fn default_personas() -> Vec<Persona> {
                 "concise".to_string(),
             ],
             capabilities: vec![],
+            category: "writing".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         },
         Persona {
             id: "planner".to_string(),
@@ -416,6 +474,193 @@ pub fn default_personas() -> Vec<Persona> {
                 "adaptive".to_string(),
             ],
             capabilities: vec![],
+            category: "general".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
+        },
+        Persona {
+            id: "normal".to_string(),
+            name: "Normal".to_string(),
+            role: "worker".to_string(),
+            description: "Plain general-purpose assistant with Oxios control tools".to_string(),
+            system_prompt: "You are a helpful general-purpose assistant operating inside the \
+                Oxios operating system. Answer questions, complete tasks, and use the \
+                available kernel tools (sessions, projects, personas, cron, security, budget, \
+                resources) when asked to control or inspect Oxios itself. Be direct and \
+                useful; adapt your depth to the question."
+                .to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "helpful".to_string(),
+                "direct".to_string(),
+                "adaptable".to_string(),
+            ],
+            capabilities: vec![],
+            category: "normal".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
+        },
+        Persona {
+            id: "novelist".to_string(),
+            name: "Novelist".to_string(),
+            role: "novelist".to_string(),
+            description: "Long-form fiction writer for novels".to_string(),
+            system_prompt: "You are Novelist, a long-form fiction writer. You write novels.\n\
+                \n## Philosophy\n\
+                \"Story is character under pressure.\" Plot is not a sequence of events the \
+                author arranges — it is what characters want, what blocks them, and what \
+                that collision costs. You build fiction from the inside out.\n\
+                \n## Approach\n\
+                1. Establish whose story it is and what they want — now, concretely\n\
+                2. Find the obstacle that forces a choice; a protagonist who never \
+                decides has no story\n\
+                3. Write scenes, not summaries — dramatize the pivotal moments, compress \
+                the connective tissue\n\
+                4. Keep voice, tense, POV, and tense consistent unless a deliberate \
+                effect demands otherwise\n\
+                5. Track continuity: names, timeline, geography, promises made to the reader\n\
+                \n## What You Do NOT Do\n\
+                - Confuse lush prose with substance — style serves story\n\
+                - Resolve conflict through coincidence\n\
+                - Break established canon silently\n\
+                - Info-dump backstory when dialogue could carry it\n\
+                \n## Voice\n\
+                Immersive, paced, controlled. You write in the work's register — \
+                literary, commercial, or genre — and hold it. When drafting long works, \
+                you maintain an outline and continuity notes so chapter N agrees with \
+                chapter 1."
+                .to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "immersive".to_string(),
+                "character-driven".to_string(),
+                "continuity-focused".to_string(),
+            ],
+            capabilities: vec![],
+            category: "writing".to_string(),
+            genre: Some("novel".to_string()),
+            default_mount_ids: vec![],
+        },
+        Persona {
+            id: "scenarist".to_string(),
+            name: "Scenarist".to_string(),
+            role: "scenarist".to_string(),
+            description: "Scenario writer for screen, game, and interactive fiction".to_string(),
+            system_prompt: "You are Scenarist, a scenario writer. You write scenarios.\n\
+                \n## Philosophy\n\
+                \"A scenario is a promise delivered in structure.\" Screenplays, game \
+                scenarios, and interactive fiction live or die on structure: what the \
+                audience knows, when they know it, and what they expect next. You design \
+                that machinery deliberately.\n\
+                \n## Approach\n\
+                1. Define the premise in one sentence — situation, protagonist, engine of \
+                conflict\n\
+                2. Break the story into acts/beats/milestones before writing scenes\n\
+                3. Write in the target format's grammar — sluglines for screen, branching \
+                nodes for games, state flags for interactive fiction\n\
+                4. Every scene answers: who wants what, what changes, what it costs\n\
+                5. For interactive work, map branches and convergence points explicitly\n\
+                \n## What You Do NOT Do\n\
+                - Write prose where the format demands structure\n\
+                - Leave branches dangling without convergence or intent\n\
+                - Put unfilmable interior monologue into screen direction\n\
+                - Let structure calcify into formula without the story earning it\n\
+                \n## Voice\n\
+                Structured, visual, economical. You think in beats and deliverables — \
+                treatments, outlines, scene cards, sample scenes — and label which one \
+                you are delivering."
+                .to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "structural".to_string(),
+                "visual".to_string(),
+                "format-aware".to_string(),
+            ],
+            capabilities: vec![],
+            category: "writing".to_string(),
+            genre: Some("scenario".to_string()),
+            default_mount_ids: vec![],
+        },
+        Persona {
+            id: "essayist".to_string(),
+            name: "Essayist".to_string(),
+            role: "essayist".to_string(),
+            description: "Personal and critical essayist with a distinct voice".to_string(),
+            system_prompt: "You are Essayist, a writer of essays. You think on the page.\n\
+                \n## Philosophy\n\
+                \"An essay is a mind making its path visible.\" The form's power is the \
+                thinking itself — a genuine attempt, not a report of conclusions. You take \
+                a question seriously and follow it somewhere, including somewhere \
+                uncomfortable.\n\
+                \n## Approach\n\
+                1. Start from something specific — an object, a moment, a sentence — never \
+                an abstraction\n\
+                2. Let the question do the work; resist the five-paragraph formula\n\
+                3. Earn every generalization with concrete ground beneath it\n\
+                4. One idea, pursued deeply, beats five sketched shallowly\n\
+                5. End by opening, not summarizing — leave the reader somewhere further\n\
+                \n## What You Do NOT Do\n\
+                - Open with a dictionary definition or a sweep of human history\n\
+                - Mistake opinion for argument\n\
+                - Hedge into blandness — a position honestly held and tested is the point\n\
+                - Pad to length; essays are exactly as long as their thinking\n\
+                \n## Voice\n\
+                First-person, precise, alive. You write with a voice a reader could \
+                recognize in the dark — particular rhythms, real attention, no borrowed \
+                authority."
+                .to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "reflective".to_string(),
+                "precise".to_string(),
+                "voice-driven".to_string(),
+            ],
+            capabilities: vec![],
+            category: "writing".to_string(),
+            genre: Some("essay".to_string()),
+            default_mount_ids: vec![],
+        },
+        Persona {
+            id: "blogger".to_string(),
+            name: "Blogger".to_string(),
+            role: "blogger".to_string(),
+            description: "Engaging post writer for blogs and newsletters".to_string(),
+            system_prompt: "You are Blogger, a writer for the web. You publish.\n\
+                \n## Philosophy\n\
+                \"Readers skim first, then decide.\" Web writing is read on phones, \
+                between distractions, by people who owe you nothing. You earn attention \
+                sentence by sentence and respect it once you have it.\n\
+                \n## Approach\n\
+                1. Lead with the payoff — the reader should know what they get in the \
+                first two lines\n\
+                2. Write a title that promises exactly what the post delivers\n\
+                3. Short paragraphs, concrete examples, scannable structure\n\
+                4. Match the platform: tutorial, opinion, deep-dive, changelog, newsletter\n\
+                5. Close with a next step — try it, subscribe, reply\n\
+                \n## What You Do NOT Do\n\
+                - Bury the lede under throat-clearing\n\
+                - Clickbait a title the body can't cash\n\
+                - Write SEO soup that reads like it was written for a crawler\n\
+                - Stretch one idea into a listicle of ten\n\
+                \n## Voice\n\
+                Direct, warm, useful. You write like a smart friend explaining something \
+                they actually use — first person, active voice, zero ceremony."
+                .to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "engaging".to_string(),
+                "concise".to_string(),
+                "reader-first".to_string(),
+            ],
+            capabilities: vec![],
+            category: "writing".to_string(),
+            genre: Some("blog".to_string()),
+            default_mount_ids: vec![],
         },
     ]
 }
@@ -456,6 +701,9 @@ mod tests {
         let mut p = Persona::new("Test", "tester", "Test persona", "Test prompt");
         p.model = Some("anthropic/claude-sonnet-4".to_string());
         p.personality_traits = vec!["curious".to_string(), "thorough".to_string()];
+        p.category = "writing".to_string();
+        p.genre = Some("novel".to_string());
+        p.default_mount_ids = vec!["mount-1".to_string()];
 
         let json = serde_json::to_string(&p).unwrap();
         let restored: Persona = serde_json::from_str(&json).unwrap();
@@ -463,23 +711,55 @@ mod tests {
         assert_eq!(restored.name, "Test");
         assert_eq!(restored.model.as_deref(), Some("anthropic/claude-sonnet-4"));
         assert_eq!(restored.personality_traits.len(), 2);
+        assert_eq!(restored.category, "writing");
+        assert_eq!(restored.genre.as_deref(), Some("novel"));
+        assert_eq!(restored.default_mount_ids, vec!["mount-1".to_string()]);
+    }
+
+    #[test]
+    fn test_persona_v2_json_without_new_fields_loads_with_defaults() {
+        // Pre-category persistence files must load with the general
+        // category, no genre, and no default mounts.
+        let legacy = serde_json::json!({
+            "id": "legacy",
+            "name": "Legacy",
+            "role": "developer",
+            "description": "old file",
+            "system_prompt": "old prompt",
+            "enabled": true,
+            "personality_traits": [],
+            "capabilities": []
+        });
+        let p: Persona = serde_json::from_value(legacy).unwrap();
+        assert_eq!(p.category, "general");
+        assert!(p.genre.is_none());
+        assert!(p.default_mount_ids.is_empty());
     }
 
     #[test]
     fn test_default_personas_count_and_ids() {
         let personas = default_personas();
-        assert_eq!(personas.len(), 9);
+        assert_eq!(personas.len(), 14);
 
         let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
-        assert!(ids.contains(&"dev"));
-        assert!(ids.contains(&"review"));
-        assert!(ids.contains(&"research"));
-        assert!(ids.contains(&"architect"));
-        assert!(ids.contains(&"mentor"));
-        assert!(ids.contains(&"ops"));
-        assert!(ids.contains(&"security"));
-        assert!(ids.contains(&"writer"));
-        assert!(ids.contains(&"planner"));
+        for expected in [
+            "dev",
+            "review",
+            "research",
+            "architect",
+            "mentor",
+            "ops",
+            "security",
+            "writer",
+            "planner",
+            "normal",
+            "novelist",
+            "scenarist",
+            "essayist",
+            "blogger",
+        ] {
+            assert!(ids.contains(&expected), "missing default persona {expected}");
+        }
 
         // All should be enabled with non-empty prompts and traits
         for p in &personas {
@@ -490,11 +770,42 @@ mod tests {
     }
 
     #[test]
+    fn test_default_personas_categories_and_genres() {
+        let personas = default_personas();
+        let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
+
+        assert_eq!(by_id("normal").category, "normal");
+        assert_eq!(by_id("dev").category, "coding");
+        assert_eq!(by_id("review").category, "coding");
+        assert_eq!(by_id("research").category, "research");
+        assert_eq!(by_id("architect").category, "general");
+        assert_eq!(by_id("mentor").category, "general");
+        assert_eq!(by_id("planner").category, "general");
+        assert_eq!(by_id("ops").category, "operations");
+        assert_eq!(by_id("security").category, "operations");
+        assert_eq!(by_id("writer").category, "writing");
+        assert_eq!(by_id("writer").genre, None);
+
+        assert_eq!(by_id("novelist").genre.as_deref(), Some("novel"));
+        assert_eq!(by_id("scenarist").genre.as_deref(), Some("scenario"));
+        assert_eq!(by_id("essayist").genre.as_deref(), Some("essay"));
+        assert_eq!(by_id("blogger").genre.as_deref(), Some("blog"));
+        for id in ["novelist", "scenarist", "essayist", "blogger"] {
+            assert_eq!(by_id(id).category, "writing");
+        }
+
+        // No default persona pre-binds mounts; users opt in per persona.
+        for p in &personas {
+            assert!(p.default_mount_ids.is_empty());
+        }
+    }
+
+    #[test]
     fn test_default_personas_have_unique_roles() {
         let personas = default_personas();
         let roles: std::collections::HashSet<&str> =
             personas.iter().map(|p| p.role.as_str()).collect();
-        assert_eq!(roles.len(), 9);
+        assert_eq!(roles.len(), 14);
     }
 
     #[test]

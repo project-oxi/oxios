@@ -690,6 +690,7 @@ impl Kernel {
                 None,
                 None,
                 None, // model_params
+                None, // persona_id — CLI inherits the global active persona
                 "cli-direct",
             )
             .await
@@ -714,6 +715,7 @@ impl Kernel {
                 None,
                 None, // model_override
                 None, // model_params
+                None, // persona_id — CLI inherits the global active persona
                 "cli-direct",
             )
             .await

@@ -83,6 +83,9 @@ mod tests {
             model: None,
             personality_traits: vec!["curious".to_string()],
             capabilities: vec![],
+            category: "general".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
         }
     }
 

@@ -52,6 +52,12 @@ pub(crate) struct ChatRequest {
     /// when `None`, the agent runtime falls back to its 8192 default.
     #[serde(default)]
     max_tokens: Option<u32>,
+    /// Session-scoped persona override. Validated against the persona
+    /// registry, then inserted into gateway metadata so the orchestrator
+    /// forwards it as `ExecEnv::persona_id`. Empty → inherit the global
+    /// active persona.
+    #[serde(default)]
+    persona_id: String,
 }
 
 pub(crate) fn default_user() -> String {
@@ -149,6 +155,27 @@ pub(crate) async fn handle_chat(
             .validate_model(m)
             .map_err(AppError::BadRequest)?;
         msg.metadata.insert("model_override".to_owned(), m.clone());
+    }
+
+    // Session-scoped persona override: validate against the registry the
+    // same way the WS ingress does — unknown/disabled personas are a
+    // 400 rather than a silent global fallback.
+    let request_persona_id = if !body.persona_id.is_empty() {
+        Some(body.persona_id.clone())
+    } else {
+        None
+    };
+    if let Some(pid) = &request_persona_id {
+        match state.kernel.persona.get(pid) {
+            Some(p) if p.enabled => {}
+            Some(_) => {
+                return Err(AppError::BadRequest(format!("Persona '{pid}' is disabled")));
+            }
+            None => {
+                return Err(AppError::BadRequest(format!("Persona '{pid}' not found")));
+            }
+        }
+        msg.metadata.insert("persona_id".to_owned(), pid.clone());
     }
     if let Some(t) = body.temperature {
         msg.metadata.insert("temperature".to_owned(), t.to_string());
@@ -265,6 +292,12 @@ pub(crate) async fn handle_chat(
                     if let Some(ref pid) = request_project_id {
                         session.project_id = Some(pid.clone());
                     }
+                    // Session persona override outlives the turn: persist it
+                    // so GET /api/sessions/:id and the persona-affordance
+                    // hook see the session's persona on reopen.
+                    if let Some(ref pid) = request_persona_id {
+                        session.active_persona_id = Some(pid.clone());
+                    }
                     if let Err(e) = state.kernel.state.save_session(&session).await {
                         tracing::warn!(error = %e, "Failed to persist session");
                     }
@@ -318,8 +351,8 @@ pub(crate) async fn handle_chat(
                     if let Some(ref pid) = request_project_id {
                         session.project_id = Some(pid.clone());
                     }
-                    if let Err(e) = state.kernel.state.save_session(&session).await {
-                        tracing::warn!(error = %e, "Failed to create session");
+                    if let Some(ref pid) = request_persona_id {
+                        session.active_persona_id = Some(pid.clone());
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, "Failed to load/create session"),
@@ -1194,6 +1227,35 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 .await;
                             continue;
                         }
+                        // Session-scoped persona override (chat persona
+                        // picker). Validated early like the model override:
+                        // unknown or disabled personas are rejected before
+                        // the turn starts. Absent → inherit the global
+                        // active persona.
+                        let incoming_persona_id = parsed
+                            .get("persona_id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+                        if let Some(pid) = &incoming_persona_id {
+                            let invalid = match state.kernel.persona.get(pid) {
+                                Some(p) if p.enabled => None,
+                                Some(_) => Some("disabled".to_string()),
+                                None => Some("unknown".to_string()),
+                            };
+                            if let Some(reason) = invalid {
+                                let err_json = serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Persona '{pid}' is {reason}")
+                                });
+                                let _ = ws_tx
+                                    .lock()
+                                    .await
+                                    .send(Message::Text(err_json.to_string().into()))
+                                    .await;
+                                continue;
+                            }
+                        }
                         // One-shot (QuickAsk) requests set `ephemeral: true`.
                         // The recv task skips the pending-message insert so
                         // the send task's persist guard finds no
@@ -1285,6 +1347,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 }
                                 if let Some(m) = &incoming_model {
                                     incoming.metadata.insert("model_override".into(), m.clone());
+                                }
+                                if let Some(pid) = &incoming_persona_id {
+                                    incoming.metadata.insert("persona_id".into(), pid.clone());
                                 }
                                 if let Some(t) = incoming_temperature {
                                     incoming
@@ -1382,6 +1447,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 }
                                 if let Some(m) = &incoming_model {
                                     incoming.metadata.insert("model_override".into(), m.clone());
+                                }
+                                if let Some(pid) = &incoming_persona_id {
+                                    incoming.metadata.insert("persona_id".into(), pid.clone());
                                 }
                                 if let Some(t) = incoming_temperature {
                                     incoming
@@ -1644,6 +1712,10 @@ async fn persist_session(
             if let Some(vid) = project_id {
                 session.project_id = Some(vid.to_string());
             }
+            // Session persona override outlives the turn (chat picker).
+            if let Some(pid) = metadata.get("persona_id") {
+                session.active_persona_id = Some(pid.clone());
+            }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to persist session");
             }
@@ -1693,6 +1765,10 @@ async fn persist_session(
             // RFC-025: set top-level project_id field.
             if let Some(vid) = project_id {
                 session.project_id = Some(vid.to_string());
+            }
+            // Session persona override outlives the turn (chat picker).
+            if let Some(pid) = metadata.get("persona_id") {
+                session.active_persona_id = Some(pid.clone());
             }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to create session");

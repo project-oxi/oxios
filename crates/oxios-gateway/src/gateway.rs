@@ -708,6 +708,9 @@ impl Gateway {
 
             let role = msg.metadata.get("role").map(String::as_str);
             let model_override = msg.metadata.get("model_override").map(String::as_str);
+            // Session-scoped persona override (chat picker): validated at
+            // the WS/HTTP ingress; carried through to ExecEnv::persona_id.
+            let persona_id = msg.metadata.get("persona_id").map(String::as_str);
             // Parse optional per-message model params from metadata. Strings
             // are used so the WS layer doesn't need a structured payload
             // change — the gateway translates them to typed ModelParams here.
@@ -739,6 +742,7 @@ impl Gateway {
                     role,
                     model_override,
                     model_params,
+                    persona_id,
                     &request_id,
                 ) => Some(res),
             };
@@ -830,6 +834,11 @@ impl Gateway {
                     }
                     if let Some(ref mtag) = orchestration.mount_tag {
                         channel_meta.insert("mount_tag".to_owned(), mtag.clone());
+                    }
+                    // Session persona override echo: persist_session keys the
+                    // session's active_persona_id off the terminal metadata.
+                    if let Some(pid) = persona_id {
+                        channel_meta.insert("persona_id".to_owned(), pid.to_string());
                     }
                     // Serialize tool_calls into metadata so web routes can read them.
                     if !orchestration.tool_calls.is_empty()

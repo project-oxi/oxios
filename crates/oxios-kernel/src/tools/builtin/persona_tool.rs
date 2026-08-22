@@ -249,6 +249,9 @@ impl AgentTool for PersonaTool {
                         .map(|s| s.to_string()),
                     personality_traits: str_array(&params, "personality_traits"),
                     capabilities: str_array(&params, "capabilities"),
+                    category: str_or(&params, "category").unwrap_or_else(|| "general".to_string()),
+                    genre: str_or(&params, "genre"),
+                    default_mount_ids: str_array(&params, "default_mount_ids"),
                 };
 
                 // Security review (fail-open on engine/parse error): an
@@ -333,6 +336,13 @@ impl AgentTool for PersonaTool {
                         str_array(&params, "capabilities")
                     } else {
                         existing.capabilities
+                    },
+                    category: str_or(&params, "category").unwrap_or(existing.category),
+                    genre: str_or(&params, "genre").or(existing.genre),
+                    default_mount_ids: if params.get("default_mount_ids").is_some() {
+                        str_array(&params, "default_mount_ids")
+                    } else {
+                        existing.default_mount_ids
                     },
                 };
 

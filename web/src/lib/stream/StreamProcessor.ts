@@ -60,6 +60,8 @@ export class StreamProcessor {
   private error: ChatError | null = null
   private stopped = false
   private usageSeq = 0
+  /** True once adopt() seeded this processor from a completed message. */
+  private adopted = false
   private memorySeq = 0
   /** Accumulated web-search grounding for the turn (citations deduped by url). */
   private search: GroundingSearch | null = null
@@ -74,12 +76,35 @@ export class StreamProcessor {
     this.messageId = messageId
   }
 
+  /** Seed this processor from an already-rendered message.
+   *
+   * Terminal chunks can arrive out of order: the gateway's `done` and the
+   * kernel bus's `usage`/`agent_end` are emitted from concurrent tasks.
+   * When `done` lands first it finishes + deletes the live processor; the
+   * stragglers then re-create one here. Without seeding, the fresh
+   * processor's first patch stamps `blocks: []` / `content: ''` over the
+   * streamed message and the rendered bubble collapses. Adopting keeps the
+   * timeline and lets each straggler apply correctly: `agent_end` flips its
+   * sub-agent block, a tail token appends to the trailing text block. */
+  adopt(message: Pick<ChatMessage, 'blocks' | 'content'>): void {
+    this.blocks = [...(message.blocks ?? [])]
+    this.text = message.content ?? ''
+    this.usageSeq = this.blocks.filter((b) => b.type === 'usage').length
+    this.reasoningSeq = this.blocks.filter((b) => b.type === 'reasoning').length
+    this.textSeq = this.blocks.filter((b) => b.type === 'text').length
+    this.adopted = true
+  }
+
   /** Feed one ChatEvent. Returns incremental patch + lifecycle signals.
    *  Always attaches the block-stream timeline (`blocks`) to the patch —
-   *  the single source of truth rendered by BlockStream. */
+   *  the single source of truth rendered by BlockStream. An adopted
+   *  processor serves an already-completed message, so it never re-arms
+   *  `generating` (a straggler tail token must not un-complete the turn). */
   handleEvent(ev: ChatEvent): ProcessorResult {
     const result = this.handleEventInner(ev)
-    return { ...result, patch: { ...result.patch, blocks: [...this.blocks] } }
+    const patch = { ...result.patch, blocks: [...this.blocks] }
+    if (this.adopted && patch.generating === true) delete patch.generating
+    return { ...result, patch }
   }
 
   private handleEventInner(ev: ChatEvent): ProcessorResult {

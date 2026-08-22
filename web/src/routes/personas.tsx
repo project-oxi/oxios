@@ -4,6 +4,7 @@ import { Pencil, Plus, Star, Trash2, Users } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { groupByCategory } from '@/components/chat/persona-picker'
 import {
   EditPersonaDialog,
   type PersonaItem,
@@ -26,6 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
 
@@ -40,6 +42,8 @@ function PersonasPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
+  const [category, setCategory] = useState('general')
+  const [genre, setGenre] = useState('')
 
   const {
     data: personas,
@@ -50,19 +54,7 @@ function PersonasPage() {
   } = useQuery({
     queryKey: ['personas'],
     queryFn: async () => {
-      const res =
-        await api.get<
-          {
-            id: string
-            name: string
-            role: string
-            description: string
-            enabled: boolean
-            personality_traits: string[]
-            system_prompt?: string
-            capabilities?: string[]
-          }[]
-        >('/api/personas')
+      const res = await api.get<PersonaItem[]>('/api/personas')
       // Backend returns raw array
       return Array.isArray(res) ? res : []
     },
@@ -70,14 +62,21 @@ function PersonasPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (p: { name: string; description: string; system_prompt: string }) =>
-      api.post('/api/personas', p),
+    mutationFn: (p: {
+      name: string
+      description: string
+      system_prompt: string
+      category: string
+      genre: string | null
+    }) => api.post('/api/personas', p),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personas'] })
       setShowCreate(false)
       setName('')
       setDescription('')
       setSystemPrompt('')
+      setCategory('general')
+      setGenre('')
     },
   })
 
@@ -171,6 +170,33 @@ function PersonasPage() {
                 rows={4}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>{t('personas.category')}</Label>
+                <Select
+                  value={category}
+                  onValueChange={setCategory}
+                  options={['normal', 'coding', 'writing', 'research', 'operations', 'general'].map(
+                    (c) => ({ label: t(`chat.persona.categories.${c}`), value: c }),
+                  )}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>{t('personas.genre')}</Label>
+                <Select
+                  value={genre || 'none'}
+                  onValueChange={(v) => setGenre(v === 'none' ? '' : v)}
+                  disabled={category !== 'writing'}
+                  options={[
+                    { label: t('personas.genreNone'), value: 'none' },
+                    ...['novel', 'scenario', 'essay', 'blog'].map((g) => ({
+                      label: t(`chat.persona.genres.${g}`),
+                      value: g,
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -188,9 +214,10 @@ function PersonasPage() {
                   name,
                   description,
                   system_prompt: systemPrompt,
+                  category,
+                  genre: category === 'writing' && genre ? genre : null,
                 })
               }
-              disabled={!name.trim() || createMutation.isPending}
             >
               {t('common.create')}
             </Button>
@@ -205,71 +232,92 @@ function PersonasPage() {
           description={t('personas.descriptionHint')}
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {items.map((persona) => (
-            <Card key={persona.id}>
-              <CardHeader className="flex flex-row items-start justify-between pb-2">
-                <div>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Users className="h-4 w-4" /> {persona.name}
-                    {persona.enabled && <Star className="h-3 w-3 text-warning fill-warning" />}
-                  </CardTitle>
-                  {persona.description && (
-                    <p className="text-xs text-muted-foreground mt-1">{persona.description}</p>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setEditing(persona)}
-                    aria-label={t('common.edit')}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  {!persona.enabled && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => activateMutation.mutate(persona.id)}
-                      aria-label={t('personas.activatePersona')}
-                    >
-                      <Star className="h-4 w-4" />
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteTarget(persona)}
-                    aria-label={t('personas.deletePersona')}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted-foreground">
-                  {t('personas.role')}: {persona.role}
-                </p>
-                {persona.system_prompt && (
-                  <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                    {persona.system_prompt}
-                  </p>
-                )}
-                {persona.capabilities && persona.capabilities.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {persona.capabilities.map((cap) => (
-                      <span
-                        key={cap}
-                        className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info"
-                      >
-                        {cap}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+        <div className="space-y-6">
+          {groupByCategory(items).map((group) => (
+            <section key={group.category} className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground">
+                {group.labelKey ? t(group.labelKey) : t('chat.persona.categories.other')}
+                <span className="ml-1.5 text-xs font-normal">{group.items.length.toString()}</span>
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {group.items.map((persona) => (
+                  <Card key={persona.id}>
+                    <CardHeader className="flex flex-row items-start justify-between pb-2">
+                      <div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Users className="h-4 w-4" /> {persona.name}
+                          {persona.enabled && (
+                            <Star className="h-3 w-3 text-warning fill-warning" />
+                          )}
+                        </CardTitle>
+                        {persona.description && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {persona.description}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEditing(persona)}
+                          aria-label={t('common.edit')}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {!persona.enabled && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => activateMutation.mutate(persona.id)}
+                            aria-label={t('personas.activatePersona')}
+                          >
+                            <Star className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(persona)}
+                          aria-label={t('personas.deletePersona')}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-xs text-muted-foreground">
+                        {t('personas.role')}: {persona.role}
+                      </p>
+                      {persona.system_prompt && (
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                          {persona.system_prompt}
+                        </p>
+                      )}
+                      {(persona.genre || (persona.capabilities?.length ?? 0) > 0) && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {persona.genre && (
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
+                              {t(`chat.persona.genres.${persona.genre}`, {
+                                defaultValue: persona.genre ?? '',
+                              })}
+                            </span>
+                          )}
+                          {(persona.capabilities ?? []).map((cap) => (
+                            <span
+                              key={cap}
+                              className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info"
+                            >
+                              {cap}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

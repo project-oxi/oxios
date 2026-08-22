@@ -256,8 +256,6 @@
     "thought": "생각한 내용",
     "subagent": "서브 에이전트: {{name}}",
     "branchHere": "이 대화 지점에서 분기",
-    "rateUp": "좋은 응답",
-    "rateDown": "아쉬운 응답",
     "inputPlaceholder": "메시지를 입력하세요...",
     "mentionHint": "@로 지식·메모리·마운트 검색 — 검색어를 입력하세요",
     "noMentionResults": "일치하는 항목이 없습니다",
@@ -407,7 +405,6 @@
     "scrollToBottom": "맨 아래로",
     "regenerate": "다시 생성",
     "compressedCollapsed": "이전 메시지 {{count}}개 (펼치기)",
-    "addReaction": "리액션 추가",
     "modelParams": "모델 파라미터",
     "temperature": "온도",
     "maxTokens": "최대 토큰",
@@ -521,7 +518,29 @@
     },
     "emptyHint": "아래 최근 대화를 선택하거나, 새 대화를 입력해 시작하세요.",
     "knowledgeOpen": "문서 보기",
-    "dropToAttach": "파일을 놓아 첨부"
+    "dropToAttach": "파일을 놓아 첨부",
+    "persona": {
+      "label": "페르소나",
+      "auto": "자동",
+      "globalIs": "전역: {{name}}",
+      "none": "페르소나가 없습니다",
+      "mountsAttached": "페르소나 기본 마운트를 연결했습니다",
+      "categories": {
+        "normal": "일반",
+        "coding": "코딩",
+        "writing": "글쓰기",
+        "research": "리서치",
+        "operations": "운영",
+        "general": "범용",
+        "other": "기타"
+      },
+      "genres": {
+        "novel": "소설",
+        "scenario": "시나리오",
+        "essay": "에세이",
+        "blog": "블로그"
+      }
+    }
   },
   "commandPalette": {
     "placeholder": "명령 검색 또는 메모 입력…",
@@ -1438,7 +1457,15 @@
     "saved": "페르소나가 저장되었습니다",
     "systemPrompt": "시스템 프롬프트",
     "systemPromptLabel": "시스템 프롬프트",
-    "capabilities": "기능"
+    "capabilities": "기능",
+    "category": "카테고리",
+    "categoryPlaceholder": "카테고리 선택",
+    "genre": "장르",
+    "genrePlaceholder": "장르 선택",
+    "genreNone": "없음",
+    "defaultMounts": "기본 마운트",
+    "defaultMountsHint": "이 페르소나를 채팅에서 선택하면 자동으로 연결되는 마운트",
+    "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다"
   },
   "projects": {
     "activity": "활동",

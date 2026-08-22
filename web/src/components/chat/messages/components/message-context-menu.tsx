@@ -5,10 +5,9 @@
 // Wraps message content; on right-click shows Copy / Regenerate (assistant) /
 // Delete actions.
 
-import { Copy, GitBranch, RefreshCw, SmilePlus, Trash2 } from 'lucide-react'
+import { Copy, GitBranch, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toggleReaction } from '@/lib/reactions-storage'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
 import { usePortalStore } from '@/stores/portal'
@@ -93,15 +92,6 @@ export function MessageContextMenu({ message, onRetry, children }: MessageContex
           onClick={(e) => e.stopPropagation()}
         >
           <ContextItem icon={Copy} label={t('common.copy')} onClick={handleCopy} />
-          <ContextItem
-            icon={SmilePlus}
-            label={t('chat.addReaction')}
-            onClick={() => {
-              toggleReaction(message.id, '👍')
-              window.dispatchEvent(new CustomEvent('reactions-changed'))
-              close()
-            }}
-          />
           <ContextItem
             icon={GitBranch}
             label={t('chat.branchHere')}

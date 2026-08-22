@@ -1547,7 +1547,7 @@ describe('useChatStore loadSession (Task 10 — surfacing load failures)', () =>
   })
 })
 
-describe('useChatStore branchFrom / rateMessage (Task 22)', () => {
+describe('useChatStore branchFrom (Task 22)', () => {
   beforeEach(() => {
     useChatStore.setState({
       activeSessionId: 'sess-a',
@@ -1580,38 +1580,6 @@ describe('useChatStore branchFrom / rateMessage (Task 22)', () => {
     const s = useChatStore.getState()
     expect(s.activeSessionId).toBe('sess-a')
     expect(s.messages.map((m) => m.id)).toEqual(['u1'])
-  })
-
-  it('rateMessage stores the rating in message metadata', () => {
-    useChatStore.setState({
-      messages: [{ id: 'a1', role: 'assistant', content: 'two' }] as never,
-    })
-    useChatStore.getState().rateMessage('a1', 1)
-    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: 1 } })
-    // Re-rating switches the value instead of stacking.
-    useChatStore.getState().rateMessage('a1', -1)
-    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: -1 } })
-  })
-
-  it('rateMessage clears an existing rating when passed null', () => {
-    useChatStore.setState({
-      messages: [{ id: 'a1', role: 'assistant', content: 'two', metadata: { rating: 1 } }] as never,
-    })
-    useChatStore.getState().rateMessage('a1', null)
-    expect(useChatStore.getState().messages[0]?.metadata?.rating).toBeUndefined()
-  })
-
-  it('rateMessage preserves other metadata fields', () => {
-    useChatStore.setState({
-      messages: [
-        { id: 'a1', role: 'assistant', content: 'two', metadata: { phase: 'execute' } },
-      ] as never,
-    })
-    useChatStore.getState().rateMessage('a1', 1)
-    expect(useChatStore.getState().messages[0]?.metadata).toMatchObject({
-      phase: 'execute',
-      rating: 1,
-    })
   })
 })
 

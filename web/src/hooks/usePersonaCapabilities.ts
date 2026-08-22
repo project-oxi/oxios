@@ -59,17 +59,15 @@ export function usePersonaCapabilities(): UsePersonaCapabilitiesResult {
   const activeSessionId = useChatStore((s) => s.activeSessionId)
 
   // Persona roster. One shared query — every affordance subscribes to the
-  // same cache entry.
+  // same cache entry. Returns the FULL persona records so every
+  // `['personas']` consumer (picker, personas page, this hook) sees one
+  // cache shape — a subset here used to starve other consumers of fields
+  // (e.g. category) via react-query's key dedupe.
   const personasQuery = useQuery({
     queryKey: ['personas'],
-    queryFn: async (): Promise<PersonaWithCapabilities[]> => {
+    queryFn: async (): Promise<Persona[]> => {
       const res = await api.get<Persona[]>('/api/personas')
-      const list = Array.isArray(res) ? res : []
-      return list.map((p) => ({
-        id: p.id,
-        name: p.name,
-        capabilities: p.capabilities,
-      }))
+      return Array.isArray(res) ? res : []
     },
     staleTime: 60_000,
   })

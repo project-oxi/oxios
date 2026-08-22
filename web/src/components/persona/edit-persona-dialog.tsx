@@ -13,7 +13,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useMounts } from '@/hooks/use-mounts'
 import { api } from '@/lib/api-client'
 
 /** Capability tags currently backed by a UI consumer (RFC-044 §8.4).
@@ -29,6 +31,10 @@ export interface PersonaItem {
   personality_traits?: string[]
   /// RFC-044 Phase 3: capability tags surfaced by the list endpoint.
   capabilities?: string[]
+  category?: string
+  genre?: string | null
+  system_prompt?: string
+  default_mount_ids?: string[]
 }
 
 export interface PersonaPatch {
@@ -36,6 +42,9 @@ export interface PersonaPatch {
   description: string
   system_prompt: string
   capabilities?: string[]
+  category?: string
+  genre?: string | null
+  default_mount_ids?: string[]
 }
 
 interface EditPersonaDialogProps {
@@ -54,6 +63,9 @@ interface PersonaDetail {
   enabled: boolean
   personality_traits: string[]
   capabilities?: string[]
+  category?: string
+  genre?: string | null
+  default_mount_ids?: string[]
 }
 
 /**
@@ -76,6 +88,10 @@ export function EditPersonaDialog({
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [capabilities, setCapabilities] = useState<string[]>([])
+  const { data: mountsData } = useMounts()
+  const [category, setCategory] = useState('general')
+  const [genre, setGenre] = useState<string>('')
+  const [defaultMountIds, setDefaultMountIds] = useState<string[]>([])
 
   const detail = useQuery({
     queryKey: ['persona', persona?.id],
@@ -91,6 +107,9 @@ export function EditPersonaDialog({
       setDescription(detail.data.description)
       setSystemPrompt(detail.data.system_prompt)
       setCapabilities(detail.data.capabilities ?? [])
+      setCategory(detail.data.category ?? 'general')
+      setGenre(detail.data.genre ?? '')
+      setDefaultMountIds(detail.data.default_mount_ids ?? [])
     } else {
       setName(persona.name)
       setDescription(persona.description)
@@ -109,6 +128,9 @@ export function EditPersonaDialog({
       description: description.trim(),
       system_prompt: systemPrompt,
       capabilities,
+      category,
+      genre: category === 'writing' && genre ? genre : null,
+      default_mount_ids: defaultMountIds,
     })
   }
 
@@ -187,6 +209,62 @@ export function EditPersonaDialog({
                     </Button>
                   )
                 })}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>{t('personas.category')}</Label>
+                <Select
+                  value={category}
+                  onValueChange={setCategory}
+                  options={['normal', 'coding', 'writing', 'research', 'operations', 'general'].map(
+                    (c) => ({ label: t(`chat.persona.categories.${c}`), value: c }),
+                  )}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('personas.genre')}</Label>
+                <Select
+                  value={genre || 'none'}
+                  onValueChange={(v) => setGenre(v === 'none' ? '' : v)}
+                  disabled={category !== 'writing'}
+                  options={[
+                    { label: t('personas.genreNone'), value: 'none' },
+                    ...['novel', 'scenario', 'essay', 'blog'].map((g) => ({
+                      label: t(`chat.persona.genres.${g}`),
+                      value: g,
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('personas.defaultMounts')}</Label>
+              <p className="text-xs text-muted-foreground">{t('personas.defaultMountsHint')}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(mountsData?.items ?? []).map((m) => {
+                  const active = defaultMountIds.includes(m.id)
+                  return (
+                    <Button
+                      key={m.id}
+                      type="button"
+                      variant={active ? 'default' : 'outline'}
+                      size="sm"
+                      className="h-7 gap-1 px-2 text-2xs font-normal"
+                      aria-pressed={active}
+                      onClick={() =>
+                        setDefaultMountIds((prev) =>
+                          active ? prev.filter((id) => id !== m.id) : [...prev, m.id],
+                        )
+                      }
+                    >
+                      {m.name}
+                    </Button>
+                  )
+                })}
+                {(mountsData?.items ?? []).length === 0 && (
+                  <span className="text-xs text-muted-foreground">{t('personas.genreNone')}</span>
+                )}
               </div>
             </div>
             <DialogFooter>

@@ -34,6 +34,9 @@ interface PersistedState {
   activeRole: string | null
   /** Model override id (null = follow default / role). Persisted across reloads. */
   activeModelId: string | null
+  /** Session persona override id (null = inherit the global active persona).
+   * Rehydrated from the session record on loadSession. */
+  activePersonaId: string | null
   /** Per-message sampling temperature. Persisted. `null` = use provider default. */
   temperature: number | null
   /** Per-message max output tokens. Persisted. `null` = use provider default. */
@@ -165,12 +168,12 @@ interface ChatActions {
   newSession: () => void
   /** Fork the conversation at `messageId` into a fresh session (Task 22). */
   branchFrom: (messageId: string) => void
-  /** Rate an assistant answer: 1 (good) / -1 (bad); null clears the rating. */
-  rateMessage: (messageId: string, rating: 1 | -1 | null) => void
   /** Set the active project explicitly. */
   setActiveProject: (projectId: string | null) => void
   /** RFC-032: Set the active role hint. */
   setActiveRole: (role: string | null) => void
+  /** Session persona override (null = inherit global active persona). */
+  setActivePersona: (personaId: string | null) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
@@ -694,7 +697,7 @@ function flushPendingTokens(): void {
         }),
       }
     }
-    const processor = getOrCreateProcessor(msgId)
+    const processor = getOrCreateProcessor(msgId, s.messages)
     const result = processor.handleEvent({
       kind: 'text.delta',
       messageId: msgId,
@@ -738,10 +741,17 @@ export function __clearStreamProcessorsForTesting(): void {
 }
 const streamProcessors = new Map<string, StreamProcessor>()
 
-function getOrCreateProcessor(messageId: string): StreamProcessor {
+function getOrCreateProcessor(messageId: string, messages?: ChatMessage[]): StreamProcessor {
   let p = streamProcessors.get(messageId)
   if (!p) {
     p = new StreamProcessor(messageId)
+    // Terminal chunks can arrive after `done` deleted the live processor
+    // (done races the kernel bus's usage/agent_end). A fresh processor
+    // starts empty and its first patch would stamp `blocks: []` over the
+    // streamed message — adopt the rendered message so stragglers merge
+    // into the existing timeline instead of wiping it.
+    const existing = messages?.find((m) => m.id === messageId)
+    if (existing) p.adopt(existing)
     streamProcessors.set(messageId, p)
   }
   return p
@@ -798,7 +808,7 @@ export function applyContentChunk(
 ): { messages: ChatMessage[]; finishedMsgId?: string } {
   const msgId = lastAssistantMessageId(messages)
   if (!msgId) return { messages }
-  const processor = getOrCreateProcessor(msgId)
+  const processor = getOrCreateProcessor(msgId, messages)
   const { events } = adaptChunk(chunk, { msgId })
   let next = messages
   let finishedMsgId: string | undefined
@@ -823,7 +833,7 @@ export function applyTextFlush(
   if (!text) return messages
   const msgId = lastAssistantMessageId(messages)
   if (!msgId) return appendTokenToMessages(messages, text, ctx)
-  const processor = getOrCreateProcessor(msgId)
+  const processor = getOrCreateProcessor(msgId, messages)
   const result = processor.handleEvent({ kind: 'text.delta', messageId: msgId, text })
   return applyProcessorResult(messages, msgId, result, ctx)
 }
@@ -838,9 +848,9 @@ export const useChatStore = create<ChatStore>()(
       activeMountIds: null,
       activeRole: null,
       activeModelId: null,
+      activePersonaId: null,
       temperature: null,
       maxTokens: null,
-
       // ── Runtime ──
       messages: [],
       isStreaming: false,
@@ -1124,6 +1134,7 @@ export const useChatStore = create<ChatStore>()(
         const {
           activeSessionId,
           activeProjectId,
+          activePersonaId,
           activeMountIds,
           activeRole,
           activeModelId,
@@ -1186,6 +1197,9 @@ export const useChatStore = create<ChatStore>()(
           mount_ids: activeMountIds ?? '',
           // RFC-032: role hint for model routing
           role: activeRole ?? '',
+          // Session persona override — backend validates against the
+          // registry and threads it to ExecEnv::persona_id for the turn.
+          persona_id: activePersonaId ?? '',
           // Per-message model override (or last-picked persistent one).
           model: activeModelId ?? '',
         }
@@ -1354,6 +1368,9 @@ export const useChatStore = create<ChatStore>()(
             messages,
             activeSessionId: sessionId,
             activeProjectId: projectId,
+            // Session persona override is durable truth on reopen: the
+            // backend persisted it on the turn that set it.
+            activePersonaId: (data.active_persona_id as string | null) ?? null,
             isStreaming: false,
             _pendingQueue: [],
             sessionLoadError: null,
@@ -1403,19 +1420,6 @@ export const useChatStore = create<ChatStore>()(
         set({ messages: kept, activeProjectId })
       },
 
-      rateMessage(messageId: string, rating: 1 | -1 | null) {
-        set((s) => ({
-          messages: s.messages.map((m) => {
-            if (m.id !== messageId) return m
-            if (rating === null) {
-              const { rating: _drop, ...rest } = m.metadata ?? {}
-              return { ...m, metadata: rest }
-            }
-            return { ...m, metadata: { ...m.metadata, rating } }
-          }),
-        }))
-      },
-
       setActiveProject(projectId: string | null) {
         // F9: discard buffered tokens when switching projects (clears messages).
         discardPendingTokens()
@@ -1436,6 +1440,10 @@ export const useChatStore = create<ChatStore>()(
 
       setActiveRole(role: string | null) {
         set({ activeRole: role })
+      },
+
+      setActivePersona(personaId: string | null) {
+        set({ activePersonaId: personaId })
       },
 
       setActiveModelId(modelId: string | null) {
@@ -1492,6 +1500,7 @@ export const useChatStore = create<ChatStore>()(
           activeMountIds: null,
           activeRole: null,
           activeModelId: null,
+          activePersonaId: null,
           temperature: null,
           maxTokens: null,
           messages: [],
@@ -1709,7 +1718,7 @@ export const useChatStore = create<ChatStore>()(
               set({ messages: ensured.messages })
               msgId = ensured.messages[ensured.index]!.id
             }
-            const processor = getOrCreateProcessor(msgId)
+            const processor = getOrCreateProcessor(msgId, get().messages)
             const { events } = adaptChunk(chunk, { msgId })
             for (const ev of events) {
               const result = processor.handleEvent(ev)
@@ -2039,6 +2048,7 @@ export const useChatStore = create<ChatStore>()(
         activeMountIds: state.activeMountIds,
         activeRole: state.activeRole,
         activeModelId: state.activeModelId,
+        activePersonaId: state.activePersonaId,
         temperature: state.temperature,
         maxTokens: state.maxTokens,
       }),

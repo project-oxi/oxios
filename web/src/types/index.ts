@@ -241,8 +241,6 @@ export interface ChatMessage {
     /// Socket dropped mid-stream on this turn; the partial answer is kept
     /// and rendered with the InterruptedNotice `reason="interrupted"` copy.
     interrupted?: boolean
-    /// User's rating of the answer: 1 (good) / -1 (bad) (Task 22).
-    rating?: 1 | -1
   }
   totalInputTokens?: number
   totalOutputTokens?: number
@@ -601,6 +599,13 @@ export interface Persona {
   /// 'worktree-fanout', 'exec', 'web-search', 'longform-editor', 'outline'.
   /// Empty / undefined = no capabilities (all affordances disabled).
   capabilities?: string[]
+  /// UI taxonomy bucket: 'normal' | 'coding' | 'writing' | 'research' |
+  /// 'operations' | 'general' (free string; unknown → 'other' grouping).
+  category?: string
+  /// Writing sub-category: 'novel' | 'scenario' | 'essay' | 'blog'.
+  genre?: string | null
+  /// Mount IDs the chat composer auto-attaches when selected.
+  default_mount_ids?: string[]
 }
 
 // Workspace — matches backend TreeEntry from /api/workspace/tree

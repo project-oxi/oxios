@@ -29,6 +29,46 @@ function seed(): Mock {
   return send
 }
 
+describe('out-of-order terminal chunks must not wipe the turn', () => {
+  it('keeps blocks when done races ahead of usage/agent_end (live capture 2026-08-20)', () => {
+    // Real WS capture: the gateway's done and the kernel bus's usage/agent_end
+    // are emitted from two concurrent tasks and can interleave. When done
+    // lands first it finishes + deletes the StreamProcessor; the stragglers
+    // then created a FRESH processor whose patch stamped `blocks: []` over
+    // the live-rendered message (bubble collapsed 255 → 39 chars live).
+    const send = seed()
+    useChatStore.getState().sendMessage('한 문장으로만 답해줘.')
+
+    const h = useChatStore.getState().handleChunk
+    h({ type: 'agent_start', agent_id: 'ab12', name: '한 문장으로만 답해줘.' })
+    h({ type: 'model', model: 'zai-coding-plan/glm-5-turbo' })
+    h({ type: 'reasoning', subtype: 'start' })
+    h({ type: 'reasoning', content: '짧게 답한다', source: 'thinking' })
+    h({ type: 'reasoning', subtype: 'end' })
+    h({ type: 'token', content: '한 문장 답변' })
+    h({ type: 'done', session_id: 's-race', phase: 'execute', duration_ms: 3200 })
+    // Stragglers AFTER done — the racy order seen in production.
+    h({ type: 'usage', input_tokens: 100, output_tokens: 5 })
+    h({ type: 'agent_end', agent_id: 'ab12', success: true })
+    // A tail token whose rAF flush lands after done; the trailing non-token
+    // chunk flushes it synchronously (no timers needed in the test).
+    h({ type: 'token', content: '끝.' })
+    h({ type: 'usage', input_tokens: 105, output_tokens: 6 })
+
+    const s = useChatStore.getState()
+    const last = s.messages[s.messages.length - 1]!
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(last.role).toBe('assistant')
+    // The streamed text must survive — not be truncated to the straggler tail.
+    expect(last.content).toBe('한 문장 답변끝.')
+    const types = (last.blocks ?? []).map((b) => b.type)
+    expect(types).toContain('subagent')
+    expect(types).toContain('reasoning')
+    expect(types).toContain('text')
+    expect((last.blocks ?? []).length).toBeGreaterThan(2)
+    expect(last.generating).toBe(false)
+  })
+})
 describe('turn completion preserves streamed content', () => {
   it('keeps reasoning + answer blocks after done (sub-agent turn)', () => {
     const send = seed()

@@ -30,6 +30,7 @@ import { FanOutButton } from './FanOutButton'
 import { LiveActivityBar } from './live-activity-bar'
 import { ModelParamsPopover } from './model-params-popover'
 import { ModelPickerContainer } from './model-picker'
+import { PersonaPickerContainer } from './persona-picker'
 
 // ── Types ──
 
@@ -791,6 +792,7 @@ export function ChatInput({
               activeRole={activeRole}
               setActiveRole={setActiveRole}
             />
+            <PersonaPickerContainer />
             <ApprovalModeSelector />
             <input
               ref={fileInputRef}

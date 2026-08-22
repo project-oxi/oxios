@@ -256,8 +256,6 @@
     "thought": "Thought",
     "subagent": "Sub-agent: {{name}}",
     "branchHere": "Branch from here",
-    "rateUp": "Good response",
-    "rateDown": "Bad response",
     "inputPlaceholder": "Type a message...",
     "mentionHint": "Search knowledge, memory, mounts with @ — type to filter",
     "noMentionResults": "No matching items",
@@ -408,7 +406,6 @@
     "scrollToBottom": "Scroll to bottom",
     "regenerate": "Regenerate",
     "compressedCollapsed": "{{count}} earlier messages (click to expand)",
-    "addReaction": "Add reaction",
     "modelParams": "Model parameters",
     "temperature": "Temperature",
     "maxTokens": "Max tokens",
@@ -521,7 +518,29 @@
       "mountBound": "Bound to this session"
     },
     "knowledgeOpen": "View document",
-    "dropToAttach": "Drop files to attach"
+    "dropToAttach": "Drop files to attach",
+    "persona": {
+      "label": "Persona",
+      "auto": "Auto",
+      "globalIs": "Global: {{name}}",
+      "none": "No personas",
+      "mountsAttached": "Attached the persona's default mounts",
+      "categories": {
+        "normal": "Normal",
+        "coding": "Coding",
+        "writing": "Writing",
+        "research": "Research",
+        "operations": "Operations",
+        "general": "General",
+        "other": "Other"
+      },
+      "genres": {
+        "novel": "Novel",
+        "scenario": "Scenario",
+        "essay": "Essay",
+        "blog": "Blog"
+      }
+    }
   },
   "commandPalette": {
     "placeholder": "Search commands or type a memo…",
@@ -1438,7 +1457,15 @@
     "saved": "Persona saved",
     "systemPrompt": "System prompt",
     "systemPromptLabel": "System prompt",
-    "capabilities": "Capabilities"
+    "capabilities": "Capabilities",
+    "category": "Category",
+    "categoryPlaceholder": "Select a category",
+    "genre": "Genre",
+    "genrePlaceholder": "Select a genre",
+    "genreNone": "None",
+    "defaultMounts": "Default mounts",
+    "defaultMountsHint": "Mounts auto-attached when this persona is selected in chat",
+    "sessionPersonaHint": "Pick a per-session persona from the chat composer"
   },
   "projects": {
     "activity": "Activity",

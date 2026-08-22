@@ -1425,6 +1425,12 @@ pub struct KernelConfig {
     /// Maximum number of concurrent agents.
     #[serde(default = "default_max_agents")]
     pub max_agents: usize,
+    /// Vault-unification (RFC-050): explicit knowledge/vault root override.
+    /// Resolution order (see [`KernelConfig::resolved_knowledge_root`]):
+    /// this field → ecosystem `~/.oxi/config.toml` `[vault].path` →
+    /// `~/.oxi/vault`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_root: Option<String>,
 }
 
 fn default_workspace() -> String {
@@ -1443,12 +1449,48 @@ fn default_max_agents() -> usize {
     10
 }
 
+impl KernelConfig {
+    /// Resolve the knowledge/vault root (RFC-050).
+    ///
+    /// Order:
+    /// 1. explicit `kernel.knowledge_root` (home expanded);
+    /// 2. ecosystem `~/.oxi/config.toml` `[vault].path` (home expanded) —
+    ///    the `OXIOS_OXI_CONFIG_PATH` env var overrides the file location
+    ///    for tests;
+    /// 3. fallback `~/.oxi/vault`.
+    ///
+    /// A malformed ecosystem config file falls through to the fallback
+    /// rather than failing boot — the vault is a shared user surface, not
+    /// a hard dependency.
+    pub fn resolved_knowledge_root(&self) -> std::path::PathBuf {
+        if let Some(explicit) = self.knowledge_root.as_deref() {
+            return expand_home(explicit);
+        }
+        let oxi_config_path = std::env::var("OXIOS_OXI_CONFIG_PATH")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = dirs::home_dir().unwrap_or_default();
+                home.join(".oxi/config.toml")
+            });
+        if let Ok(raw) = std::fs::read_to_string(&oxi_config_path)
+            && let Ok(table) = raw.parse::<toml::Table>()
+            && let Some(vault) = table.get("vault").and_then(|v| v.as_table())
+            && let Some(path) = vault.get("path").and_then(|p| p.as_str())
+        {
+            return expand_home(path);
+        }
+        expand_home("~/.oxi/vault")
+    }
+}
+
 impl Default for KernelConfig {
     fn default() -> Self {
         Self {
             workspace: default_workspace(),
             event_bus_capacity: default_event_bus_capacity(),
             max_agents: 10,
+            knowledge_root: None,
         }
     }
 }
@@ -3070,5 +3112,70 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
             ..Default::default()
         };
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn knowledge_root_resolution_order() {
+        // 1. Explicit `kernel.knowledge_root` wins; `expand_home` applied.
+        let explicit = KernelConfig {
+            knowledge_root: Some("~/explicit-vault".into()),
+            ..KernelConfig::default_with_workspace_for_test("~/should-be-ignored")
+        };
+        assert_eq!(
+            explicit.resolved_knowledge_root(),
+            expand_home("~/explicit-vault"),
+        );
+
+        // 2. No explicit `kernel.knowledge_root` and `~/.oxi/config.toml`
+        //    exists with `[vault].path = "~/from-ecosystem"` →
+        //    `expand_home("~/from-ecosystem")` is returned.
+        let dir = tempdir_in_target();
+        let oxi_config = dir.join("oxi-config.toml");
+        std::fs::write(
+            &oxi_config,
+            "[vault]\npath = \"~/from-ecosystem\"\n",
+        )
+        .unwrap();
+        // SAFETY: env-var writes are serialized through `cargo test`'s
+        // single-process runner; tests in this module that share the var
+        // are designed to coexist (each writes its own value then unset).
+        unsafe {
+            std::env::set_var("OXIOS_OXI_CONFIG_PATH", &oxi_config);
+        }
+        let cfg = KernelConfig::default_with_workspace_for_test("~/also-ignored");
+        let resolved = cfg.resolved_knowledge_root();
+        unsafe {
+            std::env::remove_var("OXIOS_OXI_CONFIG_PATH");
+        }
+        assert_eq!(resolved, expand_home("~/from-ecosystem"));
+
+        // 3. Neither explicit nor `~/.oxi/config.toml` → fallback to
+        //    `~/.oxi/vault` (with `expand_home`).
+        unsafe {
+            std::env::remove_var("OXIOS_OXI_CONFIG_PATH");
+        }
+        let cfg = KernelConfig::default_with_workspace_for_test("~/ignored");
+        assert_eq!(cfg.resolved_knowledge_root(), expand_home("~/.oxi/vault"));
+    }
+
+    // Test-only constructors/helpers for the knowledge_root test above.
+    impl KernelConfig {
+        fn default_with_workspace_for_test(workspace: &str) -> Self {
+            Self {
+                workspace: workspace.into(),
+                event_bus_capacity: default_event_bus_capacity(),
+                max_agents: default_max_agents(),
+                knowledge_root: None,
+            }
+        }
+    }
+
+    fn tempdir_in_target() -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "oxios-kernel-config-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).expect("tempdir create");
+        base
     }
 }

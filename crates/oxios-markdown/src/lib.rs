@@ -40,6 +40,7 @@ pub mod knowledge;
 pub mod merge;
 pub mod parser;
 pub mod plugins;
+pub mod frontformat;
 pub mod schedule;
 pub mod stats;
 #[allow(dead_code)]

@@ -686,9 +686,10 @@ impl GitLayer {
     /// Unlike [`restore_file`], this does NOT touch the filesystem — it
     /// returns the blob data directly. Callers that need to write the
     /// content should pass it through `KnowledgeBase::note_restore`,
-    /// which acquires the VirtualFs write lock. This avoids a race where
-    /// `restore_file`'s direct `std::fs::write` bypasses the lock and
-    /// clobbers a concurrent `note_write` (I-4).
+    /// which writes atomically (temp file + rename) via
+    /// `frontformat::write_note`. This avoids a race where
+    /// `restore_file`'s direct `std::fs::write` clobbers a concurrent
+    /// `note_write` (I-4).
     pub fn file_at_commit(&self, rel_path: &str, hash: &str) -> Result<Vec<u8>> {
         // Validate path (defense-in-depth, same as restore_file).
         self.ensure_within_root(rel_path)?;
@@ -988,6 +989,22 @@ fn compute_unified_diff(old: &[u8], new: &[u8], path: &str) -> Option<String> {
     }
 
     Some(output)
+}
+
+/// T16 (vault-rooted git): compute the git-relative path for a knowledge
+/// file. `kb_root` is the knowledge/vault root; `git_root` is the layer's
+/// repository root. When `kb_root` sits inside `git_root`, the stripped
+/// prefix is prepended; when the two coincide (the vault-rooted default) —
+/// or `kb_root` is outside the repo — `path` is returned as-is, so an
+/// auto-commit of `<vault>/a/b.md` targets the existing `a/b.md` instead
+/// of silently falling back to a `knowledge/` prefix.
+pub fn rel_path(kb_root: &Path, git_root: &Path, path: &str) -> String {
+    match kb_root.strip_prefix(git_root) {
+        Ok(prefix) if !prefix.as_os_str().is_empty() => {
+            format!("{}/{}", prefix.display(), path)
+        }
+        _ => path.to_string(),
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -1359,4 +1376,66 @@ mod tests {
             .unwrap();
         assert_eq!(content, b"{\"v\":1}");
     }
+
+    // ── T16 vault-rooted git: rel_path helper + P1 closure ──────────────
+
+    /// `rel_path` must compute a path relative to `git_root` without an
+    /// empty-string `kb_root.strip_prefix(git_root)` fallback. When
+    /// `kb_root == git_root` (the new default — vault-rooted repo) the
+    /// `path` is returned as-is, so an auto-commit of `<vault>/a/b.md`
+    /// targets the existing `a/b.md` file instead of silently falling
+    /// back to `knowledge/a/b.md`.
+    #[test]
+    fn rel_path_empty_prefix_is_path_as_is() {
+        let root = Path::new("/v");
+        assert_eq!(rel_path(root, root, "a/b.md"), "a/b.md");
+        assert_eq!(
+            rel_path(Path::new("/w/v"), Path::new("/w"), "a/b.md"),
+            "v/a/b.md"
+        );
+    }
+
+    /// P1 closure: a vault-rooted `GitLayer` (i.e. `GitLayer::new(kb_root, …)`
+    /// with `kb_root` OUTSIDE any workspace) must accept `commit_file`,
+    /// expose history via `log_for_file`, and restore via `restore_file`
+    /// using paths computed by `rel_path`. This is the round-trip T15
+    /// review flagged as silently broken under the default config
+    /// (`auto_commit = true`, `kb_root = ~/.oxi/vault`).
+    #[test]
+    fn vault_rooted_commit_history_restore_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        // Vault is its own git root (NOT nested inside another repo).
+        let vault = dir.path().to_path_buf();
+        let layer = GitLayer::new(vault.clone(), true).unwrap();
+
+        // Seed a knowledge file at the vault root.
+        let rel = "notes/hello.md";
+        std::fs::create_dir_all(vault.join("notes")).unwrap();
+        std::fs::write(vault.join(rel), b"# v1\n").unwrap();
+
+        // Compute the path the way the kernel does — no `knowledge/` prefix.
+        let git_rel = rel_path(&vault, layer.root(), rel);
+        assert_eq!(git_rel, rel);
+
+        let v1 = layer.commit_file(&git_rel, "knowledge: update notes/hello.md").unwrap();
+        assert_ne!(v1.hash, "(disabled)");
+
+        // History — kernel route equivalent of /history.
+        let log = layer.log_for_file(&git_rel, 50).unwrap();
+        assert!(
+            log.iter().any(|e| e.hash == v1.hash),
+            "log_for_file must surface the just-committed entry"
+        );
+
+        // Mutate, commit v2, then restore v1.
+        std::fs::write(vault.join(rel), b"# v2\n").unwrap();
+        let v2 = layer.commit_file(&git_rel, "knowledge: update notes/hello.md").unwrap();
+        assert_ne!(v2.hash, v1.hash);
+
+        layer.restore_file(&git_rel, &v1.short_hash).unwrap();
+        let restored = std::fs::read_to_string(vault.join(rel)).unwrap();
+        assert_eq!(restored, "# v1\n");
+    }
+
+
 }

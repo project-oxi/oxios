@@ -6364,10 +6364,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxi-frontmatter"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "thiserror 2.0.20",
+ "time",
+ "uuid",
+]
+
+[[package]]
 name = "oxibrain-client"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b3b292290b2beda3a1f70d94891164bcdb6e27553342c8a3bf3b961fa2f185b"
+version = "0.6.0"
+source = "git+https://github.com/a7garden/oxibrain?tag=v0.6.0#18950374e2195c54e9e382e15fd451b86c69cc6e"
 dependencies = [
  "anyhow",
  "serde",
@@ -6659,7 +6668,7 @@ dependencies = [
 
 [[package]]
 name = "oxios"
-version = "1.43.0"
+version = "1.43.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6681,6 +6690,7 @@ dependencies = [
  "libc",
  "local-ip-address",
  "mime_guess",
+ "oxi-frontmatter",
  "oxibrain-client",
  "oxibrowser",
  "oxicode-sdk",
@@ -6832,6 +6842,7 @@ dependencies = [
  "hex",
  "md-5 0.10.6",
  "once_cell",
+ "oxi-frontmatter",
  "parking_lot",
  "percent-encoding",
  "rand 0.8.7",
@@ -6842,6 +6853,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 1.0.69",
+ "time",
  "tokio",
  "tracing",
  "unicode-normalization",

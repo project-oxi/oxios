@@ -71,6 +71,9 @@ impl Default for AgentPermissions {
                 "/sys/**".to_string(),
                 "/proc/**".to_string(),
                 ".oxios/**".to_string(),
+                // Vault-unification: shared ecosystem surface (`~/.oxi/vault`,
+                // `~/.oxi/brain`, settings) is denied to agents by default.
+                ".oxi/**".to_string(),
             ],
             network_access: false,
             max_execution_time_secs: 300,
@@ -264,6 +267,25 @@ mod tests {
         assert!(perms.is_path_denied("/proc/self/environ"));
         assert!(perms.is_path_denied("/sys/kernel/addr"));
         assert!(perms.is_path_denied(".oxios/config.toml"));
+    }
+
+    #[test]
+    fn test_default_permissions_denies_oxi_vault() {
+        // Default deny list MUST block the ecosystem `.oxi/**` surface so
+        // agents cannot touch shared config/state (vault, brain, settings,
+        // sessions) through their tool surface. Without this, an agent
+        // could pivot through `read`/`bash` into vault files or
+        // `~/.oxi/settings.json` and exfiltrate credentials — defeating
+        // AccessManager's per-tool sandbox.
+        let perms = AgentPermissions::default();
+        assert!(
+            perms.denied_paths.iter().any(|p| p == ".oxi/**"),
+            "default denied_paths must include `.oxi/**`; got {:?}",
+            perms.denied_paths,
+        );
+        assert!(perms.is_path_denied(".oxi/vault/notes/foo.md"));
+        assert!(perms.is_path_denied(".oxi/settings.json"));
+        assert!(perms.is_path_denied(".oxi/brain/index.sqlite"));
     }
 
     #[test]

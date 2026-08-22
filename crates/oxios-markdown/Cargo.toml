@@ -13,7 +13,10 @@ tokio = { workspace = true, features = ["fs", "sync", "rt"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = "0.9"
+# Vault-unification (T19): shared frontmatter contract (see workspace dep).
+oxi-frontmatter = { workspace = true }
 anyhow = { workspace = true }
+time = "0.3"
 thiserror = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 chrono-tz = "0.9"

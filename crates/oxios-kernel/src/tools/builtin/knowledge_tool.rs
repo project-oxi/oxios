@@ -701,4 +701,71 @@ mod tests {
         let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
         assert_eq!(actions.len(), 28);
     }
+
+    fn make_tool() -> (Arc<oxios_markdown::KnowledgeBase>, KnowledgeTool) {
+        let dir = std::env::temp_dir().join(format!("test-kb-tool-{}", uuid::Uuid::new_v4()));
+        let kb = Arc::new(oxios_markdown::KnowledgeBase::new(dir).unwrap());
+        (Arc::clone(&kb), KnowledgeTool::new(kb))
+    }
+
+    async fn tool_write(
+        tool: &KnowledgeTool,
+        path: &str,
+        content: &str,
+    ) -> oxicode_sdk::AgentToolResult {
+        tool.execute(
+            "test-call",
+            json!({"action": "write", "path": path, "content": content}),
+            None,
+            &ToolContext::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// RFC-022 user-authored contract (design §5): user-authored means
+    /// "frontmatter present WITHOUT an `oxios:` table". The agent tool
+    /// write must refuse such notes and still succeed on its own
+    /// notes (frontmatter WITH an `oxios:` table).
+    #[tokio::test]
+    #[ignore = "vault-unification T12 spec: note_write_with_meta merge path not yet converted to frontformat"]
+    async fn write_refuses_user_authored_and_accepts_agent_notes() {
+        let (kb, tool) = make_tool();
+
+        // Seed a user-authored note: frontmatter without an `oxios:`
+        // table (Obsidian-style). Seeded via std::fs::write because
+        // note_write itself now synthesizes frontmatter.
+        let user_note = "---\ntags: [rust, design]\nauthor: jane\n---\n\n# My note\n";
+        std::fs::create_dir_all(kb.root().join("brain")).unwrap();
+        std::fs::write(kb.root().join("brain").join("User.md"), user_note).unwrap();
+
+        // Agent write to the user note ⇒ refusal message, file untouched.
+        let res = tool_write(&tool, "brain/User.md", "# overwritten").await;
+        assert!(!res.success, "agent write to user note must be refused");
+        assert!(
+            res.output.contains("user-authored"),
+            "refusal must name user-authored; got: {}",
+            res.output
+        );
+        assert_eq!(
+            kb.note_read("brain/User.md").unwrap().unwrap(),
+            user_note,
+            "refused write must leave the user note byte-identical"
+        );
+
+        // Agent write to its own note (lands an `oxios:` table) ⇒ succeeds.
+        let res = tool_write(&tool, "brain/Agent.md", "# Agent note").await;
+        assert!(res.success, "agent write to own note must succeed; got: {}", res.output);
+        let agent_note = kb.note_read("brain/Agent.md").unwrap().unwrap();
+        assert!(agent_note.contains("oxios:"), "own note must carry the oxios: table");
+        assert!(agent_note.contains("# Agent note"));
+
+        // Re-write of its own note still succeeds — an `oxios:` table
+        // means the note is agent-authored, NOT user-authored.
+        let res = tool_write(&tool, "brain/Agent.md", "# Agent note v2").await;
+        assert!(res.success, "re-write of own note must succeed; got: {}", res.output);
+        let agent_note = kb.note_read("brain/Agent.md").unwrap().unwrap();
+        assert!(agent_note.contains("# Agent note v2"));
+        assert!(agent_note.contains("oxios:"));
+    }
 }

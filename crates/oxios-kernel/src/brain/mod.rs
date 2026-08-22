@@ -203,6 +203,20 @@ impl BrainConnection {
             .await
     }
 
+    /// T17 (vault unification): register the shared vault directory as a
+    /// daemon-hosted pull source by issuing `BrainClient::sync_run(dir,
+    /// space)` — one registration + full watch pass. Degrades to `None`
+    /// (no panic) when the daemon is unreachable, mirroring the
+    /// `remember`/`recall`/`stats` degradation contract (C1).
+    pub async fn register_vault_source(&self, dir: &Path) -> Option<Value> {
+        let dir = dir.to_string_lossy().to_string();
+        let space = self.config.space.clone();
+        let outcome = self
+            .call(move |c| Box::pin(async move { c.sync_run(&dir, &space).await }))
+            .await?;
+        serde_json::to_value(outcome).ok()
+    }
+
     /// Aggregate counts for the space.
     pub async fn stats(&self) -> Option<Value> {
         let space = self.config.space.clone();
@@ -380,5 +394,23 @@ mod tests {
             1,
             "hook fires exactly once per failed call"
         );
+    }
+
+    /// T17 (vault unification): `register_vault_source` issues
+    /// `BrainClient::sync_run(dir, config.space)` on the connected daemon
+    /// and degrades to `None` (no panic) when the daemon is unreachable.
+    /// Mirrors the `remember`/`recall`/`stats` degradation contract (C1).
+    #[tokio::test]
+    async fn register_vault_source_degrades_when_daemon_unavailable() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let config = BrainConfig::new(dir.path().join("missing.sock"), "personal");
+        let conn = BrainConnection::connect(config).await;
+        assert!(!conn.is_available(), "no daemon -> degraded");
+
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault mkdir");
+        // No daemon => None, no panic (C1).
+        let result = conn.register_vault_source(&vault).await;
+        assert_eq!(result, None, "unreachable daemon => None");
     }
 }

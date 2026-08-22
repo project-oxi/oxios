@@ -1,6 +1,6 @@
 [package]
 name = "oxios"
-version = "1.43.0"
+version = "1.43.1"
 edition = "2024"
 description = "Oxios Agent OS — Agent Operating System powered by oxicode-sdk"
 license = "MIT"
@@ -90,12 +90,13 @@ futures = "0.3"
 async-trait = "0.1"
 
 # Serialization
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 toml = "0.8"
 
-# IDs
-uuid = { version = "1", features = ["v4", "serde"] }
+# IDs. v7 is needed by the migration binary (time-ordered synthesized
+# note ids — the same shape `oxi-frontmatter::write_document` mints).
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 
 # Logging
 tracing = "0.1"
@@ -121,8 +122,14 @@ parking_lot = "0.12"
 arc-swap = "1.7"
 
 
-# Brain daemon client (RFC-047)
-oxibrain-client = "0.3"
+# Vault-unification (T17): `sync_run` was added in oxibrain v0.6.0; the
+# daemon-side pull-source registration is the single ingestion path. Git
+# tag until crates.io catches up.
+oxibrain-client = { version = "0.6", git = "https://github.com/a7garden/oxibrain", tag = "v0.6.0" }
+# Vault-unification (T19): shared frontmatter contract crate. Lives in the
+# oximemo vault-unification worktree; TODO(vault-unification): swap to
+# crates.io "0.1" or a git rev when published.
+oxi-frontmatter = { path = "../worktrees/oximemo-vault-unification/crates/oxi-frontmatter" }
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
@@ -214,6 +221,10 @@ oxios-markdown = { version = "1.43.0", path = "crates/oxios-markdown" }
 oxios-ouroboros = { version = "1.43.0", path = "crates/oxios-ouroboros" }
 oxios-gateway = { version = "1.43.0", path = "crates/oxios-gateway" }
 oxicode-sdk = { workspace = true }
+# Vault-unification (T19): the one-time `oxios-migrate-vault` binary
+# converts oximemo v3 TOML frontmatter and synthesizes v4 blocks through
+# the shared frontmatter contract crate directly.
+oxi-frontmatter = { workspace = true }
 
 # RFC-026: optional deps gated by features (were separate crates)
 axum = { workspace = true, optional = true }
@@ -287,6 +298,14 @@ name = "remote_probe"
 # feature and cargo errors E0601 because the cfg-gated `main()` is
 # stripped. `required-features` makes cargo skip the example entirely.
 required-features = ["remote"]
+
+# Vault-unification (T19): one-time ecosystem migration binary. Default
+# invocation is a dry-run; `--apply` performs backup → move/convert → git
+# history import. Separate bin target so it never ships inside the main
+# `oxios` runtime surface.
+[[bin]]
+name = "oxios-migrate-vault"
+path = "src/bin/migrate_vault.rs"
 
 [patch.crates-io]
 oxios-kernel = { path = "crates/oxios-kernel" }

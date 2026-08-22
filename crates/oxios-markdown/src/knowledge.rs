@@ -1250,13 +1250,16 @@ mod tests {
             chat, "- [ ] x\n",
             "system path must be raw, no frontmatter; got: {chat:?}"
         );
-        assert!(!chat.starts_with("---"), "system path must never carry frontmatter");
+        assert!(
+            !chat.starts_with("---"),
+            "system path must never carry frontmatter"
+        );
     }
 
     #[ignore = "vault-unification T12 spec: note_write path not yet converted to frontformat::write_note"]
     fn note_write_noop_skips_backlink_reindex_and_callback() {
-        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
         let kb = make_test_kb();
         let counter = Arc::new(AtomicUsize::new(0));
@@ -1267,7 +1270,10 @@ mod tests {
 
         kb.note_write("brain/Rust.md", "hello world").unwrap();
         let after_first = counter.load(AtomicOrdering::SeqCst);
-        assert_eq!(after_first, 1, "first write must fire callback exactly once");
+        assert_eq!(
+            after_first, 1,
+            "first write must fire callback exactly once"
+        );
 
         // identical re-write must be a NoOp → no callback
         kb.note_write("brain/Rust.md", "hello world").unwrap();
@@ -1337,7 +1343,10 @@ mod tests {
             .unwrap();
         assert!(accepted, "fresh memo must accept metadata write");
         let after = kb.note_read("brain/New.md").unwrap().unwrap();
-        assert!(after.starts_with("---\n"), "must carry frontmatter; got: {after:?}");
+        assert!(
+            after.starts_with("---\n"),
+            "must carry frontmatter; got: {after:?}"
+        );
         assert!(
             after.contains("oxios:"),
             "must contain oxios: table; got: {after:?}"
@@ -1351,7 +1360,10 @@ mod tests {
         kb.note_write_with_meta("brain/New.md", "edited body", &meta2)
             .unwrap();
         let after2 = kb.note_read("brain/New.md").unwrap().unwrap();
-        assert!(after2.contains("id:"), "id must survive merge; got: {after2:?}");
+        assert!(
+            after2.contains("id:"),
+            "id must survive merge; got: {after2:?}"
+        );
         assert!(
             after2.contains("agent2"),
             "author must be overwritten by new meta; got: {after2:?}"
@@ -1391,8 +1403,8 @@ mod tests {
         );
 
         // Restore must NOT fire on_file_change callbacks
-        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_cb = Arc::clone(&counter);
         let kb2 = make_test_kb();

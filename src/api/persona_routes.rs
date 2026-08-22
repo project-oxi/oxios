@@ -90,6 +90,7 @@ pub async fn handle_persona_get(
 #[derive(Debug, Deserialize)]
 pub struct PersonaCreateRequest {
     name: String,
+    #[serde(default = "default_role")]
     role: String,
     description: String,
     system_prompt: String,
@@ -117,6 +118,10 @@ fn default_true() -> bool {
 
 fn default_category() -> String {
     "general".to_string()
+}
+
+fn default_role() -> String {
+    "assistant".to_string()
 }
 
 /// POST /api/personas — Create a new persona.
@@ -200,9 +205,7 @@ pub async fn handle_persona_update(
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
         category: body.category.unwrap_or(existing.category),
         genre: body.genre.or(existing.genre),
-        default_mount_ids: body
-            .default_mount_ids
-            .unwrap_or(existing.default_mount_ids),
+        default_mount_ids: body.default_mount_ids.unwrap_or(existing.default_mount_ids),
     };
 
     state

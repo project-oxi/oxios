@@ -758,7 +758,10 @@ mod tests {
             "essayist",
             "blogger",
         ] {
-            assert!(ids.contains(&expected), "missing default persona {expected}");
+            assert!(
+                ids.contains(&expected),
+                "missing default persona {expected}"
+            );
         }
 
         // All should be enabled with non-empty prompts and traits

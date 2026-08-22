@@ -3131,11 +3131,7 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         //    `expand_home("~/from-ecosystem")` is returned.
         let dir = tempdir_in_target();
         let oxi_config = dir.join("oxi-config.toml");
-        std::fs::write(
-            &oxi_config,
-            "[vault]\npath = \"~/from-ecosystem\"\n",
-        )
-        .unwrap();
+        std::fs::write(&oxi_config, "[vault]\npath = \"~/from-ecosystem\"\n").unwrap();
         // SAFETY: env-var writes are serialized through `cargo test`'s
         // single-process runner; tests in this module that share the var
         // are designed to coexist (each writes its own value then unset).
@@ -3171,10 +3167,8 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
     }
 
     fn tempdir_in_target() -> std::path::PathBuf {
-        let base = std::env::temp_dir().join(format!(
-            "oxios-kernel-config-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("oxios-kernel-config-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).expect("tempdir create");
         base
     }

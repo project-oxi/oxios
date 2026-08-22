@@ -755,15 +755,26 @@ mod tests {
 
         // Agent write to its own note (lands an `oxios:` table) ⇒ succeeds.
         let res = tool_write(&tool, "brain/Agent.md", "# Agent note").await;
-        assert!(res.success, "agent write to own note must succeed; got: {}", res.output);
+        assert!(
+            res.success,
+            "agent write to own note must succeed; got: {}",
+            res.output
+        );
         let agent_note = kb.note_read("brain/Agent.md").unwrap().unwrap();
-        assert!(agent_note.contains("oxios:"), "own note must carry the oxios: table");
+        assert!(
+            agent_note.contains("oxios:"),
+            "own note must carry the oxios: table"
+        );
         assert!(agent_note.contains("# Agent note"));
 
         // Re-write of its own note still succeeds — an `oxios:` table
         // means the note is agent-authored, NOT user-authored.
         let res = tool_write(&tool, "brain/Agent.md", "# Agent note v2").await;
-        assert!(res.success, "re-write of own note must succeed; got: {}", res.output);
+        assert!(
+            res.success,
+            "re-write of own note must succeed; got: {}",
+            res.output
+        );
         let agent_note = kb.note_read("brain/Agent.md").unwrap().unwrap();
         assert!(agent_note.contains("# Agent note v2"));
         assert!(agent_note.contains("oxios:"));

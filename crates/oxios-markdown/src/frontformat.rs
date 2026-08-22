@@ -11,8 +11,8 @@
 //! conversion lands with the rest of the vault-unification tasks.
 
 pub use oxi_frontmatter::{
-    atomic_write, emit, parse, write_document, FrontmatterError, Mutation, NoteFormat, Parsed,
-    Synthesize, Table, Value, WriteOutcome,
+    FrontmatterError, Mutation, NoteFormat, Parsed, Synthesize, Table, Value, WriteOutcome,
+    atomic_write, emit, parse, write_document,
 };
 
 use std::path::Path;

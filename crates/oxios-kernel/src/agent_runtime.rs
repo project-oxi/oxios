@@ -380,7 +380,11 @@ impl AgentRuntime {
                     .and_then(|pm| pm.store().get(id))
                     .filter(|p| p.enabled)
             })
-            .or_else(|| self.persona_manager.as_ref().and_then(|pm| pm.get_active_persona()));
+            .or_else(|| {
+                self.persona_manager
+                    .as_ref()
+                    .and_then(|pm| pm.get_active_persona())
+            });
 
         // Get persona system prompt.
         let persona_prompt = persona

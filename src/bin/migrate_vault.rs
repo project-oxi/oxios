@@ -289,12 +289,15 @@ mod tests {
     #[test]
     fn rfc022_note_keeps_block_and_gains_core_keys() {
         let note = "---\ntitle: Rust learnings\noxios:\n  author: me\n  quality: distilled\n  source: manual\n  needs_review: false\n---\n\n# Rust\n";
-        let out = convert_document(note, Some("2020-01-01T00:00:00Z"), "2026-08-21T00:00:00Z")
-            .unwrap();
+        let out =
+            convert_document(note, Some("2020-01-01T00:00:00Z"), "2026-08-21T00:00:00Z").unwrap();
         assert!(out.had_fm, "source had a frontmatter block");
         assert!(out.id_synthesized, "id synthesized");
         assert!(out.content.starts_with("---\nid: "));
-        assert!(out.content.contains("\ncreated: 2020-01-01T00:00:00Z\n"), "created from hint");
+        assert!(
+            out.content.contains("\ncreated: 2020-01-01T00:00:00Z\n"),
+            "created from hint"
+        );
         assert!(out.content.contains("\nupdated: 2026-08-21T00:00:00Z\n"));
         // The oxios: table and unknown keys survive.
         assert!(out.content.contains("oxios:\n  author: me\n  quality: distilled\n  source: manual\n  needs_review: false"), "{}", out.content);
@@ -306,20 +309,28 @@ mod tests {
     #[test]
     fn bare_note_gets_full_block_with_created_hint() {
         let bare = "# just markdown\n\nsome body\n";
-        let out = convert_document(bare, Some("2021-05-05T05:05:05Z"), "2026-08-21T00:00:00Z")
-            .unwrap();
+        let out =
+            convert_document(bare, Some("2021-05-05T05:05:05Z"), "2026-08-21T00:00:00Z").unwrap();
         assert!(!out.had_fm);
         assert!(out.id_synthesized);
         assert!(out.content.starts_with("---\nid: "));
         assert!(out.content.contains("\ncreated: 2021-05-05T05:05:05Z\n"));
         assert!(out.content.contains("\nupdated: 2026-08-21T00:00:00Z\n"));
-        assert!(out.content.ends_with("---\n# just markdown\n\nsome body\n"), "{}", out.content);
+        assert!(
+            out.content.ends_with("---\n# just markdown\n\nsome body\n"),
+            "{}",
+            out.content
+        );
     }
 
     #[test]
     fn created_prefers_git_then_mtime_then_now() {
         assert_eq!(
-            created_from(Some("2026-01-02T00:00:00Z\n2024-01-01T00:00:00Z\n"), Some("2025-06-06T00:00:00Z"), "2026-08-21T00:00:00Z"),
+            created_from(
+                Some("2026-01-02T00:00:00Z\n2024-01-01T00:00:00Z\n"),
+                Some("2025-06-06T00:00:00Z"),
+                "2026-08-21T00:00:00Z"
+            ),
             "2024-01-01T00:00:00Z",
             "oldest git line wins"
         );
@@ -373,7 +384,10 @@ mod tests {
             .filter(|a| matches!(a, FileAction::MoveVerbatim { .. }))
             .map(FileAction::rel)
             .collect();
-        assert!(verbatim.contains(&"Chat.md"), "Chat.md verbatim: {verbatim:?}");
+        assert!(
+            verbatim.contains(&"Chat.md"),
+            "Chat.md verbatim: {verbatim:?}"
+        );
         assert!(verbatim.contains(&"config.json"), "{verbatim:?}");
         assert!(verbatim.contains(&"img/logo.png"), "{verbatim:?}");
         assert!(verbatim.contains(&"habits/Mood.md"), "{verbatim:?}");
@@ -402,7 +416,10 @@ mod tests {
     fn plan_reports_already_migrated_when_source_missing() {
         let home = scratch_home();
         // No oximemo old vault, no knowledge tree; vault exists already.
-        write(&home.path().join(".oxi/vault/notes/there.md"), "---\nid: a\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\nx\n");
+        write(
+            &home.path().join(".oxi/vault/notes/there.md"),
+            "---\nid: a\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\nx\n",
+        );
         let paths = resolve_paths(home.path()).unwrap();
         let plan = build_plan(&paths, "2026-08-21T00:00:00Z").unwrap();
         assert_eq!(plan.knowledge, TreeStatus::AlreadyMigrated);
@@ -434,7 +451,10 @@ mod tests {
         let home = scratch_home();
         let kb = home.path().join(".oxios/workspace/knowledge");
         // Malformed v4 frontmatter: unclosed fence.
-        write(&kb.join("brain/bad.md"), "---\nid: x\ncreated: 1\nbody never closed");
+        write(
+            &kb.join("brain/bad.md"),
+            "---\nid: x\ncreated: 1\nbody never closed",
+        );
         let paths = resolve_paths(home.path()).unwrap();
         let plan = build_plan(&paths, "2026-08-21T00:00:00Z").unwrap();
         assert_eq!(plan.malformed.len(), 1, "{:?}", plan.malformed);
@@ -466,7 +486,10 @@ mod tests {
         // Nothing was created anywhere.
         assert!(!paths.vault_dest.exists(), "vault must not exist");
         assert!(!paths.backups_root.exists(), "backups must not exist");
-        assert!(!paths.oxi_config.exists(), "~/.oxi/config.toml must not exist");
+        assert!(
+            !paths.oxi_config.exists(),
+            "~/.oxi/config.toml must not exist"
+        );
 
         // Sources are byte-identical.
         let after: Vec<(PathBuf, String)> = {
@@ -517,8 +540,7 @@ mod tests {
         );
 
         // Vault now holds converted content.
-        let migrated =
-            fs::read_to_string(paths.vault_dest.join("notes/hello.md")).unwrap();
+        let migrated = fs::read_to_string(paths.vault_dest.join("notes/hello.md")).unwrap();
         assert!(migrated.starts_with("---\nid: x\ncreated: 2026-07-28T10:15:03+09:00"));
         assert!(migrated.contains("favorite: false"));
         let rust = fs::read_to_string(paths.vault_dest.join("brain/Rust.md")).unwrap();

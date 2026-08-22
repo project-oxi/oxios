@@ -202,6 +202,22 @@ impl PersonaManager {
         for p in &snap.personas {
             self.store.register(p.clone());
         }
+        // Vault-of-record backfill: v2 records persisted before the
+        // category taxonomy exist load with the serde default ("general").
+        // The nine legacy default ids get their intended category so the
+        // picker/groups are correct on the first boot after upgrade.
+        // User-created personas are never touched.
+        let defaults = default_personas();
+        for p in &snap.personas {
+            if p.category == "general"
+                && let Some(d) = defaults.iter().find(|d| d.id == p.id)
+                && d.category != "general"
+                && let Some(mut updated) = self.store.get(&p.id)
+            {
+                updated.category = d.category.clone();
+                let _ = self.store.update(&p.id, updated);
+            }
+        }
         if let Some(active) = snap.active_persona_id
             && snap.personas.iter().any(|p| p.id == active && p.enabled)
         {
@@ -209,8 +225,6 @@ impl PersonaManager {
         }
         Ok(())
     }
-
-    /// StateStore 에 페르소나 + active_persona_id 를 저장.
     /// `state_store` 가 설정되지 않은 경우 no-op (`Ok(())`).
     /// 메모리 상태는 유지, IO 실패는 `Result::Err` 로 전파.
     pub async fn persist(&self) -> Result<()> {
@@ -324,6 +338,44 @@ mod tests {
         assert_eq!(pm2.active_persona_id(), Some("custom-1".to_string()));
         // Defaults should also still be present (new() created them).
         assert!(pm2.store().get("dev").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_load_backfills_categories_for_legacy_defaults() {
+        let store = make_store();
+        // Simulate a v2 file persisted before the taxonomy: the default
+        // personas carry no category (serde default "general") and a
+        // user-created persona must stay untouched.
+        let mut legacy = default_personas();
+        for p in &mut legacy {
+            p.category = "general".to_string();
+        }
+        let mut user_made = Persona::new("Code", "coder", "user-made", "You write code.");
+        user_made.id = "user-code".to_string();
+        legacy.push(user_made);
+        crate::persona::persistence::save_to_state_store(
+            &store,
+            &crate::persona::persistence::PersonaSnapshot {
+                schema_version: crate::persona::persistence::SCHEMA_VERSION,
+                active_persona_id: Some("dev".to_string()),
+                personas: legacy,
+            },
+        )
+        .await
+        .unwrap();
+
+        let pm = PersonaManager::new().with_state_store(store.clone());
+        pm.load_from_state_store(&store).await.unwrap();
+
+        // Legacy defaults regained their intended categories…
+        assert_eq!(pm.store().get("dev").unwrap().category, "coding");
+        assert_eq!(pm.store().get("writer").unwrap().category, "writing");
+        assert_eq!(pm.store().get("ops").unwrap().category, "operations");
+        // …architect/mentor/planner legitimately stay general…
+        assert_eq!(pm.store().get("architect").unwrap().category, "general");
+        // …and user-created personas are never rewritten.
+        assert_eq!(pm.store().get("user-code").unwrap().category, "general");
+        assert_eq!(pm.store().get("user-code").unwrap().name, "Code");
     }
 
     #[tokio::test]

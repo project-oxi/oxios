@@ -1417,7 +1417,9 @@ mod tests {
         let git_rel = rel_path(&vault, layer.root(), rel);
         assert_eq!(git_rel, rel);
 
-        let v1 = layer.commit_file(&git_rel, "knowledge: update notes/hello.md").unwrap();
+        let v1 = layer
+            .commit_file(&git_rel, "knowledge: update notes/hello.md")
+            .unwrap();
         assert_ne!(v1.hash, "(disabled)");
 
         // History — kernel route equivalent of /history.
@@ -1429,13 +1431,13 @@ mod tests {
 
         // Mutate, commit v2, then restore v1.
         std::fs::write(vault.join(rel), b"# v2\n").unwrap();
-        let v2 = layer.commit_file(&git_rel, "knowledge: update notes/hello.md").unwrap();
+        let v2 = layer
+            .commit_file(&git_rel, "knowledge: update notes/hello.md")
+            .unwrap();
         assert_ne!(v2.hash, v1.hash);
 
         layer.restore_file(&git_rel, &v1.short_hash).unwrap();
         let restored = std::fs::read_to_string(vault.join(rel)).unwrap();
         assert_eq!(restored, "# v1\n");
     }
-
-
 }

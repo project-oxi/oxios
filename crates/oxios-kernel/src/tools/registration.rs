@@ -36,9 +36,7 @@ use crate::access_manager::{AccessGate, AgentContext};
 use crate::capability::{CSpace, ResourceRef, Rights};
 use crate::tools::builtin::*;
 use crate::tools::gated_tool::GatedTool;
-use crate::tools::{
-    A2aDelegateTool, A2aQueryTool, A2aSendTool, ExecTool, KnowledgeTool,
-};
+use crate::tools::{A2aDelegateTool, A2aQueryTool, A2aSendTool, ExecTool, KnowledgeTool};
 use crate::types::AgentId;
 
 /// Register the always-on tool set into a [`ToolRegistry`].
@@ -255,7 +253,6 @@ pub fn register_tools_from_cspace(
             // ToolRetriever shows them in the capability index;
             // agents use exec to run program commands.
             ResourceRef::Skill { .. } => {}
-
 
             // Space, Agent, Mcp resource refs are handled through
             // their respective KernelDomain registrations above

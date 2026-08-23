@@ -1206,8 +1206,8 @@ impl KernelBuilder {
             config.git.auto_commit,
             // R16 review F2 (b): explicit opt-in for foreign repos at
             // the vault root. Default false ⇒ loud warn + disabled layer
-            // (the user must write the .oxios-git marker or set this to
-            // true to opt in).
+            // (the user must write the `.oxi-vault-git` marker — `.oxios-git`
+            // is recognized as a legacy marker — or set this to true to opt in).
             config.git.adopt_foreign_repo,
         )?);
 

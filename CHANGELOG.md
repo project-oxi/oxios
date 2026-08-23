@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased] - 2026-08-22
 
 ### Added
+- **`oxi-vault-git` shared crate replaces in-tree `git_layer`** — oxios
+  now consumes the same vault-git implementation as oximemo
+  (`oxi-vault-git@0.1.0`, crates.io); the in-tree `git_layer` module was
+  deleted. Behavior unchanged for callers (`commit_file`, `log`,
+  `restore_file`, foreign-repo adoption gating), but bugfixes to the
+  shared crate (e.g. the `.oxi-vault-git`/`.oxios-git` ownership marker
+  handling) now land once for both apps instead of drifting.
 - **RFC-050: ecosystem vault unification** — one shared knowledge vault at
   `~/.oxi/vault/`, converged on the new neutral `oxi-frontmatter` format
   (constrained YAML subset). oxios, oximemo, and the oxibrain daemon read

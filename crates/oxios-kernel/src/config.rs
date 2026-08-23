@@ -2266,10 +2266,11 @@ pub struct GitConfig {
     #[serde(default = "default_true")]
     pub auto_commit: bool,
     /// Adopt an existing foreign git repo at the vault root by writing
-    /// the `.oxios-git` ownership marker. Default `false` — a foreign
-    /// repo disables auto-commit + S-4 reconcile with a loud warning,
-    /// so the operator can choose to opt in explicitly (avoids sweeping
-    /// a user's uncommitted edits one-commit-per-file through a repo
+    /// the `.oxi-vault-git` ownership marker (`.oxios-git` is recognized
+    /// as a legacy marker but no longer written). Default `false` — a
+    /// foreign repo disables auto-commit + S-4 reconcile with a loud
+    /// warning, so the operator can choose to opt in explicitly (avoids
+    /// sweeping a user's uncommitted edits one-commit-per-file through a repo
     /// they didn't author). R16 review F2 (b).
     #[serde(default)]
     pub adopt_foreign_repo: bool,

@@ -3500,7 +3500,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a791e6620676a875f362f3156ed213e73ca099a09bf992c18812abe65cc37b1"
 dependencies = [
  "bstr",
- "hashbrown 0.15.5",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -6376,6 +6376,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxi-vault-git"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d274b3b2632287c5f46652e71f20388a6ac8c968fe4909657c01641d3c2d51cd"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "gix",
+ "parking_lot",
+ "serde",
+ "similar",
+ "tempfile",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "oxibrain-client"
 version = "0.6.0"
 source = "git+https://github.com/a7garden/oxibrain?tag=v0.6.0#18950374e2195c54e9e382e15fd451b86c69cc6e"
@@ -6786,7 +6803,6 @@ dependencies = [
  "flate2",
  "futures",
  "getrandom 0.2.17",
- "gix",
  "glob",
  "hex",
  "hf-hub",
@@ -6797,6 +6813,7 @@ dependencies = [
  "libc",
  "llama-gguf",
  "once_cell",
+ "oxi-vault-git",
  "oxibrain-client",
  "oxibrowser-core",
  "oxicode-agent",
@@ -6816,7 +6833,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
- "similar",
  "sysinfo",
  "tar",
  "tempfile",
@@ -9563,7 +9579,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

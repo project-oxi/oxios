@@ -94,7 +94,7 @@ pub mod workers;
 pub mod backup;
 pub mod compression;
 pub mod config;
-pub mod git_layer;
+pub use oxi_vault_git as git_layer;
 pub mod kernel_db;
 pub mod mount;
 pub mod project;

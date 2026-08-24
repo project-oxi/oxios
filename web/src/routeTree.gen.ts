@@ -30,6 +30,7 @@ import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
 import { Route as BrainIndexRouteImport } from './routes/brain/index'
 import { Route as BrainContradictionsRouteImport } from './routes/brain/contradictions'
 import { Route as BrainEntityRouteImport } from './routes/brain/entity'
+import { Route as BrainOperationsRouteImport } from './routes/brain/operations'
 import { Route as BrainSearchRouteImport } from './routes/brain/search'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
@@ -148,6 +149,11 @@ const BrainEntityRoute = BrainEntityRouteImport.update({
   path: '/brain/entity',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BrainOperationsRoute = BrainOperationsRouteImport.update({
+  id: '/brain/operations',
+  path: '/brain/operations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const BrainSearchRoute = BrainSearchRouteImport.update({
   id: '/brain/search',
   path: '/brain/search',
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
   '/brain/entity': typeof BrainEntityRoute
+  '/brain/operations': typeof BrainOperationsRoute
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -264,6 +271,7 @@ export interface FileRoutesByTo {
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
   '/brain/entity': typeof BrainEntityRoute
+  '/brain/operations': typeof BrainOperationsRoute
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -300,6 +308,7 @@ export interface FileRoutesById {
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
   '/brain/entity': typeof BrainEntityRoute
+  '/brain/operations': typeof BrainOperationsRoute
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -337,6 +346,7 @@ export interface FileRouteTypes {
     | '/agents/$agentId'
     | '/brain/contradictions'
     | '/brain/entity'
+    | '/brain/operations'
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
@@ -372,6 +382,7 @@ export interface FileRouteTypes {
     | '/agents/$agentId'
     | '/brain/contradictions'
     | '/brain/entity'
+    | '/brain/operations'
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
@@ -407,6 +418,7 @@ export interface FileRouteTypes {
     | '/agents/$agentId'
     | '/brain/contradictions'
     | '/brain/entity'
+    | '/brain/operations'
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
@@ -443,6 +455,7 @@ export interface RootRouteChildren {
   AgentsAgentIdRoute: typeof AgentsAgentIdRouteWithChildren
   BrainContradictionsRoute: typeof BrainContradictionsRoute
   BrainEntityRoute: typeof BrainEntityRoute
+  BrainOperationsRoute: typeof BrainOperationsRoute
   BrainSearchRoute: typeof BrainSearchRoute
   KnowledgeGraphRoute: typeof KnowledgeGraphRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
@@ -607,6 +620,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrainEntityRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/brain/operations': {
+      id: '/brain/operations'
+      path: '/brain/operations'
+      fullPath: '/brain/operations'
+      preLoaderRoute: typeof BrainOperationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/brain/search': {
       id: '/brain/search'
       path: '/brain/search'
@@ -726,6 +746,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsAgentIdRoute: AgentsAgentIdRouteWithChildren,
   BrainContradictionsRoute: BrainContradictionsRoute,
   BrainEntityRoute: BrainEntityRoute,
+  BrainOperationsRoute: BrainOperationsRoute,
   BrainSearchRoute: BrainSearchRoute,
   KnowledgeGraphRoute: KnowledgeGraphRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,

@@ -258,6 +258,11 @@ function BrainNav() {
       href: '/brain/contradictions',
       icon: <AlertTriangle className="h-4 w-4" />,
     },
+    {
+      labelKey: 'brain.operations',
+      href: '/brain/operations',
+      icon: <Activity className="h-4 w-4" />,
+    },
   ]
 
   return (

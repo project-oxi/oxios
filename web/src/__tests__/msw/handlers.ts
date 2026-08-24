@@ -27,7 +27,8 @@ export const handlers = [
   // ── Skills ──────────────────────────────────────────────────────────────
   http.get('/api/skills', () => HttpResponse.json({ skills: [] })),
 
-  // ── Brain daemon (RFC-047) — default responses. Tests that need a
+  // ── Brain daemon (RFC-047) — default responses matching the daemon wire
+  //    contracts (bare arrays, resource payloads). Tests that need a
   //    populated surface should override with `server.use(...)`.
   http.get('/api/brain/status', () =>
     HttpResponse.json({ available: true, space: 'personal', episodes: 0 }),
@@ -35,11 +36,16 @@ export const handlers = [
   http.get('/api/brain/stats', () =>
     HttpResponse.json({ episodes: 0, entities: 0, statements: 0, contradictions: 0 }),
   ),
-  http.get('/api/brain/search', () => HttpResponse.json({ items: [], total_found: 0 })),
+  http.get('/api/brain/search', () => HttpResponse.json([])),
   http.get('/api/brain/contradictions', () => HttpResponse.json([])),
-  http.get('/api/brain/entity/:id', () => HttpResponse.json(null)),
+  http.get('/api/brain/entity/:id', () => HttpResponse.json([])),
   http.get('/api/brain/timeline', () => HttpResponse.json([])),
   http.get('/api/brain/why/:statement_id', () => HttpResponse.json(null)),
+  http.get('/api/brain/brief', () => HttpResponse.json({ markdown: null })),
+  http.get('/api/brain/graph', () => HttpResponse.json(null)),
+  http.get('/api/brain/operations/:section', () => HttpResponse.json([])),
+  http.get('/api/brain/spaces', () => HttpResponse.json([])),
+  http.get('/api/brain/space', () => HttpResponse.json(null)),
   http.post('/api/brain/recall', () => HttpResponse.json({ context: null })),
 
   // ── Auth ────────────────────────────────────────────────────────────────

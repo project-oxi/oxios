@@ -238,14 +238,15 @@ export function ChatInput({
     }
     try {
       const mRes = await mem.mutateAsync({ query, limit: 5 })
-      for (const hit of mRes.items ?? []) {
-        const id = hit.target?.id ?? ''
+      for (const hit of mRes ?? []) {
         results.push({
           type: 'memory',
-          id,
-          label: id.slice(0, 12),
-          snippet: `${hit.target?.kind ?? 'memory'} · score ${hit.fused_score?.toFixed(3) ?? '—'}`,
-          score: hit.fused_score,
+          id: hit.entity_id,
+          label: hit.entity_surface,
+          snippet: hit.snippet
+            ? hit.snippet.slice(0, 80)
+            : `${hit.entity_type} · score ${hit.score.toFixed(2)}`,
+          score: hit.score,
         })
       }
     } catch {

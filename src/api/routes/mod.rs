@@ -191,13 +191,14 @@ pub(crate) use token_maxing_routes::{
 };
 pub(crate) use tools::handle_tools_registry;
 pub(crate) use workspace::{
-    handle_brain_contradictions, handle_brain_entity, handle_brain_recall, handle_brain_search,
-    handle_brain_stats, handle_brain_status, handle_brain_timeline, handle_brain_why,
-    handle_skill_content, handle_skill_content_update, handle_skill_create, handle_skill_delete,
-    handle_skill_disable, handle_skill_enable, handle_skill_get, handle_skill_import_file,
-    handle_skill_import_text, handle_skill_import_url, handle_skills_list,
-    handle_workspace_file_create, handle_workspace_file_delete, handle_workspace_file_get,
-    handle_workspace_file_put, handle_workspace_tree,
+    handle_brain_brief, handle_brain_contradictions, handle_brain_entity, handle_brain_graph,
+    handle_brain_operations, handle_brain_recall, handle_brain_search, handle_brain_space,
+    handle_brain_spaces, handle_brain_stats, handle_brain_status, handle_brain_timeline,
+    handle_brain_why, handle_skill_content, handle_skill_content_update, handle_skill_create,
+    handle_skill_delete, handle_skill_disable, handle_skill_enable, handle_skill_get,
+    handle_skill_import_file, handle_skill_import_text, handle_skill_import_url,
+    handle_skills_list, handle_workspace_file_create, handle_workspace_file_delete,
+    handle_workspace_file_get, handle_workspace_file_put, handle_workspace_tree,
 };
 
 // ---------------------------------------------------------------------------
@@ -437,6 +438,14 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(handle_brain_contradictions),
         )
         .route("/api/brain/stats", get(handle_brain_stats))
+        .route("/api/brain/brief", get(handle_brain_brief))
+        .route("/api/brain/graph", get(handle_brain_graph))
+        .route(
+            "/api/brain/operations/{section}",
+            get(handle_brain_operations),
+        )
+        .route("/api/brain/spaces", get(handle_brain_spaces))
+        .route("/api/brain/space", get(handle_brain_space))
         // Audit log
         .route("/api/audit/entries", get(handle_audit_entries))
         .route("/api/audit/verify", get(handle_audit_verify))

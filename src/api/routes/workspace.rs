@@ -991,6 +991,149 @@ pub(crate) async fn handle_brain_stats(
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
+/// GET /api/brain/brief?target_kind=&entity_id=&topic= — rendered page
+/// (Markdown) for an entity, the space, or a topic keyword.
+#[derive(Debug, Deserialize)]
+pub(crate) struct BrainBriefQuery {
+    /// `entity` (default), `space`, or `topic`.
+    pub target_kind: Option<String>,
+    pub entity_id: Option<String>,
+    pub topic: Option<String>,
+}
+
+pub(crate) async fn handle_brain_brief(
+    state: State<Arc<AppState>>,
+    Query(query): Query<BrainBriefQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let kind = query.target_kind.unwrap_or_else(|| "entity".into());
+    if !matches!(kind.as_str(), "entity" | "space" | "topic") {
+        return Err(AppError::BadRequest(
+            "`target_kind` must be entity, space, or topic".into(),
+        ));
+    }
+    if kind == "entity"
+        && query
+            .entity_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "`entity_id` is required for target_kind=entity".into(),
+        ));
+    }
+    if kind == "topic"
+        && query
+            .topic
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+    {
+        return Err(AppError::BadRequest(
+            "`topic` is required for target_kind=topic".into(),
+        ));
+    }
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let markdown = brain
+        .brief(&kind, query.entity_id.as_deref(), query.topic.as_deref())
+        .await;
+    Ok(Json(serde_json::json!({ "markdown": markdown })))
+}
+
+/// GET /api/brain/graph?start=a,b&depth=&max_nodes=&direction= — bounded
+/// belief-filtered subgraph traversal.
+#[derive(Debug, Deserialize)]
+pub(crate) struct BrainGraphQuery {
+    /// Comma-separated start entity ids.
+    pub start: String,
+    pub depth: Option<usize>,
+    pub max_nodes: Option<usize>,
+    /// `both` (default), `out`, or `in`.
+    pub direction: Option<String>,
+}
+
+pub(crate) async fn handle_brain_graph(
+    state: State<Arc<AppState>>,
+    Query(query): Query<BrainGraphQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let start: Vec<String> = query
+        .start
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if start.is_empty() {
+        return Err(AppError::BadRequest(
+            "`start` must list at least one entity id".into(),
+        ));
+    }
+    let direction = query.direction.unwrap_or_else(|| "both".into());
+    if !matches!(direction.as_str(), "both" | "out" | "in") {
+        return Err(AppError::BadRequest(
+            "`direction` must be both, out, or in".into(),
+        ));
+    }
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let result = brain
+        .traverse(
+            &start,
+            query.depth.unwrap_or(2).clamp(1, 6),
+            query.max_nodes.unwrap_or(64).clamp(1, 256),
+            &direction,
+        )
+        .await;
+    Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+}
+
+/// GET /api/brain/operations/{section} — daemon console data:
+/// `merges` (entity merge records), `failures` (extraction failures),
+/// `sources` (registered pull sources).
+pub(crate) async fn handle_brain_operations(
+    state: State<Arc<AppState>>,
+    Path(section): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !matches!(section.as_str(), "merges" | "failures" | "sources") {
+        return Err(AppError::BadRequest(
+            "`section` must be merges, failures, or sources".into(),
+        ));
+    }
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let result = brain.review_merges(&section).await;
+    Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+}
+
+/// GET /api/brain/spaces — spaces the daemon exposes.
+pub(crate) async fn handle_brain_spaces(
+    state: State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let result = brain.spaces().await;
+    Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+}
+
+/// GET /api/brain/space — overview of the configured space (counts +
+/// recent entities).
+pub(crate) async fn handle_brain_space(
+    state: State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let result = brain.space_overview().await;
+    Ok(Json(result.unwrap_or(serde_json::Value::Null)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

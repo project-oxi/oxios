@@ -103,6 +103,42 @@ impl BrainApi {
         self.conn.stats().await
     }
 
+    /// Render a readable page as Markdown (`entity` / `space` / `topic`).
+    pub async fn brief(
+        &self,
+        target_kind: &str,
+        entity_id: Option<&str>,
+        topic: Option<&str>,
+    ) -> Option<String> {
+        self.conn.brief(target_kind, entity_id, topic).await
+    }
+
+    /// Bounded belief-filtered subgraph traversal from start entities.
+    pub async fn traverse(
+        &self,
+        start: &[String],
+        depth: usize,
+        max_nodes: usize,
+        direction: &str,
+    ) -> Option<Value> {
+        self.conn.traverse(start, depth, max_nodes, direction).await
+    }
+
+    /// Console data: `merges` / `failures` / `sources`.
+    pub async fn review_merges(&self, section: &str) -> Option<Value> {
+        self.conn.review_merges(section).await
+    }
+
+    /// Spaces the daemon exposes.
+    pub async fn spaces(&self) -> Option<Value> {
+        self.conn.spaces().await
+    }
+
+    /// Overview of the configured space (counts + recent entities).
+    pub async fn space_overview(&self) -> Option<Value> {
+        self.conn.space_overview().await
+    }
+
     /// The underlying connection (for tools that need raw access).
     pub fn connection(&self) -> Arc<BrainConnection> {
         Arc::clone(&self.conn)

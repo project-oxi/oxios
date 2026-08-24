@@ -7,7 +7,7 @@
 
 use futures::future::BoxFuture;
 use oxibrain_client::BrainClient;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -168,24 +168,34 @@ impl BrainConnection {
     }
 
     /// An entity's current beliefs.
+    ///
+    /// The daemon serves entity beliefs as the `entity://{id}` MCP resource
+    /// (the old `get_entity` tool was removed); `[]` when the entity has no
+    /// active beliefs.
     pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
-        let entity_id = entity_id.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.get_entity(&entity_id, &space).await }))
-            .await
+        let uri = resource_uri("entity", entity_id, &self.config.space, &[]);
+        self.read_resource_json(&uri).await
     }
 
     /// Belief intervals for an entity over a time range.
+    ///
+    /// Served as the `timeline://{id}` MCP resource; `from`/`to` are optional
+    /// epoch-millisecond bounds.
     pub async fn timeline(
         &self,
         entity_id: &str,
         from: Option<i64>,
         to: Option<i64>,
     ) -> Option<Value> {
-        let entity_id = entity_id.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.timeline(&entity_id, &space, from, to).await }))
-            .await
+        let mut params: Vec<(&str, String)> = Vec::new();
+        if let Some(from) = from {
+            params.push(("from", from.to_string()));
+        }
+        if let Some(to) = to {
+            params.push(("to", to.to_string()));
+        }
+        let uri = resource_uri("timeline", entity_id, &self.config.space, &params);
+        self.read_resource_json(&uri).await
     }
 
     /// Provenance and confidence breakdown for a statement.
@@ -208,6 +218,85 @@ impl BrainConnection {
         let space = self.config.space.clone();
         self.call(move |c| Box::pin(async move { c.stats(&space).await }))
             .await
+    }
+
+    // ── Web API methods: pages, graph, console data (JSON passthrough) ──
+
+    /// Render a readable page as Markdown. `target_kind` is `entity`, `space`,
+    /// or `topic`; `entity_id`/`topic` select the target. Returns the
+    /// markdown text.
+    pub async fn brief(
+        &self,
+        target_kind: &str,
+        entity_id: Option<&str>,
+        topic: Option<&str>,
+    ) -> Option<String> {
+        let args = json!({
+            "target_kind": target_kind,
+            "entity_id": entity_id,
+            "topic": topic,
+            "space": self.config.space,
+        });
+        self.call(move |c| Box::pin(async move { c.call_tool("brief", args).await }))
+            .await
+    }
+
+    /// Bounded subgraph traversal from `start` entity ids. The graph is
+    /// belief-filtered (retracted/contradicted edges excluded).
+    pub async fn traverse(
+        &self,
+        start: &[String],
+        depth: usize,
+        max_nodes: usize,
+        direction: &str,
+    ) -> Option<Value> {
+        let start = start.to_vec();
+        let args = json!({
+            "start": start,
+            "depth": depth,
+            "max_nodes": max_nodes,
+            "direction": direction,
+            "space": self.config.space,
+        });
+        self.call(move |c| Box::pin(async move { c.call_tool_json("traverse", args).await }))
+            .await
+    }
+
+    /// Console data: `merges` (entity merge records), `failures` (extraction
+    /// failures), or `sources` (registered pull sources).
+    pub async fn review_merges(&self, section: &str) -> Option<Value> {
+        let args = json!({ "section": section, "space": self.config.space });
+        self.call(move |c| Box::pin(async move { c.call_tool_json("review_merges", args).await }))
+            .await
+    }
+
+    /// Spaces the daemon exposes (name, counts, created_at).
+    pub async fn spaces(&self) -> Option<Value> {
+        self.call(move |c| Box::pin(async move { c.list_spaces().await }))
+            .await
+            .map(|spaces| serde_json::to_value(spaces).unwrap_or(Value::Null))
+    }
+
+    /// Overview of the configured space: counts + recent entities.
+    /// Served as the `space://{name}` MCP resource.
+    pub async fn space_overview(&self) -> Option<Value> {
+        let uri = format!("space://{}", self.config.space);
+        self.read_resource_json(&uri).await
+    }
+
+    /// Read one MCP resource and parse its first content block as JSON.
+    /// `None` when the daemon is unavailable or the resource is unreadable.
+    async fn read_resource_json(&self, uri: &str) -> Option<Value> {
+        let uri = uri.to_string();
+        let value = self
+            .call(move |c| {
+                Box::pin(async move {
+                    c.call_rpc_json("resources/read", serde_json::json!({ "uri": uri }))
+                        .await
+                })
+            })
+            .await?;
+        parse_resource_json(&value)
     }
 
     // ── Shared plumbing ──────────────────────────────────────────────
@@ -469,6 +558,33 @@ fn assemble_context_text(value: &Value) -> Option<String> {
     Some(parts.join("\n\n"))
 }
 
+/// Build a daemon MCP resource URI: `scheme://{path}?space=…&extra…`.
+///
+/// Pure so tests can pin the exact wire format without a daemon. `space` is
+/// always first (mirrors the daemon's documented templates); extra params
+/// keep insertion order.
+fn resource_uri(scheme: &str, path: &str, space: &str, extra: &[(&str, String)]) -> String {
+    let mut uri = format!("{scheme}://{path}?space={space}");
+    for (key, value) in extra {
+        uri.push_str(&format!("&{key}={value}"));
+    }
+    uri
+}
+
+/// Parse a `resources/read` result: `{contents: [{text: "<json>"}]}`.
+///
+/// `None` when the payload is malformed (no contents / non-JSON text) — the
+/// caller degrades exactly like an unavailable daemon.
+fn parse_resource_json(value: &Value) -> Option<Value> {
+    let text = value
+        .get("contents")?
+        .as_array()?
+        .first()?
+        .get("text")?
+        .as_str()?;
+    serde_json::from_str(text).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +621,53 @@ mod tests {
     fn assemble_context_empty_layers_is_none() {
         let value = serde_json::json!({ "layers": [], "total_tokens": 0 });
         assert!(assemble_context_text(&value).is_none());
+    }
+
+    #[test]
+    fn resource_uri_formats_match_daemon_templates() {
+        // entity://{id}?space=name — daemon resource template
+        assert_eq!(
+            resource_uri("entity", "abc123", "personal", &[]),
+            "entity://abc123?space=personal"
+        );
+        // timeline://{id}?space=name&from=ms&to=ms — from/to appended in order
+        assert_eq!(
+            resource_uri(
+                "timeline",
+                "abc123",
+                "personal",
+                &[("from", "1000".into()), ("to", "2000".into())]
+            ),
+            "timeline://abc123?space=personal&from=1000&to=2000"
+        );
+        // graph://{id}?space=name&depth=n
+        assert_eq!(
+            resource_uri("graph", "abc123", "work", &[("depth", "2".into())]),
+            "graph://abc123?space=work&depth=2"
+        );
+    }
+
+    #[test]
+    fn parse_resource_json_extracts_first_content_block() {
+        let value = serde_json::json!({
+            "contents": [
+                {"mimeType": "application/json", "text": "[{\"statement\": \"s1\"}]"}
+            ]
+        });
+        let parsed = parse_resource_json(&value).expect("parses");
+        assert_eq!(parsed[0]["statement"], "s1");
+    }
+
+    #[test]
+    fn parse_resource_json_degrades_on_malformed_payload() {
+        // No contents key.
+        assert!(parse_resource_json(&serde_json::json!({})).is_none());
+        // Contents without text.
+        assert!(parse_resource_json(&serde_json::json!({"contents": [{}]})).is_none());
+        // Text that is not JSON.
+        assert!(
+            parse_resource_json(&serde_json::json!({"contents": [{"text": "nope"}]})).is_none()
+        );
     }
 
     #[test]

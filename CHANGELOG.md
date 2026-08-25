@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased] - 2026-08-22
+## [1.44.0] - 2026-08-26
 
 ### Added
 - **`oxi-vault-git` shared crate replaces in-tree `git_layer`** — oxios
@@ -49,6 +49,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OXIOS_HOME_DENY_SUBPATHS` is a single source of truth shared by
   the web/run gates.
 
+- **Brain reads over MCP resources (full daemon surface)** — the daemon
+  removed the `get_entity`/`timeline` MCP tools in favor of `entity://` and
+  `timeline://` resources; `BrainConnection` now reads those resources
+  (from/to bounds preserved) and gains passthroughs with the same
+  degradation contract (unreachable daemon → empty results, turns still
+  complete): `brief`, `traverse`, `review_merges`, `spaces`,
+  `space_overview`. New routes:
+  `/api/brain/{brief,graph,operations/{section},spaces,space}`.
+- **Brain tab rebuilt on the real oxibrain wire contracts (web)** — the
+  old tab read removed shapes (`RankingResult`, `data.items`) and rendered
+  nothing for search and `@`-mentions. `types/brain.ts` now mirrors the
+  verified daemon contracts; entity pages render the brief markdown,
+  beliefs, timeline, and per-statement provenance (in-place `entity://`
+  links behind `rehype-sanitize` with an entity-protocol-scoped URL
+  transform), search shows real hit rows, contradictions render as
+  structured cards with why drill-down, and a new operations page exposes
+  merges / extraction failures / sources.
+- **Session-scoped persona selection with category taxonomy** — `Persona`
+  gains `category`/`genre`/`default_mount_ids` (serde-default, v2
+  compatible); five new defaults (Normal, Novelist, Scenarist, Essayist,
+  Blogger) and nine existing defaults re-categorized. `persona_id`
+  threads WS/HTTP ingress → gateway metadata → `ExecEnv`, overriding the
+  global active persona per turn; invalid ids rejected at ingress;
+  `session.active_persona_id` persisted.
+- **Persona picker in the chat composer (web)** — a PersonaPicker pill
+  next to the model picker with rows grouped by category and genre badges;
+  selecting a persona with `default_mount_ids` auto-attaches those mounts
+  (chips stay removable — persona is a preset, never authority). The
+  personas page regroups cards by category; `['personas']` react-query
+  cache unified to full records.
+- **Homebrew tap auto-bump on release** — each tag release rewrites
+  `url`/`sha256` in `project-oxi/homebrew-tap` `Formula/oxios.rb` so
+  `brew upgrade oxios` tracks GitHub Releases.
+
 ### Changed
 - **Default knowledge root** — `~/.oxios/workspace/knowledge/` →
   `~/.oxi/vault/`. The retired `~/.oxios/knowledge/` path is gone;
@@ -67,6 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Web/API surfaces the cause instead of a silent degradation.
 - **Adopt-branch degradation** — never blocks boot; vault remains usable
   even when the foreign-branch strategy can't be applied.
+
+- **Post-completion action gating (web)** — assistant-turn affordances
+  (action bar, reactions, save-to-knowledge) render only after the turn
+  completes; the streaming placeholder mounts with `generating=true`,
+  removing the action-row flash during the `agent_start` →
+  first-content-chunk gap.
+- **Korean mode-tab label wrapping in the sidebar (web)**.
 
 ## [1.43.0] - 2026-08-19
 

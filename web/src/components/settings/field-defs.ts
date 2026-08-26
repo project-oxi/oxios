@@ -457,50 +457,6 @@ const calendarSection: SettingsSectionDef = {
 }
 
 // ---------------------------------------------------------------------------
-// 7. otel — OpenTelemetry tracing
-// ---------------------------------------------------------------------------
-
-const otelSection: SettingsSectionDef = {
-  key: 'otel',
-  labelKey: 'settings.sectionOtel',
-  descriptionKey: 'settings.otelDescription',
-  iconKey: 'otel',
-  groupId: 'system',
-  tier: 'advanced',
-  fields: [
-    {
-      key: 'enabled',
-      labelKey: 'settings.otelEnabled',
-      descriptionKey: 'settings.otelEnabledDesc',
-      type: 'toggle',
-    },
-    {
-      key: 'endpoint',
-      labelKey: 'settings.otelEndpoint',
-      descriptionKey: 'settings.otelEndpointDesc',
-      type: 'text',
-      placeholder: 'http://localhost:4317',
-    },
-    {
-      key: 'service_name',
-      labelKey: 'settings.otelServiceName',
-      descriptionKey: 'settings.otelServiceNameDesc',
-      type: 'text',
-      placeholder: 'oxios',
-    },
-    {
-      key: 'sampling_ratio',
-      labelKey: 'settings.otelSamplingRatio',
-      descriptionKey: 'settings.otelSamplingRatioDesc',
-      type: 'range',
-      min: 0,
-      max: 1,
-      step: 0.1,
-    },
-  ],
-}
-
-// ---------------------------------------------------------------------------
 // 8. agent_log — Agent history log
 // ---------------------------------------------------------------------------
 
@@ -643,7 +599,6 @@ export const NEW_SECTIONS: SettingsSectionDef[] = [
   telegramSection,
   auditSection,
   calendarSection,
-  otelSection,
   agentLogSection,
   resourceMonitorSection,
   browserSection,
@@ -699,7 +654,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     id: 'advanced',
     labelKey: 'settings.groupAdvanced',
-    sectionKeys: ['orchestrator', 'context', 'gateway', 'otel', 'agent_log', 'resource_monitor'],
+    sectionKeys: ['orchestrator', 'context', 'gateway', 'agent_log', 'resource_monitor'],
   },
 ]
 
@@ -758,7 +713,6 @@ export type SectionIconKey =
   | 'audit'
   | 'update'
   | 'calendar'
-  | 'otel'
   | 'agentLog'
   | 'resourceMonitor'
   | 'browser'
@@ -991,15 +945,6 @@ export const SECTION_META: SectionMeta[] = [
     descriptionKey: 'settings.gatewayDescription',
     groupId: 'advanced',
     iconKey: 'gateway',
-    tier: 'advanced',
-    custom: false,
-  },
-  {
-    id: 'otel',
-    labelKey: 'settings.sectionOtel',
-    descriptionKey: 'settings.otelDescription',
-    groupId: 'advanced',
-    iconKey: 'otel',
     tier: 'advanced',
     custom: false,
   },

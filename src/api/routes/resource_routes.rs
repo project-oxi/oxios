@@ -62,14 +62,16 @@ pub(crate) async fn handle_resource_overload(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let overloaded = state.kernel.infra.is_overloaded();
-    let rm_config = &state.kernel.infra.config().resource_monitor;
+    // Live thresholds — `infra.config()` is a boot snapshot; hot-reload
+    // (PATCH /api/config) updates the ResourceMonitor directly.
+    let threshold = state.kernel.infra.resource_monitor().overload_threshold();
 
     serde_json::to_value(serde_json::json!({
         "overloaded": overloaded,
         "threshold": {
-            "cpu_percent": rm_config.cpu_threshold,
-            "memory_percent": rm_config.memory_threshold,
-            "load_avg": rm_config.load_threshold,
+            "cpu_percent": threshold.cpu_percent,
+            "memory_percent": threshold.memory_percent,
+            "load_avg": threshold.load_avg,
         },
     }))
     .map(Json)

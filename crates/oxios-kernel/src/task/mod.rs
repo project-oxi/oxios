@@ -1,10 +1,12 @@
 // Task module — public API for task lifecycle management (RFC-043)
 
+pub mod legacy;
 pub mod migrate;
 pub mod model;
 pub mod runner;
 pub mod store;
 
+pub use legacy::{CronJob, JobSource};
 pub use migrate::{CronMigrationReport, CronMigrationSkipped, migrate_cron_to_tasks};
 pub use model::*;
 pub use runner::{

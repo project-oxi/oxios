@@ -1,8 +1,8 @@
-//! Infra API — Git, cron, resources, events, system.
+//! Infra API — Git, resources, events, system.
 
 use crate::ToolMeta;
 use crate::config::OxiosConfig;
-use crate::cron::{CronJob, CronJobUpdate, CronScheduler};
+
 use crate::event_bus::{EventBus, KernelEvent};
 use crate::git_layer::{GitLayer, LogEntry};
 use crate::resource_monitor::{ResourceMonitor, ResourceSnapshot};
@@ -17,7 +17,7 @@ pub struct InfraApi {
     /// `commit_file` / `log_for_file` / `restore_file` use paths computed
     /// by [`crate::git_layer::rel_path`] with no `knowledge/` prefix.
     pub(crate) knowledge_git: Arc<GitLayer>,
-    pub(crate) cron_scheduler: Arc<CronScheduler>,
+
     pub(crate) resource_monitor: Arc<ResourceMonitor>,
     pub(crate) event_bus: EventBus,
     pub(crate) config: OxiosConfig,
@@ -48,7 +48,7 @@ impl InfraApi {
     pub fn new(
         git_layer: Arc<GitLayer>,
         knowledge_git: Arc<GitLayer>,
-        cron_scheduler: Arc<CronScheduler>,
+
         resource_monitor: Arc<ResourceMonitor>,
         event_bus: EventBus,
         config: OxiosConfig,
@@ -61,7 +61,7 @@ impl InfraApi {
         Self {
             git_layer,
             knowledge_git,
-            cron_scheduler,
+
             resource_monitor,
             event_bus,
             config,
@@ -150,43 +150,6 @@ impl InfraApi {
         self.git_layer.delete_tag(name)
     }
 
-    /// Add a cron job.
-    pub async fn add_cron(&self, job: CronJob) -> anyhow::Result<uuid::Uuid> {
-        self.cron_scheduler.add_job(job).await
-    }
-
-    /// Get a cron job by ID.
-    pub fn get_cron(&self, id: uuid::Uuid) -> Option<CronJob> {
-        self.cron_scheduler.get_job(id)
-    }
-
-    /// Update a cron job.
-    pub async fn update_cron(&self, id: uuid::Uuid, update: CronJobUpdate) -> anyhow::Result<()> {
-        self.cron_scheduler.update_job(id, update).await
-    }
-
-    /// Remove a cron job by ID.
-    pub async fn remove_cron(&self, id: uuid::Uuid) -> anyhow::Result<()> {
-        self.cron_scheduler.remove_job(id).await
-    }
-
-    /// Trigger a cron job manually.
-    pub fn trigger_cron(&self, id: uuid::Uuid) -> anyhow::Result<CronJob> {
-        self.cron_scheduler.trigger_job(id)
-    }
-
-    /// Mark cron job completed.
-    pub async fn complete_cron(&self, id: uuid::Uuid, success: bool, summary: String) {
-        self.cron_scheduler
-            .mark_job_completed(id, success, summary)
-            .await
-    }
-
-    /// List all cron jobs.
-    pub fn list_crons(&self) -> Vec<CronJob> {
-        self.cron_scheduler.list_jobs()
-    }
-
     /// Get resource snapshot.
     pub fn resource_snapshot(&self) -> ResourceSnapshot {
         self.resource_monitor.snapshot()
@@ -264,7 +227,6 @@ impl InfraApi {
 mod tests {
     use super::*;
     use crate::approval::{ApprovalConfig, ApprovalMode};
-    use crate::state_store::StateStore;
 
     fn minimal_infra(approval_config: Arc<parking_lot::RwLock<ApprovalConfig>>) -> InfraApi {
         let dir = tempfile::tempdir().unwrap();
@@ -274,10 +236,6 @@ mod tests {
             // contract under test is approval_config Arc sharing, not git
             // topology.
             Arc::new(GitLayer::new(dir.path().join("git"), false).unwrap()),
-            Arc::new(CronScheduler::new(
-                Arc::new(StateStore::new(dir.path().join("state")).unwrap()),
-                60,
-            )),
             Arc::new(ResourceMonitor::new(60, 60)),
             EventBus::new(64),
             OxiosConfig::default(),

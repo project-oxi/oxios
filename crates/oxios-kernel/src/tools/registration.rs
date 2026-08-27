@@ -199,7 +199,6 @@ pub fn register_always_on_gated(
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
 /// | `KernelDomain { "program" }` | any | *(deprecated — skills via CSpace)* |
-/// | `KernelDomain { "cron" }` | any | `CronTool` |
 /// | `KernelDomain { "security" }` | any | `SecurityTool` |
 /// | `KernelDomain { "budget" }` | any | `BudgetTool` |
 /// | `KernelDomain { "resource" }` | any | `ResourceTool` |
@@ -244,7 +243,7 @@ pub fn register_tools_from_cspace(
                 "persona" => registry.register(PersonaTool::from_kernel(kernel)),
                 "program" => { /* Skills are surfaced through CSpace + semantic retrieval, not individual tools */
                 }
-                "cron" => registry.register(CronTool::from_kernel(kernel)),
+
                 "security" => registry.register(SecurityTool::from_kernel(kernel)),
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
@@ -356,7 +355,7 @@ pub fn register_tools_from_cspace_gated(
                 }
                 "persona" => registry.register(PersonaTool::from_kernel(kernel)),
                 "program" => {}
-                "cron" => registry.register(CronTool::from_kernel(kernel)),
+
                 "security" => registry.register(SecurityTool::from_kernel(kernel)),
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),

@@ -16,7 +16,7 @@ mod calendar_routes;
 mod channels_routes;
 mod chat;
 mod cost_routes;
-mod cron_jobs;
+
 mod email_routes;
 mod engine_routes;
 mod events;
@@ -98,22 +98,20 @@ pub(crate) use cost_routes::{
     handle_cost_by_model, handle_cost_by_project, handle_cost_daily, handle_cost_providers,
     handle_cost_spend_limit_get, handle_cost_spend_limit_set, handle_cost_summary,
 };
-pub(crate) use cron_jobs::{
-    handle_cron_job_create, handle_cron_job_delete, handle_cron_job_get, handle_cron_job_trigger,
-    handle_cron_jobs_list, update_cron_job,
-};
+
 pub(crate) use email_routes::{
     handle_email_history, handle_email_history_detail, handle_email_setup, handle_email_status,
     handle_email_template_get, handle_email_templates, handle_email_test,
 };
 pub(crate) use engine_routes::{
     handle_add_custom_provider, handle_check_provider_connection, handle_engine_config,
-    handle_engine_delete_api_key, handle_engine_follow_up, handle_engine_models,
-    handle_engine_providers, handle_engine_roles, handle_engine_routing_fallbacks,
-    handle_engine_routing_stats, handle_engine_set_api_key, handle_engine_set_model,
-    handle_engine_set_provider_options, handle_engine_set_quick_ask_model, handle_engine_set_roles,
-    handle_engine_set_routing, handle_engine_validate_key, handle_get_provider_config,
-    handle_remove_custom_provider, handle_set_model_list, handle_set_provider_config,
+    handle_engine_delete_api_key, handle_engine_follow_up, handle_engine_goal_suggestions,
+    handle_engine_models, handle_engine_providers, handle_engine_roles,
+    handle_engine_routing_fallbacks, handle_engine_routing_stats, handle_engine_set_api_key,
+    handle_engine_set_model, handle_engine_set_provider_options, handle_engine_set_quick_ask_model,
+    handle_engine_set_roles, handle_engine_set_routing, handle_engine_validate_key,
+    handle_get_provider_config, handle_remove_custom_provider, handle_set_model_list,
+    handle_set_provider_config,
 };
 pub(crate) use events::{
     handle_approval_approve, handle_approval_reject, handle_approvals_list, handle_events,
@@ -177,9 +175,8 @@ pub(crate) use task_routes::{
     handle_task_comment_create, handle_task_comment_delete, handle_task_comment_update,
     handle_task_comments_list, handle_task_create, handle_task_create_batch, handle_task_delete,
     handle_task_dependencies_list, handle_task_dependency_add, handle_task_dependency_remove,
-    handle_task_get, handle_task_migrate_cron, handle_task_run, handle_task_runs,
-    handle_task_set_schedule, handle_task_set_verify, handle_task_update,
-    handle_task_update_status, handle_tasks_list,
+    handle_task_get, handle_task_run, handle_task_runs, handle_task_set_schedule,
+    handle_task_set_verify, handle_task_update, handle_task_update_status, handle_tasks_list,
 };
 #[cfg(feature = "timeline")]
 pub(crate) use timeline_routes::{
@@ -328,6 +325,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/config/meta", get(handle_config_meta))
         // Engine
         .route("/api/engine/follow-up", post(handle_engine_follow_up))
+        .route(
+            "/api/engine/goal-suggestions",
+            post(handle_engine_goal_suggestions),
+        )
         .route("/api/engine/providers", get(handle_engine_providers))
         .route("/api/engine/models", get(handle_engine_models))
         .route("/api/engine/config", get(handle_engine_config))
@@ -530,18 +531,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/sessions/{id}/threads",
             post(handle_session_create_thread),
         )
-        // Cron Jobs
-        .route("/api/cron-jobs", get(handle_cron_jobs_list))
-        .route("/api/cron-jobs", post(handle_cron_job_create))
-        .route("/api/cron-jobs/{id}", get(handle_cron_job_get))
-        .route("/api/cron-jobs/{id}", delete(handle_cron_job_delete))
-        .route("/api/cron-jobs/{id}/edit", post(update_cron_job))
-        .route("/api/cron-jobs/{id}/trigger", post(handle_cron_job_trigger))
         // Tasks (RFC-043)
         .route("/api/tasks", get(handle_tasks_list))
         .route("/api/tasks", post(handle_task_create))
         .route("/api/tasks/batch", post(handle_task_create_batch))
-        .route("/api/tasks/migrate-cron", post(handle_task_migrate_cron))
         .route("/api/tasks/{id}", get(handle_task_get))
         .route("/api/tasks/{id}", put(handle_task_update))
         .route("/api/tasks/{id}", delete(handle_task_delete))

@@ -3357,12 +3357,11 @@ async fn cmd_serve(kernel: &Kernel, config_path: &Path) -> Result<()> {
     supervisor.track_critical("gateway", gateway_task);
     supervisor.track_critical("guardian", guardian_task);
     supervisor.track_critical("health", health_task);
-    // Start the cron scheduler loop (restore + config load + tick). Returns
-    // None when cron is disabled in config — nothing to track in that case
-    // (a completed handle would otherwise look like a fatal critical-task exit).
-    if let Some(cron_task) = kernel.start_cron_loop() {
-        supervisor.track_critical("cron", cron_task);
-    }
+    // Retired CronScheduler → RFC-043 tasks: one-time migration of any
+    // legacy cron jobs (persisted state + config inline jobs) into scheduled
+    // tasks. Fire-and-forget — failures log and retry on the next boot, so
+    // this is not tracked as a critical task.
+    let _legacy_cron_migration = kernel.migrate_legacy_crons();
     for task in channel_tasks {
         supervisor.track_critical("channel", task);
     }

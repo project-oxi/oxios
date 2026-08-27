@@ -9,7 +9,6 @@
 //! - [`ProjectTool`] — Project management (list, get, link_memory, unlink_memory)
 //! - [`AgentTool`] — Agent lifecycle (list, kill, budget)
 //! - [`PersonaTool`] — Persona management (list, set_active, get)
-//! - [`CronTool`] — Cron scheduling (list, add, remove, trigger)
 //! - [`SecurityTool`] — Security audit (verify_chain, query_audit, audit_count)
 //! - [`BudgetTool`] — Budget management (check, set, reserve, reset)
 //! - [`ResourceTool`] — Resource monitoring (snapshot, history, overloaded)
@@ -19,7 +18,7 @@
 pub mod agent_tool;
 pub mod budget_tool;
 pub mod calendar_tool;
-pub mod cron_tool;
+
 pub mod email_tool;
 pub mod image_generation_tool;
 pub mod knowledge_tool;
@@ -42,7 +41,7 @@ pub mod timeline_tool;
 pub use agent_tool::AgentTool as KernelAgentTool;
 pub use budget_tool::BudgetTool;
 pub use calendar_tool::CalendarTool;
-pub use cron_tool::CronTool;
+
 pub use email_tool::EmailTool;
 pub use image_generation_tool::ImageGenerationTool;
 pub use knowledge_tool::KnowledgeTool;
@@ -101,7 +100,7 @@ pub fn register_all_kernel_tools(
     registry.register(MountTool::from_kernel(kernel));
     registry.register(KernelAgentTool::from_kernel(kernel));
     registry.register(PersonaTool::from_kernel(kernel));
-    registry.register(CronTool::from_kernel(kernel));
+
     registry.register(SecurityTool::from_kernel(kernel));
     registry.register(BudgetTool::from_kernel(kernel));
     registry.register(ResourceTool::from_kernel(kernel));

@@ -22,7 +22,7 @@ pub mod tool_types;
 pub use a2a_tools::{A2aDelegateTool, A2aQueryTool, A2aSendTool};
 pub use ask_user_tool::{AskUserTool, PendingAskUser};
 pub use builtin::{
-    BudgetTool, CronTool, KernelAgentTool, KnowledgeTool, PersonaTool, ProjectTool, ResourceTool,
+    BudgetTool, KernelAgentTool, KnowledgeTool, PersonaTool, ProjectTool, ResourceTool,
     SecurityTool,
 };
 pub use exec_tool::ExecTool;

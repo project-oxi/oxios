@@ -121,7 +121,7 @@ impl CapabilityTemplate {
         t
     }
 
-    /// **Supervisor** — operator + security, budget, resource, and cron
+    /// **Supervisor** — operator + security, budget, and resource
     /// kernel domains.
     ///
     /// The most privileged built-in template. Use sparingly.
@@ -145,12 +145,6 @@ impl CapabilityTemplate {
                     domain: "resource".into(),
                 },
                 Rights::READ | Rights::WRITE,
-            ),
-            (
-                ResourceRef::KernelDomain {
-                    domain: "cron".into(),
-                },
-                Rights::READ | Rights::WRITE | Rights::EXECUTE,
             ),
         ];
         t.caps.extend(admin);
@@ -214,11 +208,11 @@ impl CapabilityTemplate {
     ///
     /// Superset of [`code_profile`](Self::code_profile) plus the full
     /// control plane: project (space), agent lifecycle, A2A, persona,
-    /// cron, security, budget, and resource domains.
+    /// security, budget, and resource domains.
     pub fn base_profile() -> Self {
         let mut t = Self::code_profile();
-        let control: [&str; 8] = [
-            "space", "agent", "a2a", "persona", "cron", "security", "budget", "resource",
+        let control: [&str; 7] = [
+            "space", "agent", "a2a", "persona", "security", "budget", "resource",
         ];
         t.caps.extend(control.map(|domain| {
             (

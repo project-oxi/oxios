@@ -459,64 +459,6 @@ impl KernelHandle {
         self.security.flush(self.infra.git())
     }
 
-    /// Schedule a cron job by expression (convenience wrapper).
-    ///
-    /// **Note:** the `persona` argument is currently NOT wired into the cron
-    /// executor — `CronJob` has no persona field yet. Passing a non-default
-    /// value logs a warning so callers are not silently surprised. The
-    /// parameter is retained for forward compatibility with multi-persona
-    /// scheduling (RFC tracking).
-    pub async fn schedule(
-        &self,
-        cron_expr: &str,
-        task: &str,
-        persona: Option<&str>,
-    ) -> anyhow::Result<String> {
-        if let Some(p) = persona
-            && !p.is_empty()
-            && p != "default"
-        {
-            tracing::warn!(
-                persona = p,
-                "schedule: persona argument is not yet honored by the cron executor; job will run with the default persona"
-            );
-        }
-        let job = crate::cron::CronJob::new(
-            format!("job_{}", uuid::Uuid::new_v4()),
-            cron_expr.to_string(),
-            task.to_string(),
-        );
-        let job_id = self.infra.add_cron(job).await?;
-        Ok(job_id.to_string())
-    }
-
-    /// Unschedule a cron job by string ID (convenience wrapper).
-    ///
-    /// Returns `Ok(true)` when the job existed and was removed, `Ok(false)`
-    /// when no job with that ID was registered, and `Err(...)` when the
-    /// scheduler itself fails (DB corruption, lock poisoning). The previous
-    /// implementation collapsed scheduler errors into `Ok(false)`, hiding
-    /// real failures from callers.
-    pub async fn unschedule(&self, job_id: &str) -> anyhow::Result<bool> {
-        let uuid =
-            uuid::Uuid::parse_str(job_id).map_err(|e| anyhow::anyhow!("invalid job id: {e}"))?;
-        match self.infra.remove_cron(uuid).await {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                let msg = format!("{e}");
-                if msg.to_lowercase().contains("not found") {
-                    // Legitimate "already removed" case — not an error.
-                    Ok(false)
-                } else {
-                    Err(anyhow::anyhow!("failed to remove cron job {job_id}: {e}"))
-                }
-            }
-        }
-    }
-    pub fn list_schedules(&self) -> Vec<crate::cron::CronJob> {
-        self.infra.list_crons()
-    }
-
     /// Load JSON from state store.
     pub async fn load_json<T: serde::de::DeserializeOwned>(
         &self,

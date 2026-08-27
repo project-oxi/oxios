@@ -718,12 +718,6 @@ mod tests {
                     crate::git_layer::GitLayer::new(tmp.join("kb_git"), false)
                         .expect("knowledge git layer"),
                 ),
-                Arc::new(crate::cron::CronScheduler::new(
-                    Arc::new(
-                        crate::state_store::StateStore::new(tmp.join("cron")).expect("cron state"),
-                    ),
-                    60,
-                )),
                 Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 100)),
                 EventBus::new(64),
                 crate::config::OxiosConfig::default(),

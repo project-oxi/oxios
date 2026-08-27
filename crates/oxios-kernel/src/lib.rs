@@ -28,7 +28,7 @@ pub mod agent_log_db;
 // ─── Orchestration ──────────────────────────────────────────────────
 // 작업 조율, 스케줄링, 예산 관리.
 pub mod budget;
-pub mod cron;
+
 pub mod orchestrator;
 // ─── Resilience (RFC-029) ──────────────────────────────────────────────
 // Failure classification + (P2) recovery coordination.
@@ -135,8 +135,8 @@ pub use budget::{
     BudgetExceeded, BudgetInfo, BudgetKind, BudgetLimit, BudgetManager, FullBudgetInfo,
 };
 // Circuit breaker — delegates to oxicode-sdk
-pub use cron::{CronJob, CronJobResult, CronJobUpdate, CronScheduler, JobSource};
 pub use orchestrator::{AgentRole, OrchestrationResult, Orchestrator, SubTask};
+pub use task::{CronJob, JobSource};
 // CircuitBreaker removed — use oxicode_sdk::ProviderCircuitBreaker directly (#11).
 pub use types::Priority;
 

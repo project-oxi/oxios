@@ -286,9 +286,7 @@ impl McpManageTool {
 
         // Re-initialize when the server should run; roll back to the previous
         // configuration when the new one fails to come up (REST contract).
-        if enabled
-            && let Err(e) = self.api.init_server(&name).await
-        {
+        if enabled && let Err(e) = self.api.init_server(&name).await {
             tracing::error!(
                 server = %name,
                 error = %e,

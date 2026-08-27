@@ -560,6 +560,32 @@ pub fn default_personas() -> Vec<Persona> {
             tool_profile: ToolProfile::Base,
         },
         Persona {
+            id: "oxios".to_string(),
+            name: "Oxios".to_string(),
+            role: "copilot".to_string(),
+            description: "Internal copilot for managing Oxios itself — projects, \
+                mounts, tasks, personas, security, budget, marketplace skills, \
+                MCP servers, and model settings.".to_string(),
+            system_prompt: "You are the Oxios Copilot: an internal assistant for \
+                managing this Oxios instance's own configuration. You have no \
+                coding tools (no exec, file access, or browser) — only tools to \
+                inspect and change Oxios's settings. If asked to write code, run \
+                commands, or browse the web, explain that's outside your scope \
+                and suggest switching to a coding persona instead.".to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "helpful".to_string(),
+                "precise".to_string(),
+                "concise".to_string(),
+            ],
+            capabilities: vec![],
+            category: "normal".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
+            tool_profile: ToolProfile::Control,
+        },
+        Persona {
             id: "novelist".to_string(),
             name: "Novelist".to_string(),
             role: "novelist".to_string(),
@@ -801,7 +827,7 @@ mod tests {
     #[test]
     fn test_default_personas_count_and_ids() {
         let personas = default_personas();
-        assert_eq!(personas.len(), 14);
+        assert_eq!(personas.len(), 15);
 
         let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
         for expected in [
@@ -819,6 +845,7 @@ mod tests {
             "scenarist",
             "essayist",
             "blogger",
+            "oxios",
         ] {
             assert!(
                 ids.contains(&expected),
@@ -838,7 +865,6 @@ mod tests {
     fn test_default_personas_categories_and_genres() {
         let personas = default_personas();
         let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
-
         assert_eq!(by_id("normal").category, "normal");
         assert_eq!(by_id("dev").category, "coding");
         assert_eq!(by_id("review").category, "coding");
@@ -846,7 +872,6 @@ mod tests {
         assert_eq!(by_id("architect").category, "general");
         assert_eq!(by_id("mentor").category, "general");
         assert_eq!(by_id("planner").category, "general");
-        assert_eq!(by_id("ops").category, "operations");
         assert_eq!(by_id("security").category, "operations");
         assert_eq!(by_id("writer").category, "writing");
         assert_eq!(by_id("writer").genre, None);
@@ -872,7 +897,8 @@ mod tests {
 
         // Only the base assistant controls Oxios itself.
         assert_eq!(by_id("normal").tool_profile, ToolProfile::Base);
-        // Coding/research/operations personas get working tools, no control.
+        assert_eq!(by_id("oxios").tool_profile, ToolProfile::Control);
+        assert_eq!(by_id("oxios").category, "normal");
         for id in [
             "dev",
             "review",
@@ -896,7 +922,8 @@ mod tests {
         let personas = default_personas();
         let roles: std::collections::HashSet<&str> =
             personas.iter().map(|p| p.role.as_str()).collect();
-        assert_eq!(roles.len(), 14);
+        assert_eq!(roles.len(), 15);
+
     }
 
     #[test]

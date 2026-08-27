@@ -18,41 +18,41 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useEngineConfig } from '@/hooks/use-engine'
 import { api } from '@/lib/api-client'
 import { useChatStore } from '@/stores/chat'
-import { useQuickAskStore } from '@/stores/quick-ask'
+import { useOxiosCopilotStore } from '@/stores/oxios-copilot'
 import type { ChatBlock } from '@/types'
 
 /**
- * QuickAskDialog — global one-shot question overlay.
+ * OxiosCopilotDialog — global one-shot question overlay.
  *
  * Renders in AppLayout so it overlays every route. Sends `ephemeral: true`
  * over its own short-lived WS; nothing is persisted. Uses the same ChatInput
  * as the regular chat page so the UX (model picker, queue, stop, streaming)
  * is identical — the only difference is that no session is saved.
  */
-export function QuickAskDialog() {
+export function OxiosCopilotDialog() {
   const { t } = useTranslation()
   const router = useRouter()
-  const open = useQuickAskStore((s) => s.open)
-  const closeQuickAsk = useQuickAskStore((s) => s.closeQuickAsk)
-  const messages = useQuickAskStore((s) => s.messages)
-  const isStreaming = useQuickAskStore((s) => s.isStreaming)
-  const send = useQuickAskStore((s) => s.send)
-  const cancel = useQuickAskStore((s) => s.cancel)
-  const quickAskModel = useQuickAskStore((s) => s.quickAskModel)
-  const setQuickAskModel = useQuickAskStore((s) => s.setQuickAskModel)
-  const queuedCount = useQuickAskStore((s) => s._pendingQueue.length)
-  const lastExchange = useQuickAskStore((s) => s.lastExchange)
-  const activeToolApproval = useQuickAskStore((s) => s.activeToolApproval)
-  const resolveToolApproval = useQuickAskStore((s) => s.resolveToolApproval)
-  const reset = useQuickAskStore((s) => s.reset)
+  const open = useOxiosCopilotStore((s) => s.open)
+  const closeCopilot = useOxiosCopilotStore((s) => s.closeCopilot)
+  const messages = useOxiosCopilotStore((s) => s.messages)
+  const isStreaming = useOxiosCopilotStore((s) => s.isStreaming)
+  const send = useOxiosCopilotStore((s) => s.send)
+  const cancel = useOxiosCopilotStore((s) => s.cancel)
+  const copilotModel = useOxiosCopilotStore((s) => s.copilotModel)
+  const setCopilotModel = useOxiosCopilotStore((s) => s.setCopilotModel)
+  const queuedCount = useOxiosCopilotStore((s) => s._pendingQueue.length)
+  const lastExchange = useOxiosCopilotStore((s) => s.lastExchange)
+  const activeToolApproval = useOxiosCopilotStore((s) => s.activeToolApproval)
+  const resolveToolApproval = useOxiosCopilotStore((s) => s.resolveToolApproval)
+  const reset = useOxiosCopilotStore((s) => s.reset)
 
   // Sync the engine-config one-shot model into the store (single source: Settings).
   const { data: engineConfig } = useEngineConfig()
   useEffect(() => {
     const configured = engineConfig?.quick_ask_model
     const fallback = engineConfig?.default_model || null
-    setQuickAskModel(configured || fallback)
-  }, [engineConfig?.quick_ask_model, engineConfig?.default_model, setQuickAskModel])
+    setCopilotModel(configured || fallback)
+  }, [engineConfig?.quick_ask_model, engineConfig?.default_model, setCopilotModel])
 
   const [input, setInput] = useState('')
   const [copied, setCopied] = useState(false)
@@ -109,7 +109,7 @@ export function QuickAskDialog() {
           .join('\n'),
         project_id: undefined,
       })
-      closeQuickAsk()
+      closeCopilot()
       reset()
       router.history.push('/chat')
       // Seed the chat store so /chat shows the promoted exchange immediately.
@@ -127,7 +127,7 @@ export function QuickAskDialog() {
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) closeQuickAsk()
+        if (!o) closeCopilot()
       }}
     >
       <DialogContent
@@ -144,7 +144,7 @@ export function QuickAskDialog() {
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={closeQuickAsk}
+            onClick={closeCopilot}
             aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
@@ -209,8 +209,8 @@ export function QuickAskDialog() {
             isStreaming={isStreaming}
             connected={true}
             queuedCount={queuedCount}
-            activeModelId={quickAskModel}
-            setActiveModelId={setQuickAskModel}
+            activeModelId={copilotModel}
+            setActiveModelId={setCopilotModel}
             placeholder={t('quickAsk.placeholder')}
           />
         </div>

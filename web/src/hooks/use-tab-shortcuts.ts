@@ -14,7 +14,7 @@ import { SIDEBAR_MODES } from '@/components/layout/mode-tabs'
  *
  * Uses e.code ('Digit1' etc.) instead of e.key so it works regardless
  * of keyboard layout or IME state. Uses router.history.push() (same
- * pattern as QuickAskDialog) instead of useNavigate() for reliability
+ * pattern as OxiosCopilotDialog) instead of useNavigate() for reliability
  * in event-handler context.
  *
  * Routes are derived from SIDEBAR_MODES (mode-tabs.tsx) so the hook,

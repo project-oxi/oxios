@@ -2,7 +2,7 @@ import { Menu, Search, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useCommandPaletteStore } from '@/stores/command-palette'
-import { useQuickAskStore } from '@/stores/quick-ask'
+import { useOxiosCopilotStore } from '@/stores/oxios-copilot'
 import { useSidebarStore } from '@/stores/sidebar'
 import { MenuClock } from './menu-clock'
 
@@ -10,7 +10,7 @@ export function Header() {
   const { t } = useTranslation()
   const { setMobileOpen } = useSidebarStore()
   const openPalette = useCommandPaletteStore((s) => s.openPalette)
-  const openQuickAsk = useQuickAskStore((s) => s.openQuickAsk)
+  const openCopilot = useOxiosCopilotStore((s) => s.openCopilot)
 
   return (
     <header className="flex h-14 items-center gap-2 border-b bg-background px-3 pt-[env(safe-area-inset-top)] lg:gap-3 lg:px-4">
@@ -48,12 +48,12 @@ export function Header() {
       {/* Desktop spacer — pushes quick actions + clock to the right edge */}
       <div className="hidden flex-1 lg:block" />
 
-      {/* QuickAsk (⌘J) — one-shot throwaway question, no session persisted */}
+      {/* Oxios Copilot (⌘J) — one-shot throwaway question, no session persisted */}
       <Button
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => openQuickAsk()}
+        onClick={() => openCopilot()}
         className="h-8 shrink-0 gap-1 px-2.5 text-muted-foreground"
         aria-label={t('quickAsk.openAria')}
         title={`${t('quickAsk.openAria')} (⌘J)`}

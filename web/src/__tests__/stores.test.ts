@@ -714,9 +714,9 @@ describe('multi-turn accumulation (turn-boundary targeting)', () => {
 })
 
 // The message-transform primitives route every chunk through a single shared
-// path in chat.ts; both the chat store and the quick-ask store call them, so
+// path in chat.ts; both the chat store and the oxios-copilot store call them, so
 // these tests guard the Cmd+J (one-shot) path too (which has no store tests).
-describe('message-transform primitives (shared by chat + quick-ask stores)', () => {
+describe('message-transform primitives (shared by chat + oxios-copilot stores)', () => {
   const ctx = { placeholderModel: 'gpt-x' }
   const assistant = (over: Partial<ChatMessage> = {}): ChatMessage => ({
     id: 'a1',

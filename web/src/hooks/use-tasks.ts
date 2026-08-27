@@ -6,9 +6,7 @@ import type {
   AddCommentParams,
   AddDependencyParams,
   CreateTaskParams,
-  CronMigrationReport,
   ListTasksParams,
-  MigrateCronParams,
   SetScheduleParams,
   SetVerifyParams,
   Task,
@@ -222,16 +220,5 @@ export function useRemoveTaskDependency(taskId: string) {
       qc.invalidateQueries({ queryKey: ['task', taskId] })
       qc.invalidateQueries({ queryKey: ['tasks'] })
     },
-  })
-}
-
-// ── Cron migration ──
-
-export function useMigrateCronTasks() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (params?: MigrateCronParams) =>
-      api.post<CronMigrationReport>('/api/tasks/migrate-cron', params ?? {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   })
 }

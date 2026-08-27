@@ -481,3 +481,23 @@ pub(crate) async fn handle_engine_follow_up(
     let chips = state.kernel.engine.generate_follow_up(&body.content).await;
     Ok(Json(serde_json::json!({ "suggestions": chips })))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct GoalSuggestionsRequest {
+    /// The user's rough idea for a scheduled task.
+    pub content: String,
+}
+
+/// POST /api/engine/goal-suggestions — draft goal/instruction candidates
+/// for a scheduled task. Used by the task create/edit dialog's AI assist.
+pub(crate) async fn handle_engine_goal_suggestions(
+    state: State<Arc<AppState>>,
+    Json(body): Json<GoalSuggestionsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let goals = state
+        .kernel
+        .engine
+        .generate_goal_suggestions(&body.content)
+        .await;
+    Ok(Json(serde_json::json!({ "goals": goals })))
+}

@@ -140,10 +140,10 @@ function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
     },
     {
       id: 'nav-cron',
-      label: 'Cron Jobs',
-      keywords: ['cron', 'schedule', 'jobs', 'tasks'],
+      label: 'Tasks',
+      keywords: ['cron', 'schedule', 'jobs', 'tasks', 'automation'],
       section: 'Navigation',
-      action: () => navigate('/cron-jobs'),
+      action: () => navigate('/tasks'),
     },
     {
       id: 'nav-resources',

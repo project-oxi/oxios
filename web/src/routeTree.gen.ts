@@ -13,7 +13,6 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as BudgetRouteImport } from './routes/budget'
 import { Route as ChatRouteImport } from './routes/chat'
-import { Route as CronJobsRouteImport } from './routes/cron-jobs'
 import { Route as EmailRouteImport } from './routes/email'
 import { Route as GitRouteImport } from './routes/git'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
@@ -62,11 +61,6 @@ const BudgetRoute = BudgetRouteImport.update({
 const ChatRoute = ChatRouteImport.update({
   id: '/chat',
   path: '/chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CronJobsRoute = CronJobsRouteImport.update({
-  id: '/cron-jobs',
-  path: '/cron-jobs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EmailRoute = EmailRouteImport.update({
@@ -220,7 +214,6 @@ export interface FileRoutesByFullPath {
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
-  '/cron-jobs': typeof CronJobsRoute
   '/email': typeof EmailRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
@@ -256,7 +249,6 @@ export interface FileRoutesByTo {
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
-  '/cron-jobs': typeof CronJobsRoute
   '/email': typeof EmailRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
@@ -293,7 +285,6 @@ export interface FileRoutesById {
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
-  '/cron-jobs': typeof CronJobsRoute
   '/email': typeof EmailRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
@@ -331,7 +322,6 @@ export interface FileRouteTypes {
     | '/assets'
     | '/budget'
     | '/chat'
-    | '/cron-jobs'
     | '/email'
     | '/git'
     | '/marketplace'
@@ -367,7 +357,6 @@ export interface FileRouteTypes {
     | '/assets'
     | '/budget'
     | '/chat'
-    | '/cron-jobs'
     | '/email'
     | '/git'
     | '/marketplace'
@@ -403,7 +392,6 @@ export interface FileRouteTypes {
     | '/assets'
     | '/budget'
     | '/chat'
-    | '/cron-jobs'
     | '/email'
     | '/git'
     | '/marketplace'
@@ -440,7 +428,6 @@ export interface RootRouteChildren {
   AssetsRoute: typeof AssetsRoute
   BudgetRoute: typeof BudgetRoute
   ChatRoute: typeof ChatRoute
-  CronJobsRoute: typeof CronJobsRoute
   EmailRoute: typeof EmailRoute
   GitRoute: typeof GitRoute
   MarketplaceRoute: typeof MarketplaceRoute
@@ -499,13 +486,6 @@ declare module '@tanstack/react-router' {
       path: '/chat'
       fullPath: '/chat'
       preLoaderRoute: typeof ChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/cron-jobs': {
-      id: '/cron-jobs'
-      path: '/cron-jobs'
-      fullPath: '/cron-jobs'
-      preLoaderRoute: typeof CronJobsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/email': {
@@ -731,7 +711,6 @@ const rootRouteChildren: RootRouteChildren = {
   AssetsRoute: AssetsRoute,
   BudgetRoute: BudgetRoute,
   ChatRoute: ChatRoute,
-  CronJobsRoute: CronJobsRoute,
   EmailRoute: EmailRoute,
   GitRoute: GitRoute,
   MarketplaceRoute: MarketplaceRoute,

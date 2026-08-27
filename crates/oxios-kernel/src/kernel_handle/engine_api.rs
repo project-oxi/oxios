@@ -1685,6 +1685,70 @@ impl EngineApi {
             }
         }
     }
+
+    /// Draft 3 candidate goal/instruction texts for a scheduled task.
+    ///
+    /// Mirrors [`Self::generate_follow_up`]: lightweight sidecar LLM call,
+    /// `follow_up_action` system-agent model or engine default, empty vec on
+    /// any failure so the frontend degrades silently.
+    pub async fn generate_goal_suggestions(&self, context: &str) -> Vec<String> {
+        let text = context.trim();
+        if text.is_empty() {
+            return vec![];
+        }
+
+        let resolved = {
+            let cfg = self.config.read();
+            match cfg.system_agents.model_for_task("follow_up_action") {
+                Some(id) => self.engine_handle.resolve(&id),
+                None => self.engine_handle.resolve_default(),
+            }
+        };
+        let resolved = match resolved {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "goal-suggestions: model resolution failed");
+                return vec![];
+            }
+        };
+
+        let mut ctx = oxicode_sdk::Context::new();
+        ctx.set_system_prompt(GOAL_SUGGESTION_SYSTEM_PROMPT);
+        ctx.add_message(oxicode_sdk::Message::User(oxicode_sdk::UserMessage::new(
+            format!("User's rough idea for a scheduled task:\n\"\"\"\n{text}\n\"\"\""),
+        )));
+
+        let stream = match resolved.provider.stream(&resolved.model, &ctx, None).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "goal-suggestions: stream init failed");
+                return vec![];
+            }
+        };
+
+        use futures::StreamExt;
+        let mut raw = String::new();
+        let mut pinned = std::pin::pin!(stream);
+        while let Some(event) = pinned.next().await {
+            match event {
+                oxicode_sdk::ProviderEvent::TextDelta { delta, .. } => raw.push_str(&delta),
+                oxicode_sdk::ProviderEvent::Done { .. } => break,
+                oxicode_sdk::ProviderEvent::Error { error, .. } => {
+                    tracing::warn!(error = ?error, "goal-suggestions: stream error");
+                    return vec![];
+                }
+                _ => {}
+            }
+        }
+
+        match parse_goal_suggestions(&raw) {
+            Ok(goals) => goals,
+            Err(e) => {
+                tracing::warn!(error = %e, raw = %raw.chars().take(200).collect::<String>(), "goal-suggestions: JSON parse failed");
+                vec![]
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for EngineApi {
@@ -1802,6 +1866,60 @@ fn parse_follow_up_chips(raw: &str) -> anyhow::Result<Vec<FollowUpChip>> {
         .collect();
 
     Ok(chips)
+}
+
+/// Sidecar prompt — drafts 3 candidate goal texts for a scheduled agent task.
+const GOAL_SUGGESTION_SYSTEM_PROMPT: &str = "\
+You are a sidecar that drafts goal statements for scheduled agent tasks. The user gives a rough idea (often in note form, sometimes just a topic); you turn it into a precise, self-contained agent instruction.\n\
+\n\
+Output a JSON object. No prose outside the JSON.\n\
+\n\
+Guidelines:\n\
+- Exactly 3 options, each a complete instruction the agent will execute on schedule WITHOUT further user input.\n\
+- Each option 2-6 sentences: concrete steps, data sources when relevant, and the desired output format (e.g. markdown report, bullet list).\n\
+- One option minimal/cheap, one balanced, one ambitious/thorough.\n\
+- **Match the language of the user's idea.** Korean idea → Korean goals. Never translate.\n\
+- Include success criteria the agent can self-check when practical.\n\
+- No placeholders like \"...\" or \"TBD\".\n\
+\n\
+Output schema:\n\
+```json\n\
+{\"goals\": [\"...\", \"...\", \"...\"]}\n\
+```";
+
+/// Parse goal suggestions from raw LLM output (fence/prose tolerant).
+fn parse_goal_suggestions(raw: &str) -> anyhow::Result<Vec<String>> {
+    #[derive(serde::Deserialize)]
+    struct RawResponse {
+        goals: Vec<String>,
+    }
+
+    let trimmed = raw.trim();
+    let json_str = if trimmed.starts_with("```") {
+        let after_open = trimmed.find('\n').map(|i| i + 1).unwrap_or(0);
+        let before_close = trimmed
+            .rfind("```")
+            .filter(|&i| i >= after_open)
+            .unwrap_or(trimmed.len());
+        &trimmed[after_open..before_close]
+    } else {
+        let start = trimmed
+            .find('{')
+            .ok_or_else(|| anyhow::anyhow!("no JSON object found in response"))?;
+        let end = trimmed
+            .rfind('}')
+            .ok_or_else(|| anyhow::anyhow!("no closing brace in response"))?;
+        &trimmed[start..=end]
+    };
+
+    let parsed: RawResponse = serde_json::from_str(json_str)?;
+    let goals = parsed
+        .goals
+        .into_iter()
+        .filter(|g| !g.trim().is_empty() && g.len() <= 4000)
+        .take(3)
+        .collect();
+    Ok(goals)
 }
 
 #[cfg(test)]

@@ -25,7 +25,6 @@ import {
   ShieldCheck,
   Sparkles,
   Theater,
-  Timer,
   Trash2,
   Wallet,
   Zap,
@@ -128,7 +127,6 @@ export const consoleNavGroups: { labelKey: string; items: NavItem[] }[] = [
   {
     labelKey: 'common.operations',
     items: [
-      { labelKey: 'common.cronJobs', href: '/cron-jobs', icon: <Timer className="h-4 w-4" /> },
       { labelKey: 'common.cost', href: '/budget', icon: <Wallet className="h-4 w-4" /> },
       {
         labelKey: 'common.tokenMaxing',

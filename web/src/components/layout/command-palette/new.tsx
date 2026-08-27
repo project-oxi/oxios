@@ -41,7 +41,7 @@ const TARGETS: NewTarget[] = [
   {
     key: 'cron',
     titleKey: 'commandPalette.newCron',
-    href: '/cron-jobs',
+    href: '/tasks',
     icon: <Timer className="h-4 w-4" />,
   },
   {

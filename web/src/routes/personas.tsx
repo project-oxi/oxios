@@ -4,7 +4,7 @@ import { Pencil, Plus, Star, Trash2, Users } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { groupByCategory } from '@/components/chat/persona-picker'
+
 import {
   EditPersonaDialog,
   type PersonaItem,
@@ -247,101 +247,89 @@ function PersonasPage() {
           description={t('personas.descriptionHint')}
         />
       ) : (
-        <div className="space-y-6">
-          {groupByCategory(items).map((group) => (
-            <section key={group.category} className="space-y-3">
-              <h2 className="text-sm font-semibold text-muted-foreground">
-                {group.labelKey ? t(group.labelKey) : t('chat.persona.categories.other')}
-                <span className="ml-1.5 text-xs font-normal">{group.items.length.toString()}</span>
-              </h2>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {group.items.map((persona) => (
-                  <Card key={persona.id}>
-                    <CardHeader className="flex flex-row items-start justify-between pb-2">
-                      <div>
-                        <CardTitle className="text-base flex items-center gap-2">
-                          <Users className="h-4 w-4" /> {persona.name}
-                          {persona.active && (
-                            <span className="rounded bg-success/15 px-1.5 py-0.5 text-2xs font-medium text-success">
-                              {t('personas.activeBadge')}
-                            </span>
-                          )}
-                        </CardTitle>
-                        {persona.description && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {persona.description}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setEditing(persona)}
-                          aria-label={t('common.edit')}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {persona.enabled && !persona.active && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => activateMutation.mutate(persona.id)}
-                            aria-label={t('personas.activatePersona')}
-                          >
-                            <Star className="h-4 w-4" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setDeleteTarget(persona)}
-                          aria-label={t('personas.deletePersona')}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-xs text-muted-foreground">
-                        {t('personas.role')}: {persona.role}
-                        {persona.tool_profile && (
-                          <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-2xs font-medium">
-                            {t(`personas.profileBadge.${persona.tool_profile}`, {
-                              defaultValue: persona.tool_profile,
-                            })}
-                          </span>
-                        )}
-                      </p>
-                      {persona.system_prompt && (
-                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                          {persona.system_prompt}
-                        </p>
-                      )}
-                      {(persona.genre || (persona.capabilities?.length ?? 0) > 0) && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {persona.genre && (
-                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
-                              {t(`chat.persona.genres.${persona.genre}`, {
-                                defaultValue: persona.genre ?? '',
-                              })}
-                            </span>
-                          )}
-                          {(persona.capabilities ?? []).map((cap) => (
-                            <span
-                              key={cap}
-                              className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info"
-                            >
-                              {cap}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {items.map((persona) => (
+            <Card key={persona.id}>
+              <CardHeader className="flex flex-row items-start justify-between pb-2">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Users className="h-4 w-4" /> {persona.name}
+                    {persona.active && (
+                      <span className="rounded bg-success/15 px-1.5 py-0.5 text-2xs font-medium text-success">
+                        {t('personas.activeBadge')}
+                      </span>
+                    )}
+                  </CardTitle>
+                  {persona.description && (
+                    <p className="text-xs text-muted-foreground mt-1">{persona.description}</p>
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setEditing(persona)}
+                    aria-label={t('common.edit')}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {persona.enabled && !persona.active && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => activateMutation.mutate(persona.id)}
+                      aria-label={t('personas.activatePersona')}
+                    >
+                      <Star className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setDeleteTarget(persona)}
+                    aria-label={t('personas.deletePersona')}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">
+                  {t('personas.role')}: {persona.role}
+                  {persona.tool_profile && (
+                    <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-2xs font-medium">
+                      {t(`personas.profileBadge.${persona.tool_profile}`, {
+                        defaultValue: persona.tool_profile,
+                      })}
+                    </span>
+                  )}
+                </p>
+                {persona.system_prompt && (
+                  <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                    {persona.system_prompt}
+                  </p>
+                )}
+                {(persona.genre || (persona.capabilities?.length ?? 0) > 0) && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {persona.genre && (
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
+                        {t(`chat.persona.genres.${persona.genre}`, {
+                          defaultValue: persona.genre ?? '',
+                        })}
+                      </span>
+                    )}
+                    {(persona.capabilities ?? []).map((cap) => (
+                      <span
+                        key={cap}
+                        className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info"
+                      >
+                        {cap}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

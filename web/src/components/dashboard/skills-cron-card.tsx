@@ -5,7 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { api } from '@/lib/api-client'
 import { formatRelativeDate } from '@/lib/utils'
-import type { CronJob, Skill } from '@/types'
+import type { Skill } from '@/types'
+import type { Task } from '@/types/task'
 
 /**
  * Combined Skills & Cron Jobs overview card.
@@ -22,18 +23,20 @@ export function SkillsCronCard({ className }: { className?: string }) {
     staleTime: 60_000,
   })
 
-  const { data: cronData } = useQuery({
-    queryKey: ['cron-jobs'],
-    queryFn: () => api.get<{ jobs: CronJob[] }>('/api/cron-jobs'),
+  const { data: tasksData } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: () => api.get<{ tasks: Task[] }>('/api/tasks'),
     staleTime: 30_000,
   })
 
   const skills = Array.isArray(skillsData?.items) ? skillsData.items : []
   const activeSkills = skills.filter((s) => s.eligible)
-  const cronJobs = (cronData?.jobs ?? []).filter((j) => j.enabled)
-  const nextCron = cronJobs
-    .filter((j) => j.next_run)
-    .sort((a, b) => new Date(a.next_run!).getTime() - new Date(b.next_run!).getTime())[0]
+  const scheduledTasks = (tasksData?.tasks ?? []).filter(
+    (tk) => tk.automationMode === 'schedule' && tk.status !== 'canceled',
+  )
+  const nextTask = scheduledTasks
+    .filter((tk) => tk.nextRunAt)
+    .sort((a, b) => new Date(a.nextRunAt!).getTime() - new Date(b.nextRunAt!).getTime())[0]
 
   return (
     <Card className={className}>
@@ -61,20 +64,20 @@ export function SkillsCronCard({ className }: { className?: string }) {
           </div>
         </div>
 
-        {/* Cron */}
+        {/* Scheduled tasks */}
         <div>
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5 text-muted-foreground">
               <Clock className="h-3 w-3" />
-              <span>{t('dashboard.cronJobs')}</span>
+              <span>{t('dashboard.scheduledTasks')}</span>
             </div>
-            <Link to="/cron-jobs" className="font-semibold hover:underline">
-              {cronJobs.length} {t('dashboard.active')}
+            <Link to="/tasks" className="font-semibold hover:underline">
+              {scheduledTasks.length} {t('dashboard.active')}
             </Link>
           </div>
-          {nextCron?.next_run && (
+          {nextTask?.nextRunAt && (
             <p className="text-2xs text-muted-foreground mt-1 pl-5">
-              {t('dashboard.nextRun')}: {formatRelativeDate(nextCron.next_run, t)}
+              {t('dashboard.nextRun')}: {formatRelativeDate(nextTask.nextRunAt, t)}
             </p>
           )}
         </div>

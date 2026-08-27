@@ -539,21 +539,6 @@ export interface Approval {
   status: string
 }
 
-// Cron Job
-export interface CronJob {
-  id: string
-  name: string
-  schedule: string
-  goal: string
-  enabled: boolean
-  last_run?: string
-  next_run?: string
-  run_count: number
-  last_result?: string
-  last_success?: boolean
-  source: 'config' | 'api'
-}
-
 // Budget — moved to types/budget.ts
 
 // Resource

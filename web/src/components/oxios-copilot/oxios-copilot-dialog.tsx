@@ -18,8 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useEngineConfig } from '@/hooks/use-engine'
 import { api } from '@/lib/api-client'
 import { useChatStore } from '@/stores/chat'
-import { useOxiosCopilotStore } from '@/stores/oxios-copilot'
-import type { ChatBlock } from '@/types'
+import { buildSeedRequestBody, useOxiosCopilotStore } from '@/stores/oxios-copilot'
 
 /**
  * OxiosCopilotDialog — global one-shot question overlay.
@@ -86,29 +85,10 @@ export function OxiosCopilotDialog() {
   const handlePromote = async () => {
     if (!lastExchange) return
     try {
-      const res = await api.post<{ session_id: string }>('/api/chat/seed', {
-        user_message: lastExchange.prompt,
-        agent_response: lastExchange.reply,
-        trajectory_steps: lastExchange.blocks
-          .filter((b) => b.type === 'tool')
-          .map((b) => {
-            const tb = b as Extract<typeof b, { type: 'tool' }>
-            return {
-              tool: tb.apiName,
-              input: tb.arguments,
-              output: typeof tb.result === 'string' ? tb.result : undefined,
-              duration_ms: tb.durationMs,
-            }
-          }),
-        reasoning_text: lastExchange.blocks
-          .filter((b) => b.type === 'reasoning')
-          .map((b) => {
-            const rb = b as Extract<ChatBlock, { type: 'reasoning' }>
-            return rb.text
-          })
-          .join('\n'),
-        project_id: undefined,
-      })
+      const res = await api.post<{ session_id: string }>(
+        '/api/chat/seed',
+        buildSeedRequestBody(lastExchange),
+      )
       closeCopilot()
       reset()
       router.history.push('/chat')

@@ -30,7 +30,51 @@ export interface CapturedExchange {
   model?: string
   sessionId?: string
 }
+export const COPILOT_PERSONA_ID = 'oxios' as const
 
+/** Pure WS message payload — locked persona, ephemeral, selected model.
+ *  Exported so tests can build the same payload without opening a WebSocket.
+ *  Task 9 locks persona_id here so neither call site can forget it. */
+export function buildCopilotMessagePayload(content: string, model: string | null) {
+  return {
+    type: 'message',
+    content,
+    ephemeral: true,
+    persona_id: COPILOT_PERSONA_ID,
+    model: model ?? '',
+  } as const
+}
+
+/** Pure /api/chat/seed body — same shape the dialog builds today, plus
+ *  `persona_id` so the seeded session is bound to the oxios persona.
+ *  Trajectory/reasoning mapping preserved verbatim from handlePromote
+ *  (tool blocks → {tool, input, output, duration_ms}; reasoning → joined text). */
+export function buildSeedRequestBody(ex: CapturedExchange) {
+  return {
+    user_message: ex.prompt,
+    agent_response: ex.reply,
+    trajectory_steps: ex.blocks
+      .filter((b) => b.type === 'tool')
+      .map((b) => {
+        const tb = b as Extract<ChatBlock, { type: 'tool' }>
+        return {
+          tool: tb.apiName,
+          input: tb.arguments,
+          output: typeof tb.result === 'string' ? tb.result : undefined,
+          duration_ms: tb.durationMs,
+        }
+      }),
+    reasoning_text: ex.blocks
+      .filter((b) => b.type === 'reasoning')
+      .map((b) => {
+        const rb = b as Extract<ChatBlock, { type: 'reasoning' }>
+        return rb.text
+      })
+      .join('\n'),
+    project_id: undefined,
+    persona_id: COPILOT_PERSONA_ID,
+  }
+}
 interface OxiosCopilotState {
   open: boolean
   messages: ChatMessage[]
@@ -188,16 +232,8 @@ export const useOxiosCopilotStore = create<OxiosCopilotState>((set, get) => ({
         const ws =
           _ws && _ws.readyState === WebSocket.OPEN ? _ws : new WebSocket(await buildWsUrl())
         set({ _ws: ws })
-
         const sendPayload = () => {
-          ws.send(
-            JSON.stringify({
-              type: 'message',
-              content,
-              ephemeral: true,
-              model: copilotModel ?? '',
-            }),
-          )
+          ws.send(JSON.stringify(buildCopilotMessagePayload(content, copilotModel)))
         }
 
         if (ws.readyState === WebSocket.OPEN) {

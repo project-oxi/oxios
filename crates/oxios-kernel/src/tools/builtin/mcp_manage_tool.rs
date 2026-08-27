@@ -266,24 +266,60 @@ impl McpManageTool {
         let args = parse_string_array(params.get("args"));
         let env = parse_env_map(params.get("env"));
 
-        match self
+        // PUT must replace, not create: reject unknown servers (the bridge's
+        // update_server would otherwise register a phantom entry).
+        let Some(previous) = self.api.get_server(&name) else {
+            return Ok(AgentToolResult::error(format!(
+                "MCP server '{name}' not found"
+            )));
+        };
+
+        if let Err(e) = self
             .api
             .update_server(&name, command, args, env, enabled)
             .await
         {
-            Ok(updated) => Ok(AgentToolResult::success(
-                serde_json::to_string_pretty(&json!({
-                    "status": "updated",
-                    "name": updated.name,
-                    "command": updated.command,
-                    "enabled": updated.enabled,
-                }))
-                .unwrap_or_else(|_| "{}".to_string()),
-            )),
-            Err(e) => Ok(AgentToolResult::error(format!(
+            return Ok(AgentToolResult::error(format!(
                 "Failed to update MCP server '{name}': {e}"
-            ))),
+            )));
         }
+
+        // Re-initialize when the server should run; roll back to the previous
+        // configuration when the new one fails to come up (REST contract).
+        if enabled
+            && let Err(e) = self.api.init_server(&name).await
+        {
+            tracing::error!(
+                server = %name,
+                error = %e,
+                "MCP server init failed after update; rolling back"
+            );
+            let _ = self
+                .api
+                .update_server(
+                    &name,
+                    previous.command.clone(),
+                    previous.args.clone(),
+                    previous.env.clone(),
+                    previous.enabled,
+                )
+                .await;
+            if previous.enabled {
+                let _ = self.api.init_server(&name).await;
+            }
+            return Ok(AgentToolResult::error(format!(
+                "Failed to initialize MCP server '{name}' after update: {e}. Update rolled back."
+            )));
+        }
+
+        Ok(AgentToolResult::success(
+            serde_json::to_string_pretty(&json!({
+                "status": "updated",
+                "name": name,
+                "enabled": enabled,
+            }))
+            .unwrap_or_else(|_| "{}".to_string()),
+        ))
     }
 
     async fn handle_remove(
@@ -436,5 +472,35 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("requires"));
+    }
+
+    #[tokio::test]
+    async fn update_unknown_name_returns_not_found_without_mutation() {
+        // Param validation order: validate → pre-check → mutate. An unknown
+        // name must short-circuit before any bridge mutation, matching the
+        // REST PUT contract (no phantom registration).
+        let tool = McpManageTool::for_tests();
+        let result = tool
+            .execute(
+                "c-1",
+                json!({
+                    "action": "update",
+                    "name": "phantom",
+                    "command": "npx",
+                    "enabled": true,
+                }),
+                None,
+                &ToolContext::default(),
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(
+            result.output.contains("MCP server 'phantom' not found"),
+            "expected not-found error, got: {}",
+            result.output
+        );
+        // Pre-check is the only mutation gate: bridge must remain empty.
+        assert!(tool.api.list_servers().is_empty());
     }
 }

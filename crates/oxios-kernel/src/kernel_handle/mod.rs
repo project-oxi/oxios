@@ -111,7 +111,7 @@ pub struct KernelHandle {
     /// Agent-to-agent communication.
     pub a2a: A2aApi,
     /// Engine: LLM providers, models, config.
-    pub engine: EngineApi,
+    pub engine: Arc<EngineApi>,
     /// Knowledge base: markdown notes (direct access, no kernel dependency).
     pub knowledge: Arc<oxios_markdown::KnowledgeBase>,
     /// Semantic knowledge overlay (HNSW index + agent recall).
@@ -185,7 +185,7 @@ impl KernelHandle {
         projects: Option<ProjectApi>,
         exec: ExecApi,
         a2a: A2aApi,
-        engine: EngineApi,
+        engine: Arc<EngineApi>,
         knowledge: Arc<oxios_markdown::KnowledgeBase>,
         knowledge_lens: Arc<KnowledgeLens>,
         marketplace_api: MarketplaceApi,

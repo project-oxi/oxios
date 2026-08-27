@@ -166,14 +166,14 @@ mod tests {
             crate::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
                 crate::event_bus::EventBus::new(256),
             ))),
-            crate::EngineApi::new(
+            Arc::new(crate::EngineApi::new(
                 Arc::new(parking_lot::RwLock::new(crate::OxiosConfig::default())),
                 base.join("config.toml"),
                 Arc::new(crate::RoutingStats::new()),
                 Arc::new(crate::engine::EngineHandle::new(Arc::new(
                     crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
                 ))),
-            ),
+            )),
             Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(

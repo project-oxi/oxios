@@ -741,7 +741,7 @@ mod tests {
             crate::kernel_handle::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
                 EventBus::new(64),
             ))),
-            crate::kernel_handle::EngineApi::new(
+            Arc::new(crate::kernel_handle::EngineApi::new(
                 Arc::new(parking_lot::RwLock::new(
                     crate::config::OxiosConfig::default(),
                 )),
@@ -750,7 +750,7 @@ mod tests {
                 Arc::new(crate::engine::EngineHandle::new(Arc::new(
                     crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
                 ))),
-            ),
+            )),
             Arc::new(oxios_markdown::KnowledgeBase::new(tmp.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(

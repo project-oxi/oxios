@@ -45,6 +45,10 @@ pub(crate) struct CreateProjectRequest {
     pub tags: Vec<String>,
     pub emoji: Option<String>,
     pub description: Option<String>,
+    /// RFC-025: referenced Mount IDs (applied via bundle update after create).
+    pub mount_ids: Option<Vec<String>>,
+    /// RFC-025: custom instructions (applied via bundle update after create).
+    pub instructions: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +149,21 @@ pub(crate) async fn handle_project_create(
     let project = api
         .create_project(body.name, body.tags, body.emoji, body.description)
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
+    // Apply the RFC-025 bundle fields (mounts, instructions) that used to be
+    // PUT-only. Previously the dialog sent `instructions` on POST and the
+    // field was silently dropped while a success toast still showed.
+    let wants_bundle = body.mount_ids.as_ref().is_some_and(|m| !m.is_empty())
+        || body
+            .instructions
+            .as_ref()
+            .is_some_and(|i| !i.trim().is_empty());
+    let project = if wants_bundle {
+        api.update_project_bundle(&project.id, body.mount_ids, body.instructions)
+            .map_err(|e| AppError::BadRequest(e.to_string()))?
+    } else {
+        project
+    };
 
     Ok((StatusCode::CREATED, Json(project)))
 }

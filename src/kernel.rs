@@ -9,10 +9,10 @@ use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
     A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
-    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
-    EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
-    OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
-    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, VaultRegisterPolicy,
+    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, EngineHandle, EventBus,
+    GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator, OxiosConfig,
+    OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
+    SkillsShInstaller, SubsystemState, Supervisor, VaultRegisterPolicy,
     access_manager::AccessManager, auth::AuthManager, config::load_config, git_layer::rel_path,
     mcp::validate_mcp_command, resolve_space,
 };
@@ -46,7 +46,7 @@ pub struct Kernel {
     /// oxibrain daemon via launchd/spawn. Built at boot, drives ensure().
     brain_supervisor: Arc<oxios_kernel::BrainSupervisor>,
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
-    cron_scheduler: Arc<CronScheduler>,
+
     git_layer: Arc<GitLayer>,
     /// T16: vault-rooted `GitLayer` used for knowledge auto-commit,
     /// history, and restore. Distinct from `git_layer` (workspace). See
@@ -185,7 +185,6 @@ impl Kernel {
                     oxios_kernel::InfraApi::new(
                         self.git_layer.clone(),
                         self.knowledge_git.clone(),
-                        self.cron_scheduler.clone(),
                         self.resource_monitor.clone(),
                         self.event_bus.clone(),
                         self.config.clone(),
@@ -681,67 +680,70 @@ impl Kernel {
         self.gateway.run().await
     }
 
-    /// Start the CronScheduler: restore persisted jobs, load config-defined
-    /// jobs, then run the tick loop. Each fired job's goal is executed through
-    /// the shared [`KernelHandle::run_goal`] primitive (direct orchestrator
-    /// path — no gateway correlation, since this is a background task with no
-    /// waiting HTTP client).
+    /// One-time migration of legacy cron jobs into the RFC-043 task system.
     ///
-    /// Must be called after `handle()` is cached (so the orchestrator is
-    /// attached) and after the intent engine is wired — both are true once
-    /// `Kernel::build()` returns. The default 60 s tick also lands post-boot.
+    /// The `CronScheduler` is retired: recurring goals now live as Tasks with
+    /// `automation_mode = schedule`, executed by the task auto-run tick. This
+    /// collects every job that still exists — persisted API jobs
+    /// (`state_store: cron/jobs.json`) and `[[cron.jobs]]` entries from
+    /// config.toml — copies each into a scheduled Task, then deletes the
+    /// legacy state file. Identifier-collision skips make re-runs idempotent,
+    /// so a partially failed migration heals on the next boot.
     ///
-    /// Returns the loop's `JoinHandle` so the caller can track it for liveness,
-    /// or `None` when cron is disabled in config (no task to track — a
-    /// completed handle would otherwise look like a fatal critical-task exit).
-    pub fn start_cron_loop(&self) -> Option<tokio::task::JoinHandle<()>> {
-        if !self.config.cron.enabled {
-            tracing::info!("Cron scheduler disabled in config; not starting");
-            return None;
-        }
-        let scheduler = self.cron_scheduler.clone();
-        let handle = self.handle();
+    /// Must be called after `handle()` is cached (the task store hangs off
+    /// the cached KernelHandle). Fire-and-forget: a failure logs but never
+    /// blocks or crashes the daemon.
+    pub fn migrate_legacy_crons(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let state_store = self.state_store.clone();
         let cron_config = self.config.cron.clone();
+        let task_store = self.handle().task_store.clone()?;
         Some(tokio::spawn(async move {
-            // Restore persisted jobs, then add config-defined ones (API jobs win).
-            scheduler.restore_jobs().await;
-            scheduler.load_from_config(&cron_config).await;
-
-            let handle_for_exec = handle.clone();
-            scheduler
-                .start(move |job_id, goal| {
-                    let handle = handle_for_exec.clone();
-                    async move {
-                        match handle.run_goal(&goal, None).await {
-                            Ok(result) => {
-                                // Success signal: no provider failure AND
-                                // evaluation passed. evaluation_passed is None
-                                // for goals with no acceptance criteria/review
-                                // (always, for cron jobs), so the default must
-                                // be true — a goal that ran without error is a
-                                // success.
-                                let success = result.failure_class.is_none()
-                                    && result.evaluation_passed.unwrap_or(true);
-                                let summary = result
-                                    .output
-                                    .clone()
-                                    .unwrap_or_else(|| result.response.clone());
-                                tracing::info!(
-                                    %job_id,
-                                    success,
-                                    phase = %result.phase_reached,
-                                    "Cron job executed"
-                                );
-                                (success, summary)
-                            }
-                            Err(e) => {
-                                tracing::error!(%job_id, error = %e, "Cron job execution failed");
-                                (false, format!("Error: {e}"))
-                            }
-                        }
+            // Persisted API jobs.
+            let mut jobs: Vec<oxios_kernel::task::legacy::CronJob> = state_store
+                .load_json("cron", "jobs")
+                .await
+                .unwrap_or(None)
+                .unwrap_or_default();
+            // Config-defined inline jobs ([[cron.jobs]] in config.toml).
+            for (name, inline) in &cron_config.jobs {
+                let mut job = oxios_kernel::task::legacy::CronJob::new(
+                    name.clone(),
+                    inline.schedule.clone(),
+                    inline.goal.clone(),
+                );
+                job.constraints = inline.constraints.clone();
+                job.acceptance_criteria = inline.acceptance_criteria.clone();
+                job.toolchain = inline.toolchain.clone();
+                job.priority = inline.priority;
+                job.enabled = inline.enabled;
+                jobs.push(job);
+            }
+            if jobs.is_empty() {
+                return;
+            }
+            let count = jobs.len();
+            let store = task_store.lock().await;
+            match oxios_kernel::task::migrate_cron_to_tasks(&jobs, &store, false).await {
+                Ok(report) => {
+                    tracing::info!(
+                        total = count,
+                        created = report.created.len(),
+                        skipped = report.skipped.len(),
+                        "Migrated legacy cron jobs into scheduled tasks"
+                    );
+                    for s in &report.skipped {
+                        tracing::info!(job = %s.name, reason = %s.reason, "cron migration skip");
                     }
-                })
-                .await;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Legacy cron migration failed; retrying next boot");
+                    return;
+                }
+            }
+            // Drop the retired state so migrated jobs are not re-copied.
+            if let Err(e) = state_store.delete_file("cron", "jobs").await {
+                tracing::warn!(error = %e, "Failed to delete retired cron state file");
+            }
         }))
     }
 
@@ -1473,15 +1475,14 @@ impl KernelBuilder {
 
         let audit_trail = Arc::new(AuditTrail::new(config.audit.max_entries));
 
-        let mut cron_scheduler =
-            CronScheduler::new(state_store.clone(), config.cron.tick_interval_secs);
-        cron_scheduler.set_git_layer(git_layer.clone());
-        let cron_scheduler = Arc::new(cron_scheduler);
-
         let resource_monitor = Arc::new(ResourceMonitor::new(
             config.resource_monitor.interval_secs,
             config.resource_monitor.history_max,
         ));
+        // Spawn the background sampler so `/api/resources/history` actually
+        // accumulates data. Without this the monitor's ring buffer stays
+        // empty forever and the web UI chart shows "insufficient data".
+        let _sampling_task = resource_monitor.start_sampling();
 
         oxios_kernel::event_bus::attach_audit_trail(&event_bus, audit_trail.clone());
 
@@ -1570,7 +1571,6 @@ impl KernelBuilder {
                 oxios_kernel::InfraApi::new(
                     git_layer.clone(),
                     knowledge_git.clone(),
-                    cron_scheduler.clone(),
                     resource_monitor.clone(),
                     event_bus.clone(),
                     config.clone(),
@@ -1870,7 +1870,7 @@ impl KernelBuilder {
             brain,
             brain_supervisor,
             auth_manager,
-            cron_scheduler,
+
             git_layer,
             knowledge_git,
             audit_trail,

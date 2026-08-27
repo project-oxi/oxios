@@ -78,7 +78,7 @@ export function OxiosCopilotDialog() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error(t('quickAsk.copyFailed'))
+      toast.error(t('oxiosCopilot.copyFailed'))
     }
   }
 
@@ -94,9 +94,9 @@ export function OxiosCopilotDialog() {
       router.history.push('/chat')
       // Seed the chat store so /chat shows the promoted exchange immediately.
       await useChatStore.getState().loadSession(res.session_id)
-      toast.success(t('quickAsk.promoted'))
+      toast.success(t('oxiosCopilot.promoted'))
     } catch {
-      toast.error(t('quickAsk.promoteFailed'))
+      toast.error(t('oxiosCopilot.promoteFailed'))
     }
   }
 
@@ -117,9 +117,9 @@ export function OxiosCopilotDialog() {
       >
         <DialogHeader className="flex-row items-center justify-between border-b px-5 py-3">
           <div className="flex items-center gap-2">
-            <DialogTitle className="text-sm font-medium">{t('quickAsk.title')}</DialogTitle>
+            <DialogTitle className="text-sm font-medium">{t('oxiosCopilot.title')}</DialogTitle>
           </div>
-          <DialogDescription className="sr-only">{t('quickAsk.placeholder')}</DialogDescription>
+          <DialogDescription className="sr-only">{t('oxiosCopilot.placeholder')}</DialogDescription>
           <Button
             variant="ghost"
             size="icon"
@@ -134,9 +134,21 @@ export function OxiosCopilotDialog() {
         <ScrollArea className="flex-1" ref={scrollRef}>
           <div className="space-y-4 px-5 py-4">
             {empty && !isStreaming && (
-              <p className="py-12 text-center text-sm text-muted-foreground">
-                {t('quickAsk.placeholder')}
-              </p>
+              <div className="py-10 text-center">
+                <p className="text-sm font-medium">{t('oxiosCopilot.subtitle')}</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2 px-6">
+                  {(['addMcp', 'budget', 'tasks', 'model'] as const).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => send(t(`oxiosCopilot.chips.${k}`))}
+                      className="rounded-full border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/70"
+                    >
+                      {t(`oxiosCopilot.chips.${k}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
             {messages.map((m) => (
               <MessageBubble key={m.id} message={m} />
@@ -163,7 +175,7 @@ export function OxiosCopilotDialog() {
                 className="h-7 gap-1.5 px-2 text-xs"
               >
                 {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                {t('quickAsk.copy')}
+                {t('oxiosCopilot.copy')}
               </Button>
               <Button
                 variant="ghost"
@@ -172,10 +184,10 @@ export function OxiosCopilotDialog() {
                 className="h-7 gap-1.5 px-2 text-xs"
               >
                 <MessageSquarePlus className="h-3 w-3" />
-                {t('quickAsk.promote')}
+                {t('oxiosCopilot.promote')}
               </Button>
             </div>
-            <span className="text-[10px] text-muted-foreground">{t('quickAsk.notSaved')}</span>
+            <span className="text-[10px] text-muted-foreground">{t('oxiosCopilot.notSaved')}</span>
           </div>
         )}
 
@@ -189,9 +201,10 @@ export function OxiosCopilotDialog() {
             isStreaming={isStreaming}
             connected={true}
             queuedCount={queuedCount}
+            variant="copilot"
             activeModelId={copilotModel}
             setActiveModelId={setCopilotModel}
-            placeholder={t('quickAsk.placeholder')}
+            placeholder={t('oxiosCopilot.placeholder')}
           />
         </div>
       </DialogContent>

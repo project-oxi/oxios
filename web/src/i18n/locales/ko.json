@@ -1575,6 +1575,24 @@
     "promoted": "채팅으로 옮겼습니다",
     "promoteFailed": "채팅으로 옮기지 못했습니다"
   },
+  "oxiosCopilot": {
+    "title": "Oxios Copilot",
+    "subtitle": "Oxios 설정에 대해 물어보거나 직접 관리하세요.",
+    "placeholder": "Oxios에게 물어보세요 — 저장되지 않습니다",
+    "chips": {
+      "addMcp": "MCP 서버 추가해줘",
+      "budget": "이번 달 예산 보여줘",
+      "tasks": "예약된 작업 목록 보여줘",
+      "model": "기본 모델 바꿔줘"
+    },
+    "copy": "복사",
+    "copyFailed": "복사 실패",
+    "promote": "세션으로 저장",
+    "promoted": "세션으로 저장했습니다",
+    "promoteFailed": "세션 저장 실패",
+    "notSaved": "저장되지 않음",
+    "openAria": "Oxios에게 물어보기"
+  },
   "resources": {
     "title": "리소스",
     "subtitle": "시스템 리소스 모니터링",

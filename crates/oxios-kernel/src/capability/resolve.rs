@@ -85,6 +85,7 @@ fn profile_template(profile: ToolProfile) -> CapabilityTemplate {
         ToolProfile::Base => CapabilityTemplate::base_profile(),
         ToolProfile::Code => CapabilityTemplate::code_profile(),
         ToolProfile::Minimal => CapabilityTemplate::minimal_profile(),
+        ToolProfile::Control => todo!(),
     }
 }
 

@@ -29,6 +29,10 @@ pub enum ToolProfile {
     Code,
     /// Always-on tier only (read, write, edit, grep, find, ls, web_search).
     Minimal,
+    /// Oxios self-control only: project/mount, persona, task, security,
+    /// budget, resource, agent, marketplace, MCP management, engine/model
+    /// settings. No exec, browser, file, memory, knowledge, or A2A tools.
+    Control,
 }
 
 impl ToolProfile {
@@ -36,6 +40,7 @@ impl ToolProfile {
     pub fn from_str_loose(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {
             "base" => Self::Base,
+            "control" => Self::Control,
             "minimal" => Self::Minimal,
             _ => Self::Code,
         }
@@ -48,6 +53,7 @@ impl std::fmt::Display for ToolProfile {
             Self::Base => "base",
             Self::Code => "code",
             Self::Minimal => "minimal",
+            Self::Control => "control",
         };
         write!(f, "{s}")
     }
@@ -891,6 +897,19 @@ mod tests {
         let roles: std::collections::HashSet<&str> =
             personas.iter().map(|p| p.role.as_str()).collect();
         assert_eq!(roles.len(), 14);
+    }
+
+    #[test]
+    fn test_tool_profile_control_variant() {
+        assert_eq!(ToolProfile::from_str_loose("control"), ToolProfile::Control);
+        assert_eq!(ToolProfile::Control.to_string(), "control");
+        // Serde round-trip uses lowercase renaming.
+        let json = serde_json::to_string(&ToolProfile::Control).unwrap();
+        assert_eq!(json, r#""control""#);
+        let parsed: ToolProfile = serde_json::from_str(r#""control""#).unwrap();
+        assert_eq!(parsed, ToolProfile::Control);
+        // Unknown values still fall back to Code.
+        assert_eq!(ToolProfile::from_str_loose("nope"), ToolProfile::Code);
     }
 
     #[test]

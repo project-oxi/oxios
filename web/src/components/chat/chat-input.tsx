@@ -354,6 +354,7 @@ export function ChatInput({
     editorProps: {
       handleKeyDown: (_view, event) => {
         // Shift+Enter → newline; IME-composition Enter confirms a candidate
+        // (Korean/CJK) instead of sending.
         const composing = event.isComposing || event.keyCode === 229
         if (
           event.key === 'Enter' &&

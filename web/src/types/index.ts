@@ -593,7 +593,7 @@ export interface Persona {
   default_mount_ids?: string[]
   /// Tool access profile: 'base' (all tools incl. Oxios control) |
   /// 'code' (coding tools, no control) | 'minimal' (file + web search).
-  tool_profile?: 'base' | 'code' | 'minimal'
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
   /// Whether this persona is the global active persona (list endpoint only).
   active?: boolean
 }

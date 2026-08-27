@@ -1278,8 +1278,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 continue;
                             }
                         }
-                        // One-shot (QuickAsk) requests set `ephemeral: true`.
-                        // The recv task skips the pending-message insert so
+                        // One-shot requests from the Oxios Copilot dialog set
+                        // `ephemeral: true`. The recv task skips the
+                        // pending-message insert so
                         // the send task's persist guard finds no
                         // PendingMessage and never writes a session.
                         let incoming_ephemeral = parsed

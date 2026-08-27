@@ -3,10 +3,11 @@
 //!
 //! The resolution follows a priority chain:
 //!
+//! 1. **Explicit cspace hint** on the directive → template/profile by name.
 //! 2. **Persona tool profile** (`base` | `code` | `minimal` | `control`) → the
 //!    matching persona profile template.
 //! 3. **Default** → fall back to the `code` profile.
-//!
+
 //! # Example
 //!
 //! ```no_run
@@ -217,5 +218,4 @@ mod tests {
         assert!(!cs.can(&exec_shell(), Rights::EXECUTE));
         assert!(!cs.can(&ResourceRef::Browser, Rights::EXECUTE));
     }
-
 }

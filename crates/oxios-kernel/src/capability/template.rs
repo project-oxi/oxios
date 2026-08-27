@@ -269,7 +269,6 @@ impl CapabilityTemplate {
 
     /// Build a CSpace with kernel-issued capabilities for a specific agent.
     pub fn build_for(&self, agent_id: AgentId) -> CSpace {
-
         let mut cspace = CSpace::new(agent_id);
         for (resource, rights) in &self.caps {
             let cap = Capability {

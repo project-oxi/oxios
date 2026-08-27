@@ -354,7 +354,6 @@ export function ChatInput({
     editorProps: {
       handleKeyDown: (_view, event) => {
         // Shift+Enter → newline; IME-composition Enter confirms a candidate
-        // (Korean/CJK) instead of sending.
         const composing = event.isComposing || event.keyCode === 229
         if (
           event.key === 'Enter' &&
@@ -433,8 +432,12 @@ export function ChatInput({
       } else {
         setShowSlashMenu(false)
       }
-      // @mentions
-      const mentionMatch = textBefore.match(/@(\S*)$/)
+      // @mentions — suppressed in the copilot variant: searchMentions
+      // early-returns [] there, and letting mentionQuery go non-null would
+      // render a stray "no results" popover and block Enter-to-send. The
+      // editor config is captured once at mount, so gate via the ref (same
+      // pattern as the file/drag handlers).
+      const mentionMatch = isCopilotRef.current ? null : textBefore.match(/@(\S*)$/)
       if (mentionMatch) {
         setMentionQuery(mentionMatch[1] || '')
       } else {

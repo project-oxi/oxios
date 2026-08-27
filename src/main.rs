@@ -12,6 +12,7 @@ mod commands;
 mod default_skills;
 mod embedded_web;
 mod kernel;
+mod managed_install;
 mod surface;
 mod web_dist;
 
@@ -794,7 +795,13 @@ fn cmd_reset(oxios_home: &Path, skip_confirm: bool, pid_file: &Path) -> Result<(
 
 // ─── Doctor command ──────────────────────────────────────────────────────────
 
-async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
+async fn cmd_doctor(
+    kernel: &Kernel,
+    config_path: &Path,
+    oxios_home: &Path,
+    cleanup: bool,
+    yes: bool,
+) -> Result<()> {
     let config = kernel.config();
     let mut issues = Vec::new();
     let mut checks = 0u32;
@@ -1011,6 +1018,97 @@ async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
             println!("    {}. {}", i + 1, issue);
         }
     }
+
+    // ── Managed install shadow report + --cleanup ──
+    // `oxios_home` is supplied by the dispatch site so we reuse the same
+    // resolution pattern as the Update handler (no `std::env` mutation here).
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let shadows = managed_install::audit_shadows(oxios_home, &path_env);
+    if !shadows.is_empty() {
+        println!("  {}", "─".repeat(48));
+        println!(
+            "  {}",
+            style(format!("Shadow binaries ({})", shadows.len())).bold()
+        );
+        println!("  {}", "─".repeat(48));
+        for line in managed_install::render_doctor_report(&shadows).lines() {
+            println!("  {line}");
+        }
+    }
+
+    if cleanup {
+        // Build the cleanup target list: every `.bak.<date>` produced by the
+        // last `plan_migration` for the shadows we just reported, plus any
+        // stale versioned oxios copies sitting on PATH (e.g. `oxios-1.43.1`
+        // left behind by an old `cargo install`). We derive the targets
+        // directly here so callers without the migration module still get
+        // useful output.
+        let targets = managed_install::doctor_cleanup_targets(&shadows);
+        // Only offer files that actually exist — the bak projections above
+        // name FUTURE paths that a later migration may create; deleting a
+        // not-yet-existing file would just print noise.
+        let targets: Vec<_> = targets.into_iter().filter(|p| p.exists()).collect();
+        let is_tty = console::Term::stderr().is_term();
+        if targets.is_empty() {
+            println!("  {} No stale shadow files to clean.", style("✓").green());
+        } else if !is_tty && !yes {
+            // Non-TTY without --yes: print the `rm` lines so the operator can
+            // pipe them. With --yes, explicit consent replaces the TTY prompt —
+            // scripts must be able to run cleanup unattended.
+            for path in &targets {
+                println!("rm {}", path.display());
+            }
+        } else {
+            // TTY (or --yes): confirm before deletion.
+            println!(
+                "  {} About to delete {} file(s):",
+                style("⚠").yellow().bold(),
+                style(targets.len()).bold()
+            );
+            for path in &targets {
+                println!("    rm {}", path.display());
+            }
+            let proceed = if yes {
+                true
+            } else {
+                inquire::Confirm::new("  Proceed?")
+                    .with_default(false)
+                    .prompt()
+                    .unwrap_or(false)
+            };
+            if !proceed {
+                println!("  {} Cleanup cancelled.", style("✗").yellow().bold());
+            } else {
+                let mut removed = 0usize;
+                for path in &targets {
+                    match std::fs::remove_file(path) {
+                        Ok(()) => {
+                            println!(
+                                "  {} removed {}",
+                                style("✓").green(),
+                                style(path.display()).dim()
+                            );
+                            removed += 1;
+                        }
+                        Err(e) => {
+                            println!(
+                                "  {} failed to remove {}: {e}",
+                                style("✗").red(),
+                                style(path.display()).dim()
+                            );
+                        }
+                    }
+                }
+                println!(
+                    "  {} removed {}/{} file(s)",
+                    style("✓").green(),
+                    removed,
+                    targets.len()
+                );
+            }
+        }
+    }
+
     println!();
 
     Ok(())
@@ -1924,13 +2022,24 @@ async fn run(cli: Cli) -> Result<()> {
             dry_run,
             yes,
             no_restart,
+            via,
+            adopt,
+            rollback,
         }) => {
+            let via = match via.as_deref() {
+                Some("cargo") => commands::update::Via::Cargo,
+                _ => commands::update::Via::Auto,
+            };
             let outcome = commands::update::run_update(
+                &oxios_home,
                 *web_only,
                 *binary_only,
                 version.as_deref(),
                 *dry_run,
                 *yes,
+                via,
+                *adopt,
+                *rollback,
             )
             .await?;
 
@@ -1940,8 +2049,27 @@ async fn run(cli: Cli) -> Result<()> {
             if !*no_restart && outcome.any() {
                 println!();
                 let port = config.gateway.port;
-                let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
-                    .with_probe_port(port);
+                // F4: post-update exe gate. We override the restart exe with
+                // the launcher path ONLY when the update actually produced a
+                // new launcher — `outcome.used_managed_store && launcher.exists()`.
+                // Pre-update classification is unreliable: an Unmanaged install
+                // that just got migrated is now Managed, but the OLD exe (now
+                // possibly renamed `.bak.<date>` by `apply_migration_plan`)
+                // would still be what `current_exe()` resolves to. Restricting
+                // the override to "the launcher actually exists right now"
+                // converges the executed binary to the new launcher regardless
+                // of which channel the user started from (Managed stays
+                // Managed; Unmanaged→Managed transitions pick up the launcher;
+                // Brew/Cargo/Dev stay on `current_exe()`).
+                let mut daemon =
+                    DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
+                        .with_probe_port(port);
+                let launcher_exists = managed_install::launcher_path(&oxios_home)
+                    .try_exists()
+                    .unwrap_or(false);
+                if outcome.used_managed_store && launcher_exists {
+                    daemon = daemon.with_exe(managed_install::launcher_path(&oxios_home));
+                }
                 if matches!(daemon.status(), oxios_kernel::DaemonStatus::Running { .. }) {
                     println!(
                         "  {} Restarting daemon to activate the update...",
@@ -1996,7 +2124,7 @@ async fn run(cli: Cli) -> Result<()> {
             | Some(Command::Run { .. })
             | Some(Command::Chat)
             | Some(Command::Status)
-            | Some(Command::Doctor)
+            | Some(Command::Doctor { .. })
             | Some(Command::Agent { .. })
             | Some(Command::Backup { .. })
             | Some(Command::Restore { .. })
@@ -2096,7 +2224,9 @@ async fn run(cli: Cli) -> Result<()> {
 
         Some(Command::Status) => cmd_status(&kernel).await,
 
-        Some(Command::Doctor) => cmd_doctor(&kernel, &config_path).await,
+        Some(Command::Doctor { cleanup, yes }) => {
+            cmd_doctor(&kernel, &config_path, &oxios_home, *cleanup, *yes).await
+        }
 
         Some(Command::Chat) => {
             #[cfg(feature = "cli")]

@@ -5,6 +5,86 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Managed install (rustup-model updater)** — Oxios now ships a
+  versioned binary store at `$OXIOS_HOME/versions/<v>/` with a single
+  launcher symlink at `$OXIOS_HOME/bin/oxios` that is flipped atomically
+  on every update. Replaces the previous `cargo install`-only update
+  strategy that left stale copies shadowing the new binary on PATH
+  (the 2026-08-26 PATH-shadow incident). Design + plan in
+  `docs/designs/2026-08-27-managed-install-{design,plan}.md`.
+- **`share/install.sh` curl installer** — single-line install:
+  `curl -fsSL https://raw.githubusercontent.com/project-oxi/oxios/main/share/install.sh | sh`.
+  Resolves the latest GitHub Release, downloads
+  `oxios-aarch64-apple-darwin.tar.gz` + `.sha256`, verifies the
+  checksum, extracts into `$OXIOS_HOME/versions/<v>/`, atomically
+  flips the launcher, prunes to `keep-2`, and appends an idempotent
+  managed `PATH` block to `~/.zshrc` (or `~/.zprofile`). Includes a
+  shadow report at the end of the run. Supported platform: macOS
+  ARM64 only. Shellchecked in CI.
+- **`oxios update` channel-aware dispatch** — detects the channel from
+  the resolved executable path of the running binary (not whichever
+  `oxios` happens to be first on `PATH`): `Managed`, `Brew`, `Cargo`,
+  `Dev`, `Unmanaged`. Each channel has its own behaviour: `Managed`
+  / `Unmanaged` / `Cargo` (default) fetches the tarball, sha256-
+  verifies it, disk-prechecks, extracts, atomically flips, prunes to
+  `keep-2`, and restarts the daemon. `Brew` prints `brew upgrade
+  oxios` and exits 0. `Dev` refuses with a `cargo build` suggestion.
+  `--via cargo` keeps the legacy `cargo install oxios --locked` path
+  verbatim.
+- **`oxios update --rollback`** — flips the launcher back to the
+  previous version stored in `$OXIOS_HOME/versions/` and restarts the
+  daemon. The previous version is kept on disk indefinitely after
+  every update, so rollback is always available while `keep-2` is
+  satisfied.
+- **`oxios update --dry-run`** — prints the channel, planned install
+  directory, launcher flip target, prune candidates, and any PATH
+  shadows ahead of the managed launcher, without mutating the
+  filesystem or touching the network.
+- **PATH shadow audit** — `audit_shadows(oxios_home, PATH)` enumerates
+  every directory in `$PATH` that contains an `oxios` binary, dedups
+  while preserving PATH order, skips `$OXIOS_HOME/bin`, and reports
+  size + resolved symlink target. Surfaced by `oxios update`
+  (pre-migration preview) and `oxios doctor`.
+- **PATH shadow migration plan + applier** — for `Cargo` and
+  `Unmanaged` channels, `oxios update` audits shadows and offers to
+  repoint symlinks (e.g. `~/bin/oxios → ~/.oxios/bin/oxios`) and rename
+  real files to `<path>.bak.<YYYYMMDD>` (one copy preserved for
+  rollback). TTY confirm or `--adopt` for non-TTY.
+- **`oxios doctor` shadow report + `--cleanup`** — `oxios doctor` now
+  reports the shadow list as part of the diagnostics. `--cleanup`
+  deletes `.bak.*` and stale versioned copies listed by the audit,
+  with TTY confirm (or `--yes` for non-TTY). This is the official
+  reclaim path for the accumulated `oxios-1.42.0-livestream*` copies
+  in `~/bin/`.
+- **`DaemonManager::with_exe`** (kernel) — the daemon manager accepts
+  an `exe_override` builder that makes `start()` and `install_service()`
+  spawn the launcher path instead of `std::env::current_exe()`. This
+  fixes the root cause of the 2026-08-26 incident where the updater
+  restarted the daemon through its own (stale) resolved path and the
+  next release never reached the daemon process. Behaviour unchanged
+  when `with_exe` is not called.
+- **`POST /api/system/update` channel awareness** — the HTTP update
+  route gains the same channel dispatch as the CLI and a `via` field
+  (`"cargo"` accepted, anything else rejected 400). Unmanaged installs
+  over HTTP never auto-migrate (no TTY): they return the shadow list
+  and instruct the caller to re-run `oxios update` in a terminal.
+
+### Changed
+
+- **`oxios update` binary strategy: cargo install → release tarball.**
+  The default `oxios update` no longer shells out to `cargo install`;
+  it downloads the GitHub Release tarball, sha256-verifies it, and
+  installs into the managed version store. `cargo install` remains a
+  first-class option via `oxios update --via cargo` (CLI) or
+  `POST /api/system/update {"via": "cargo"}` (HTTP). The tarball path
+  is faster, reproducible across machines (no local Rust toolchain
+  needed), and avoids the silent "PATH shadow" failure mode that
+  `cargo install` could not detect.
+
 ## [1.44.0] - 2026-08-26
 
 ### Added

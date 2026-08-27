@@ -51,6 +51,10 @@ jobs:
             -p oxios \
             -- \
             -D warnings
+      - name: Shellcheck (managed installer)
+        run: |
+          command -v shellcheck >/dev/null 2>&1 || brew install shellcheck
+          shellcheck share/install.sh
 
   # ─── Frontend ─────────────────────────────────────────────────────
   # Verifies web app: install deps, typecheck, run unit tests, build.

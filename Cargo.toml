@@ -266,6 +266,8 @@ reqwest = { workspace = true }
 zip = { workspace = true }
 dirs = { workspace = true }
 sha2 = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
 toml_edit = "0.22"
 include_dir = "0.7"
 

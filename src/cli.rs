@@ -103,7 +103,16 @@ pub(crate) enum Command {
     Chat,
 
     /// Check system health and diagnose issues.
-    Doctor,
+    Doctor {
+        /// Remove leftover shadow binaries (`/usr/local/bin/oxios.bak.<date>` etc.)
+        /// after a TTY confirm. Non-TTY: prints the `rm` lines it would run.
+        #[arg(long)]
+        cleanup: bool,
+        /// Skip the TTY confirm prompt in `--cleanup` mode. Useful for
+        /// scripts and the smoke harness; requires `--cleanup`.
+        #[arg(long, requires = "cleanup")]
+        yes: bool,
+    },
 
     /// List available models for the configured (or specified) provider.
     Models {
@@ -202,6 +211,20 @@ pub(crate) enum Command {
         /// Do not restart the daemon after updating.
         #[arg(long)]
         no_restart: bool,
+
+        /// Force a specific install channel for the binary update
+        /// (`cargo` only — anything else is rejected).
+        #[arg(long, value_parser = ["cargo"])]
+        via: Option<String>,
+
+        /// Apply PATH shadow migration without further prompting.
+        /// The migration also runs on a confirmed TTY prompt or with --yes.
+        #[arg(long)]
+        adopt: bool,
+
+        /// Roll back to the previous version (no network fetch).
+        #[arg(long)]
+        rollback: bool,
     },
 
     /// Show changelog or release notes for a version.

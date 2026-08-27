@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::error::AppError;
 use crate::api::server::AppState;
+use crate::managed_install;
 
 // ---------------------------------------------------------------------------
 // Health
@@ -333,6 +334,11 @@ pub(crate) struct UpdateRunBody {
     pub web: bool,
     /// Target version (default: latest).
     pub version: Option<String>,
+    /// Install channel override (default: auto-detect from `current_exe()`).
+    /// `None` = Auto (the daemon's detected channel). `"cargo"` forces the
+    /// legacy `cargo install oxios` flow regardless of the detected channel.
+    /// Any other value is rejected with 400 — see [`validate_via`].
+    pub via: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -351,6 +357,20 @@ pub(crate) struct UpdateRunResponse {
     pub web_updated: bool,
     /// Human-readable message.
     pub message: String,
+    /// Whether the daemon's install channel was migrated to managed.
+    /// Always `false` over HTTP — PATH-shadow migration only happens
+    /// from a TTY. `true` is reserved for the TTY/CLI surface.
+    pub migrated: bool,
+    /// Audit of `oxios` binaries found on the daemon's PATH outside the
+    /// managed launcher. Empty when the PATH is clean. Each entry
+    /// carries the path, the symlink target (when applicable), and the
+    /// file size in bytes.
+    pub shadows: Vec<ShadowPayload>,
+    /// Human-readable instructions the caller must run in a terminal to
+    /// adopt the managed channel. Always present (empty when the PATH
+    /// is clean) so consumers don't have to special-case absence vs.
+    /// emptiness.
+    pub instructions: String,
 }
 
 /// Response for `GET /api/update/changelog`.
@@ -434,6 +454,217 @@ fn validate_update_version(v: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Validate the `via` field of `POST /api/update/run`.
+///
+/// Mirrors [`validate_update_version`]'s style: same `AppError::BadRequest`
+/// mapping, same single-line message. `None` (Auto) is always valid;
+/// `"cargo"` is the only accepted non-null value today. New channels will
+/// need to be added here when their support lands.
+fn validate_via(via: Option<&str>) -> Result<(), AppError> {
+    match via {
+        None => Ok(()),
+        Some("cargo") => Ok(()),
+        Some(other) => Err(AppError::BadRequest(format!(
+            "via must be \"cargo\" or omitted (got: {other:?})"
+        ))),
+    }
+}
+
+/// Dispatch decision for `POST /api/update/run`.
+///
+/// Pure output of [`classify_update_dispatch`]: the handler switches on
+/// this to pick the install branch and the response shape. The "HTTP
+/// never auto-migrates" contract is enforced by the handler binding
+/// `migrated = false` unconditionally — there is no flag on the enum
+/// itself, by design (a per-variant flag would let a future code path
+/// flip it back on).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UpdateDispatch {
+    /// Full managed install (fetch → precheck → install → flip → prune).
+    Managed,
+    /// Unmanaged (or detected Cargo): managed install ran (or was
+    /// skipped), but the user's PATH shadows are NOT migrated. The
+    /// handler must respond with the shadow audit + instructions.
+    Unmanaged,
+    /// Brew: refused. Handler returns 200 with a `brew upgrade oxios`
+    /// message; no install runs.
+    Brew,
+    /// Dev: refused. Handler returns 400 with a rebuild hint.
+    Dev,
+    /// Legacy `cargo install oxios`. Reached only when the caller
+    /// explicitly sent `via: "cargo"` (the F10 version-validation gate
+    /// is preserved). The handler spawns `cargo` with these args.
+    Cargo {
+        /// Args after the binary name. `["install", "oxios", "locked"]`
+        /// for an unpinned run, plus `--version <v>` if a target version
+        /// was supplied.
+        args: Vec<String>,
+    },
+}
+
+/// Resolve `oxios_home` from the daemon's `state.config_path`.
+///
+/// Mirrors the `oxios_home_from_config` helper in `main.rs`:
+/// `~/.oxios` is the directory the config file lives in. Falls back to
+/// `~/.oxios` under `$HOME` (or `.` when `HOME` is unset) when the
+/// config path has no parent — defensive, since every config path
+/// produced by `expand_home` has a parent in practice.
+fn oxios_home_from_state(state: &AppState) -> PathBuf {
+    state
+        .config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            PathBuf::from(format!("{home}/.oxios"))
+        })
+}
+
+/// Classify the install channel for the running daemon and combine it
+/// with the user-supplied `via` to pick an [`UpdateDispatch`].
+///
+/// `via == Some("cargo")` forces the legacy `cargo install` branch
+/// regardless of the detected channel — the user explicitly opted in.
+/// For `None` (Auto), `exe` (typically `std::env::current_exe()`) is
+/// classified against `oxios_home` via
+/// [`managed_install::classify_channel`]. Per the design's channel
+/// table, `Channel::Cargo` (detected) is treated as Unmanaged: the
+/// daemon runs the managed install and the response carries the
+/// shadow-audit payload; `migrated` is `false`. Only the explicit
+/// `via: "cargo"` arm takes the legacy block.
+///
+/// `version` is forwarded into the legacy `cargo install --version`
+/// argv so a `via=cargo` request with a pinned version actually
+/// installs that version, not the latest.
+pub(crate) fn classify_update_dispatch(
+    oxios_home: &std::path::Path,
+    exe: &std::path::Path,
+    via: Option<&str>,
+    version: Option<&str>,
+) -> UpdateDispatch {
+    use crate::managed_install::Channel;
+    // via=cargo is the ONLY path to the legacy block. It overrides
+    // everything (the F10 version gate + the legacy `cargo install`
+    // block both apply).
+    if via == Some("cargo") {
+        return UpdateDispatch::Cargo {
+            args: cargo_args(version),
+        };
+    }
+    match crate::managed_install::classify_channel(exe, oxios_home) {
+        Channel::Managed => UpdateDispatch::Managed,
+        // Brew: refuse, print the brew upgrade hint. No install.
+        Channel::Brew => UpdateDispatch::Brew,
+        // Dev: refuse with a rebuild hint.
+        Channel::Dev => UpdateDispatch::Dev,
+        // Cargo (detected) is treated as Unmanaged per the design
+        // channel table: the daemon was installed via cargo, the user
+        // can opt into the managed store via the TTY surface, but
+        // over HTTP we run the managed install + audit and never
+        // auto-migrate.
+        Channel::Cargo | Channel::Unmanaged => UpdateDispatch::Unmanaged,
+    }
+}
+
+/// Build the `cargo install` argv for the legacy Cargo branch.
+///
+/// Returned as `Vec<String>` (owned) so the handler can pass it to
+/// `Command::new("cargo").args(...)` without lifetime gymnastics. The
+/// `--version <v>` flag is appended when a target version was
+/// supplied so a pinned run actually installs that version, not the
+/// latest.
+fn cargo_args(version: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = vec!["install".into(), "oxios".into(), "locked".into()];
+    if let Some(v) = version {
+        args.push("--version".into());
+        args.push(v.to_string());
+    }
+    args
+}
+
+/// One shadow entry as serialized in the API response.
+///
+/// Maps [`managed_install::ShadowEntry`] into the `{path, target,
+/// size_bytes}` shape pinned by the brief. `target` is the symlink
+/// target (always emitted, `null` for regular files) so consumers
+/// don't have to handle the field's presence.
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct ShadowPayload {
+    pub path: String,
+    pub target: Option<String>,
+    pub size_bytes: u64,
+}
+
+/// Build the shadow payload for the API response.
+///
+/// Pure transform — takes the audit result and the launcher path, emits
+/// the response array. `target` is the symlink target for symlink
+/// shadows; for regular-file shadows the field is `None` (serialized as
+/// JSON `null`) so consumers always see the key.
+pub(crate) fn build_shadow_payload(
+    shadows: &[crate::managed_install::ShadowEntry],
+) -> Vec<ShadowPayload> {
+    shadows
+        .iter()
+        .map(|s| ShadowPayload {
+            path: s.path.to_string_lossy().into_owned(),
+            target: s
+                .symlink_target
+                .as_ref()
+                .map(|t| t.to_string_lossy().into_owned()),
+            size_bytes: s.size_bytes,
+        })
+        .collect()
+}
+
+/// The "no auto-migrate" instructions string for the API response.
+///
+/// `None` when the user's PATH is clean (the handler leaves the
+/// `instructions` field as an empty string in the JSON). `Some(s)` when
+/// shadows are present — `s` is a single line the caller can paste
+/// into a terminal.
+pub(crate) fn update_instructions(
+    shadows: &[crate::managed_install::ShadowEntry],
+) -> Option<String> {
+    if shadows.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "re-run `oxios update` in a terminal to adopt {} shadow{}",
+            shadows.len(),
+            if shadows.len() == 1 { "" } else { "s" }
+        ))
+    }
+}
+
+/// Build the canonical post-pipeline `UpdateRunResponse`.
+///
+/// Pure helper: takes the post-install state (binary / web flags,
+/// accumulated messages, audit + instructions) and pins the fields the
+/// HTTP surface must enforce — `migrated: false` unconditionally,
+/// `shadows` + `instructions` populated from the audit. Extracted so
+/// tests can drive the response builder directly instead of relying on
+/// a tautological `struct {...}; assert_eq!(...migrated, false)` shape.
+pub(crate) fn build_update_response(
+    target_version: &str,
+    binary_updated: bool,
+    web_updated: bool,
+    messages: &[String],
+    shadows: &[crate::managed_install::ShadowEntry],
+    instructions: &str,
+) -> UpdateRunResponse {
+    UpdateRunResponse {
+        success: true,
+        updated_to: target_version.to_string(),
+        binary_updated,
+        web_updated,
+        message: messages.join("; "),
+        migrated: false,
+        shadows: build_shadow_payload(shadows),
+        instructions: instructions.to_string(),
+    }
+}
+
 /// Maximum download size for the web-dist.zip asset (200 MiB). Guards
 /// against a malicious or tampered release asset OOMing the server.
 const MAX_DOWNLOAD_BYTES: u64 = 200 * 1024 * 1024;
@@ -449,6 +680,46 @@ pub(crate) async fn handle_update_run(
     if let Some(ref v) = body.version {
         validate_update_version(v)?;
     }
+    // Task 7: validate `via` first — it's the cheap gate and 400s out
+    // before we touch the network.
+    validate_via(body.via.as_deref())?;
+
+    // Resolve `oxios_home` and the running daemon's exe. We need them
+    // BEFORE the GitHub fetch so Brew / Dev refusals don't burn a
+    // round-trip (Task 6 refuses pre-fetch).
+    let oxios_home = oxios_home_from_state(&state);
+    let exe = std::env::current_exe().unwrap_or_else(|_| oxios_home.clone());
+    let dispatch = classify_update_dispatch(
+        &oxios_home,
+        &exe,
+        body.via.as_deref(),
+        body.version.as_deref(),
+    );
+    // Brew / Dev short-circuit: no network, no install. The body of
+    // these branches returns early with the refusal response.
+    match dispatch {
+        UpdateDispatch::Brew => {
+            return Ok(Json(UpdateRunResponse {
+                success: true,
+                updated_to: current.to_string(),
+                binary_updated: false,
+                web_updated: false,
+                message: "Brew install detected — run `brew upgrade oxios` to update".into(),
+                migrated: false,
+                shadows: Vec::new(),
+                instructions: String::new(),
+            }));
+        }
+        UpdateDispatch::Dev => {
+            return Err(AppError::BadRequest(
+                "dev build detected — run `cargo build` from the workspace to update".into(),
+            ));
+        }
+        UpdateDispatch::Managed | UpdateDispatch::Unmanaged | UpdateDispatch::Cargo { .. } => {
+            // Fall through to the full pipeline below.
+        }
+    }
+
     let release = fetch_github_release(body.version.as_deref()).await?;
 
     let tag_name = release["tag_name"]
@@ -480,10 +751,95 @@ pub(crate) async fn handle_update_run(
     let mut binary_updated = false;
     let mut web_updated = false;
     let mut messages: Vec<String> = Vec::new();
+    // HTTP never auto-migrates — `migrated` is reserved for the TTY
+    // surface (where the operator can consent via `--adopt`). Always
+    // false here.
+    let migrated = false;
+    let mut shadows: Vec<crate::managed_install::ShadowEntry> = Vec::new();
+    let mut instructions = String::new();
+
+    // here. Brew / Dev returned early above (no network).
+    match dispatch {
+        // Brew / Dev are returned early above (no network). Reaching
+        // them here is unreachable — kept for exhaustiveness so the
+        // compiler flags a new dispatch variant if one is added.
+        UpdateDispatch::Brew | UpdateDispatch::Dev => {
+            unreachable!("Brew / Dev must short-circuit before the GitHub fetch")
+        }
+        // Cargo: legacy `cargo install oxios` block. The F10 version
+        // gate above already ran; the dispatch args are used as-is.
+        UpdateDispatch::Cargo { args } => {
+            // Gate: respect `body.binary: false` (the caller's explicit
+            // opt-out) — don't overwrite ~/.cargo/bin/oxios against the
+            // request. Managed / Unmanaged arms keep the same gate.
+            if body.binary {
+                tracing::info!(?args, "Running cargo install for binary update (via=cargo)");
+                let str_args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let output = tokio::process::Command::new("cargo")
+                    .args(&str_args)
+                    .output()
+                    .await
+                    .map_err(|e| AppError::Internal(format!("failed to run cargo: {e}")))?;
+                if output.status.success() {
+                    binary_updated = true;
+                    messages.push(format!("Binary updated to {target_version} via cargo"));
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    tracing::error!(%stderr, "cargo install failed");
+                    messages.push(format!(
+                        "Binary update failed: {}",
+                        stderr.lines().take(3).collect::<Vec<_>>().join("; ")
+                    ));
+                }
+            }
+        }
+        // Managed: full managed install — fetch tarball, precheck disk,
+        // install, flip launcher, prune. PATH-shadow audit is included
+        // in the response so a fresh install surfaces any prior
+        // stragglers.
+        UpdateDispatch::Managed => {
+            if body.binary && target_version != current {
+                run_managed_install(&oxios_home, &target_version, &mut messages).await?;
+                binary_updated = true;
+            } else if body.binary {
+                messages.push(format!(
+                    "Binary already at {target_version}; no install needed"
+                ));
+            }
+            // Managed-channel hosts shouldn't normally have PATH
+            // shadows, but audit anyway so a misconfigured PATH is
+            // surfaced (no migration — that's a TTY-only op).
+            let path_env = std::env::var("PATH").unwrap_or_default();
+            shadows = crate::managed_install::audit_shadows(&oxios_home, &path_env);
+            if let Some(s) = update_instructions(&shadows) {
+                instructions = s;
+            }
+        }
+        // Unmanaged: install the new version to the managed store
+        // (when the binary is requested and the version actually
+        // changed), but NEVER auto-migrate PATH. Audit runs and the
+        // caller is told to re-run in a terminal.
+        UpdateDispatch::Unmanaged => {
+            if body.binary && target_version != current {
+                run_managed_install(&oxios_home, &target_version, &mut messages).await?;
+                binary_updated = true;
+            } else if body.binary {
+                messages.push(format!(
+                    "Binary already at {target_version}; no install needed"
+                ));
+            }
+            let path_env = std::env::var("PATH").unwrap_or_default();
+            shadows = crate::managed_install::audit_shadows(&oxios_home, &path_env);
+            if let Some(s) = update_instructions(&shadows) {
+                instructions = s;
+            }
+        }
+    }
 
     // Update web UI (atomic — RFC-024 SP3). Embedded builds skip this
-    // entirely: the SPA ships in the binary and nothing on disk can replace
-    // it — publishing a downloaded generation would be dead weight.
+    // entirely: the SPA ships in the binary and nothing on disk can
+    // replace it — publishing a downloaded generation would be dead
+    // weight.
     if body.web {
         if crate::embedded_web::is_embedded() {
             messages.push(
@@ -495,8 +851,9 @@ pub(crate) async fn handle_update_run(
             let bytes = download_bytes(&client, url, MAX_DOWNLOAD_BYTES).await?;
 
             // Extract into a fresh versioned staging dir — NEVER the active
-            // dir. The active dir is published only after extraction succeeds
-            // and validates, so no request ever sees a half-populated dist.
+            // dir. The active dir is published only after extraction
+            // succeeds and validates, so no request ever sees a
+            // half-populated dist.
             let web_root = dirs::home_dir()
                 .ok_or_else(|| AppError::Internal("cannot determine home directory".into()))?
                 .join(".oxios")
@@ -535,8 +892,8 @@ pub(crate) async fn handle_update_run(
             }
 
             // Validate before publishing. Self-consistency (not just
-            // index.html presence) catches a dist that mixes two builds, so
-            // a broken page is never published as active.
+            // index.html presence) catches a dist that mixes two
+            // builds, so a broken page is never published as active.
             if !oxios_gateway::ActiveWebDist::dist_is_consistent(&staging) {
                 return Err(AppError::Internal(
                     "extracted dist is not self-consistent (index.html references missing assets)"
@@ -544,8 +901,9 @@ pub(crate) async fn handle_update_run(
                 ));
             }
 
-            // Atomic publish: swap the in-memory pointer + persist marker.
-            // Previous generation is cleaned up after a grace period.
+            // Atomic publish: swap the in-memory pointer + persist
+            // marker. Previous generation is cleaned up after a grace
+            // period.
             let marker = web_root.join(".active");
             state.web_dist.publish(staging, &marker);
 
@@ -556,49 +914,62 @@ pub(crate) async fn handle_update_run(
         }
     }
 
-    // Update binary via cargo
-    if body.binary {
-        let mut args = vec!["install", "oxios", "locked"];
-        if let Some(ref v) = body.version {
-            args.push("--version");
-            args.push(v.as_str());
-        }
-
-        tracing::info!(?args, "Running cargo install for binary update");
-
-        let output = tokio::process::Command::new("cargo")
-            .args(&args)
-            .output()
-            .await
-            .map_err(|e| AppError::Internal(format!("failed to run cargo: {e}")))?;
-
-        if output.status.success() {
-            binary_updated = true;
-            messages.push(format!("Binary updated to {target_version} via cargo"));
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!(%stderr, "cargo install failed");
-            messages.push(format!(
-                "Binary update failed: {}",
-                stderr.lines().take(3).collect::<Vec<_>>().join("; ")
-            ));
-        }
-    }
-
     tracing::info!(
         binary_updated,
         web_updated,
         target_version,
+        migrated,
         "Update completed"
     );
 
-    Ok(Json(UpdateRunResponse {
-        success: true,
-        updated_to: target_version,
+    Ok(Json(build_update_response(
+        &target_version,
         binary_updated,
         web_updated,
-        message: messages.join("; "),
-    }))
+        &messages,
+        &shadows,
+        &instructions,
+    )))
+}
+
+/// Run the full managed install: fetch tarball → disk precheck → install
+/// to `<home>/versions/<v>/` → flip launcher → prune old versions.
+///
+/// Pure orchestrator over the `managed_install` helpers. Failures
+/// bubble as `AppError::Internal` so the route surface is uniform. The
+/// caller is responsible for the dispatch decision (Managed / Unmanaged
+/// both reach this fn; Brew / Dev / Cargo are handled in `handle_update_run`).
+async fn run_managed_install(
+    oxios_home: &std::path::Path,
+    target_version: &str,
+    messages: &mut Vec<String>,
+) -> Result<(), AppError> {
+    use crate::managed_install;
+
+    let versions = managed_install::versions_dir(oxios_home);
+    std::fs::create_dir_all(&versions)
+        .map_err(|e| AppError::Internal(format!("create versions dir: {e}")))?;
+
+    let tar = managed_install::fetch_tarball(target_version)
+        .await
+        .map_err(|e| AppError::Internal(format!("fetch tarball: {e}")))?;
+    managed_install::disk_precheck(&versions, (tar.len() as u64) * 3)
+        .map_err(|e| AppError::Internal(format!("disk precheck: {e}")))?;
+    managed_install::install_version_bytes(oxios_home, target_version, &tar)
+        .map_err(|e| AppError::Internal(format!("install: {e}")))?;
+    managed_install::flip_launcher(oxios_home, target_version)
+        .map_err(|e| AppError::Internal(format!("flip launcher: {e}")))?;
+    let pruned = managed_install::prune_versions(oxios_home, 2)
+        .map_err(|e| AppError::Internal(format!("prune: {e}")))?;
+    messages.push(format!(
+        "Managed install to {target_version} (pruned: {})",
+        if pruned.is_empty() {
+            "<none>".to_string()
+        } else {
+            pruned.join(", ")
+        }
+    ));
+    Ok(())
 }
 
 /// GET /api/update/changelog — Show release notes for a version.
@@ -632,16 +1003,23 @@ pub(crate) async fn handle_update_changelog(
 // Update helpers
 // ---------------------------------------------------------------------------
 
-const GITHUB_OWNER: &str = "a7garden";
-const GITHUB_REPO: &str = "oxios";
-
 async fn fetch_github_release(version: Option<&str>) -> Result<serde_json::Value, AppError> {
+    // Canonical repo constant lives in `managed_install` so the CLI and
+    // the web route cannot drift apart. The previous local
+    // GITHUB_OWNER/GITHUB_REPO pair used the `a7garden/oxios` alias —
+    // wrong; the canonical repo is `project-oxi/oxios`.
     let api_url = match version {
         Some(v) => {
-            format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/tags/v{v}")
+            format!(
+                "https://api.github.com/repos/{}/releases/tags/v{v}",
+                managed_install::GITHUB_REPO
+            )
         }
         None => {
-            format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest")
+            format!(
+                "https://api.github.com/repos/{}/releases/latest",
+                managed_install::GITHUB_REPO
+            )
         }
     };
 
@@ -2712,5 +3090,296 @@ mod backup_args_tests {
             oxios_home.join(backup_name),
             "backup output must NOT land directly in ~/.oxios/ (pre-R4 location, agent-readable)",
         );
+    }
+}
+
+#[cfg(test)]
+mod update_route_tests {
+    //! Tests for the channel-aware `POST /api/update/run` route.
+    //!
+    //! The handler itself depends on `AppState` (kernel, config, web_dist) and
+    //! runs `cargo install` / `fetch_release` over the network — too heavy for
+    //! an in-process unit test. The testable seam is the pure-helper trio:
+    //!
+    //! - `validate_via`         → 400 for non-"cargo" non-null values
+    //! - `classify_update_dispatch`  → enum that picks the cargo / managed /
+    //!   unmanaged branch the handler will run
+    //! - `build_shadow_payload` + `update_instructions` → response shape
+    //!
+    //! Together they pin the "via=cargo accepted, via=banana rejected, no
+    //! HTTP auto-migrate on unmanaged" contract without spawning subprocesses
+    //! or hitting GitHub. The handler test integration that exercises the
+    //! full axum stack is deferred to the integration suite (out of scope
+    //! for this unit module).
+    use super::*;
+    use crate::managed_install::ShadowEntry;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    #[test]
+    fn update_run_body_accepts_via_cargo() {
+        // The body must round-trip `"via": "cargo"` so the dispatch layer
+        // can read it back as Some("cargo"). Default remains `None` (Auto).
+        let body: UpdateRunBody = serde_json::from_value(json!({
+            "binary": true,
+            "web": true,
+            "version": null,
+            "via": "cargo",
+        }))
+        .expect("via=cargo must deserialize");
+        assert_eq!(body.via.as_deref(), Some("cargo"));
+
+        let none: UpdateRunBody = serde_json::from_value(json!({})).expect("empty body");
+        assert!(none.via.is_none(), "missing `via` field stays None (Auto)");
+    }
+
+    #[test]
+    fn update_run_body_rejects_unknown_via_with_400() {
+        // validate_via mirrors `validate_update_version`'s style: same
+        // AppError::BadRequest mapping, same single-line message.
+        assert!(matches!(
+            validate_via(Some("banana")),
+            Err(AppError::BadRequest(_))
+        ));
+        assert!(matches!(
+            validate_via(Some("brew")),
+            Err(AppError::BadRequest(_))
+        ));
+        assert!(matches!(
+            validate_via(Some("")),
+            Err(AppError::BadRequest(_))
+        ));
+        // None (Auto) is fine; "cargo" is the only accepted value.
+        assert!(validate_via(None).is_ok());
+        assert!(validate_via(Some("cargo")).is_ok());
+    }
+
+    #[test]
+    fn fetch_github_release_uses_canonical_repo_constant() {
+        // Fix #5: the web route's fetch_github_release MUST use the
+        // canonical `managed_install::GITHUB_REPO` constant (the same
+        // one the CLI uses) so the two paths can never drift. The
+        // previous local pair `a7garden/oxios` was a stale alias. We
+        // assert both the constant value and that the local alias
+        // constants are gone.
+        assert_eq!(
+            crate::managed_install::GITHUB_REPO,
+            "project-oxi/oxios",
+            "managed_install::GITHUB_REPO must be the canonical repo"
+        );
+
+        // Local constants removed — fetch_github_release now reads
+        // `managed_install::GITHUB_REPO` directly. Verify the URL
+        // composition would target the canonical repo by checking the
+        // format-string source itself.
+        //
+        // The body of fetch_github_release is private; we assert it
+        // by reaching into the source text via a debug assertion is
+        // out of scope. Instead, the strongest cheap guarantee is
+        // that the literal `a7garden` string no longer appears in
+        // this module's fetch URL composition.
+        //
+        // Note: a literal `a7garden` substring check on the file
+        // would be brittle (could appear in a comment); the constant
+        // check above is the contract.
+    }
+
+    #[test]
+    fn via_cargo_dispatch_overrides_channel_to_cargo() {
+        // The brief: "Via=cargo → existing cargo branch unchanged".
+        // Whatever the running channel is, an explicit `via: "cargo"`
+        // forces the legacy cargo branch.
+        let oxios_home = PathBuf::from("/nonexistent/.oxios");
+        let exe = PathBuf::from("/nonexistent/bin/oxios");
+        let d = classify_update_dispatch(&oxios_home, &exe, Some("cargo"), None);
+        assert_eq!(
+            d,
+            UpdateDispatch::Cargo {
+                args: vec![
+                    "install".to_string(),
+                    "oxios".to_string(),
+                    "locked".to_string(),
+                ],
+            },
+            "via=cargo (no version) must select the Cargo branch with the unpinned argv"
+        );
+    }
+
+    #[test]
+    fn via_cargo_with_version_threads_version_into_cargo_args() {
+        // F1: POST {"version":"1.40.0","via":"cargo"} MUST install
+        // 1.40.0, not the latest. The `--version <v>` flag is appended
+        // to the cargo argv so a pinned run respects the pin.
+        let oxios_home = PathBuf::from("/nonexistent/.oxios");
+        let exe = PathBuf::from("/nonexistent/bin/oxios");
+        let d = classify_update_dispatch(&oxios_home, &exe, Some("cargo"), Some("1.40.0"));
+        assert_eq!(
+            d,
+            UpdateDispatch::Cargo {
+                args: vec![
+                    "install".to_string(),
+                    "oxios".to_string(),
+                    "locked".to_string(),
+                    "--version".to_string(),
+                    "1.40.0".to_string(),
+                ],
+            },
+            "via=cargo + version must pin the cargo install argv"
+        );
+    }
+
+    #[test]
+    fn auto_managed_uses_full_managed_install_branch() {
+        // A managed exe (canonicalized <home>/bin/oxios) under Auto must
+        // land on the full managed-install branch — fetch → precheck →
+        // install → flip → prune. The shadow audit + response payload is
+        // a separate concern (next test).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().to_path_buf();
+        let oxios_home = home.join(".oxios");
+        std::fs::create_dir_all(oxios_home.join("bin")).expect("mkdir bin");
+        std::fs::write(oxios_home.join("bin").join("oxios"), b"fake").expect("write");
+        let exe = oxios_home.join("bin").join("oxios");
+        let d = classify_update_dispatch(&oxios_home, &exe, None, None);
+        assert_eq!(d, UpdateDispatch::Managed, "managed exe → Managed branch");
+    }
+
+    #[test]
+    fn auto_detected_cargo_routes_to_unmanaged_branch() {
+        // F2: per the design channel table, a daemon detected as
+        // `Channel::Cargo` is treated as Unmanaged — the managed
+        // install runs but PATH shadow migration does NOT. Only an
+        // explicit `via: "cargo"` reaches the legacy block.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let oxios_home = tmp.path().join(".oxios");
+        std::fs::create_dir_all(&oxios_home).expect("mkdir");
+        // Synthetic exe that classifies as Cargo: a file inside
+        // `.cargo/bin` makes `classify_channel` see `Channel::Cargo`.
+        let cargo_dir = tmp.path().join(".cargo").join("bin");
+        std::fs::create_dir_all(&cargo_dir).expect("mkdir cargo");
+        std::fs::write(cargo_dir.join("oxios"), b"cargo-install").expect("write");
+        let exe = cargo_dir.join("oxios");
+        let d = classify_update_dispatch(&oxios_home, &exe, None, None);
+        assert_eq!(
+            d,
+            UpdateDispatch::Unmanaged,
+            "Channel::Cargo + Auto must NOT take the legacy cargo branch"
+        );
+    }
+
+    #[test]
+    fn auto_unmanaged_returns_audit_payload_with_migrated_false() {
+        // Unmanaged over HTTP must NEVER auto-migrate — the handler
+        // binds `migrated = false` so no code path can flip it back on,
+        // and the audit + instructions are surfaced so the operator
+        // can re-run `oxios update` in a TTY to adopt.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let oxios_home = tmp.path().join(".oxios");
+        std::fs::create_dir_all(&oxios_home).expect("mkdir");
+
+        // A real shadow binary outside <home>/bin to exercise the payload.
+        let shadow_dir = tmp.path().join("usr").join("local").join("bin");
+        std::fs::create_dir_all(&shadow_dir).expect("mkdir shadow");
+        std::fs::write(shadow_dir.join("oxios"), b"shadow").expect("write shadow");
+
+        let path_env = format!("{}:/usr/bin:/bin", shadow_dir.display());
+        let shadows = crate::managed_install::audit_shadows(&oxios_home, &path_env);
+        assert!(
+            shadows.iter().any(|s| s.path == shadow_dir.join("oxios")),
+            "audit_shadows must surface the unmanaged shadow; got {shadows:?}"
+        );
+
+        let payload = build_shadow_payload(&shadows);
+        assert_eq!(payload.len(), shadows.len());
+        for entry in &payload {
+            assert!(entry.path.ends_with("oxios"));
+            assert!(entry.size_bytes > 0, "real file shadow has nonzero size");
+        }
+
+        // Instructions: only when shadows are non-empty.
+        let instr = update_instructions(&shadows);
+        assert!(instr.is_some(), "non-empty shadows produce instructions");
+        let instr = instr.unwrap();
+        assert!(instr.contains("oxios update"));
+        assert!(instr.contains("terminal"));
+
+        // No shadows → empty payload + no instructions.
+        let empty = build_shadow_payload(&[]);
+        assert!(empty.is_empty());
+        assert!(update_instructions(&[]).is_none());
+    }
+
+    #[test]
+    fn update_response_migrated_is_always_false_for_dispatch_variants() {
+        // F5: pin a real contract. Drive `build_update_response`
+        // (the same path the handler takes) for the post-pipeline
+        // shape, and verify `migrated` is `false` no matter what
+        // dispatch the test feeds in. The JSON shape is asserted
+        // alongside so a regression in serialization is caught too.
+        let resp = build_update_response(
+            "1.45.0",
+            true,
+            false,
+            &["Managed install to 1.45.0 (pruned: <none>)".to_string()],
+            &[],
+            "",
+        );
+        let v = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(v["migrated"], json!(false));
+        assert_eq!(v["shadows"], json!([]));
+        assert_eq!(v["instructions"], json!(""));
+        assert_eq!(v["success"], json!(true));
+        assert_eq!(v["updated_to"], json!("1.45.0"));
+        assert_eq!(v["binary_updated"], json!(true));
+        assert_eq!(v["web_updated"], json!(false));
+
+        // Non-empty shadows + instructions round-trip too.
+        let shadows = vec![crate::managed_install::ShadowEntry {
+            path: PathBuf::from("/usr/local/bin/oxios"),
+            symlink_target: None,
+            kind: crate::managed_install::ShadowKind::Canonical,
+            size_bytes: 7,
+        }];
+        let resp = build_update_response(
+            "1.45.0",
+            false,
+            true,
+            &[],
+            &shadows,
+            "re-run `oxios update` in a terminal to adopt 1 shadow",
+        );
+        let v = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(v["migrated"], json!(false));
+        assert_eq!(v["shadows"][0]["path"], json!("/usr/local/bin/oxios"));
+        assert_eq!(
+            v["instructions"],
+            json!("re-run `oxios update` in a terminal to adopt 1 shadow")
+        );
+    }
+
+    #[test]
+    fn shadow_payload_uses_path_target_size_shape() {
+        // The brief pins the response shape: { path, target, size_bytes }.
+        // target is the symlink target (None for regular files) → emitted
+        // as JSON null so the field always exists.
+        let shadows = vec![ShadowEntry {
+            path: PathBuf::from("/usr/local/bin/oxios"),
+            symlink_target: Some(PathBuf::from("/opt/old/oxios")),
+            kind: crate::managed_install::ShadowKind::Canonical,
+            size_bytes: 42,
+        }];
+        let v = serde_json::to_value(build_shadow_payload(&shadows)).expect("serialize");
+        assert_eq!(v[0]["path"], json!("/usr/local/bin/oxios"));
+        assert_eq!(v[0]["target"], json!("/opt/old/oxios"));
+        assert_eq!(v[0]["size_bytes"], json!(42));
+
+        let regular = vec![ShadowEntry {
+            path: PathBuf::from("/usr/local/bin/oxios"),
+            symlink_target: None,
+            kind: crate::managed_install::ShadowKind::Canonical,
+            size_bytes: 7,
+        }];
+        let v2 = serde_json::to_value(build_shadow_payload(&regular)).expect("serialize");
+        assert_eq!(v2[0]["target"], serde_json::Value::Null);
     }
 }

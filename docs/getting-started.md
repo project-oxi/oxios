@@ -425,11 +425,12 @@ can_fork = false               # Allow agents to fork sub-agents
 # rate_limit_per_minute = 120  # API endpoint rate limit
 
 # ── Persona ────────────────────────────────────────────────────
-# Persona system for agent behavior profiles.
+# Persona system for agent behavior profiles. Exactly one persona is
+# active at a time; the default on startup is "normal" (full tool
+# access incl. Oxios control).
 
 # [persona]
-# default_persona_id = "dev"       # Default persona on startup
-# max_concurrent_personas = 5      # Max simultaneous personas
+# default_persona_id = "normal"    # Default persona on startup
 
 # ── Memory ─────────────────────────────────────────────────────
 # Persistent vector memory for agents (cross-session recall).

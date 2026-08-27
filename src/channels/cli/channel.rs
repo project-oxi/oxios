@@ -254,4 +254,27 @@ impl CliChannelHandle {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(())
     }
+
+    /// Send a get_persona action to the gateway.
+    ///
+    /// The gateway reports the active persona back through the normal
+    /// channel send path.
+    pub async fn send_get_persona(&self) -> Result<()> {
+        let mut msg = IncomingMessage::new("cli", "cli-user", "get_persona");
+        msg.metadata
+            .insert("action".to_owned(), "get_persona".to_owned());
+        {
+            let session = self.session.lock().unwrap_or_else(|e| {
+                tracing::error!("Mutex poisoned: {e}");
+                e.into_inner()
+            });
+            msg.metadata
+                .insert("session_id".to_owned(), session.id.to_string());
+        }
+        self.incoming_tx
+            .send(msg)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(())
+    }
 }

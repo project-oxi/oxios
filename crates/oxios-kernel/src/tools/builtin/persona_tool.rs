@@ -252,6 +252,9 @@ impl AgentTool for PersonaTool {
                     category: str_or(&params, "category").unwrap_or_else(|| "general".to_string()),
                     genre: str_or(&params, "genre"),
                     default_mount_ids: str_array(&params, "default_mount_ids"),
+                    tool_profile: str_or(&params, "tool_profile")
+                        .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
+                        .unwrap_or_default(),
                 };
 
                 // Security review (fail-open on engine/parse error): an
@@ -344,6 +347,9 @@ impl AgentTool for PersonaTool {
                     } else {
                         existing.default_mount_ids
                     },
+                    tool_profile: str_or(&params, "tool_profile")
+                        .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
+                        .unwrap_or(existing.tool_profile),
                 };
 
                 if prompt_changed && !updated.system_prompt.trim().is_empty() {

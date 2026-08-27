@@ -175,6 +175,71 @@ impl CapabilityTemplate {
         t
     }
 
+    // ── Persona tool-profile templates ─────────────────────────────
+    //
+    // These back `Persona::tool_profile`. They grant exactly the
+    // resources the CSpace→tool registration walk understands
+    // (`tools::registration::register_tools_from_cspace_gated`):
+    // `ResourceRef::Exec` / `Browser` for those tiers, and
+    // `KernelDomain` names for kernel tools. Registration presence is
+    // the restriction mechanism — kernel tools are not wrapped in the
+    // access gate, so an ungranted domain means the tool is simply
+    // absent from the agent's registry.
+
+    /// **Code** — coding/working tools, no Oxios control.
+    ///
+    /// Always-on file/web-search tools (registered unconditionally) plus
+    /// exec, browser, memory, and knowledge. No persona/cron/security/
+    /// budget/resource/agent/a2a/project registration.
+    pub fn code_profile() -> Self {
+        let mut t = Self::worker();
+        t.caps.extend([
+            (
+                ResourceRef::KernelDomain {
+                    domain: "memory".into(),
+                },
+                Rights::EXECUTE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "knowledge".into(),
+                },
+                Rights::EXECUTE,
+            ),
+        ]);
+        t
+    }
+
+    /// **Base** — every tool including Oxios control.
+    ///
+    /// Superset of [`code_profile`](Self::code_profile) plus the full
+    /// control plane: project (space), agent lifecycle, A2A, persona,
+    /// cron, security, budget, and resource domains.
+    pub fn base_profile() -> Self {
+        let mut t = Self::code_profile();
+        let control: [&str; 8] = [
+            "space", "agent", "a2a", "persona", "cron", "security", "budget", "resource",
+        ];
+        t.caps.extend(control.map(|domain| {
+            (
+                ResourceRef::KernelDomain {
+                    domain: domain.into(),
+                },
+                Rights::READ | Rights::WRITE | Rights::EXECUTE,
+            )
+        }));
+        t
+    }
+
+    /// **Minimal** — always-on tier only (file ops + web search).
+    ///
+    /// Grants nothing: the always-on tools are registered unconditionally
+    /// and the gate skips its CSpace check for them. No exec, browser,
+    /// memory, knowledge, or control tools.
+    pub fn minimal_profile() -> Self {
+        Self { caps: Vec::new() }
+    }
+
     // ── Builder methods ─────────────────────────────────────────────
 
     /// Add an additional capability to the template.

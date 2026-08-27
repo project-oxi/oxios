@@ -35,6 +35,10 @@ export interface PersonaItem {
   genre?: string | null
   system_prompt?: string
   default_mount_ids?: string[]
+  /// Tool access profile: 'base' | 'code' | 'minimal'.
+  tool_profile?: 'base' | 'code' | 'minimal'
+  /// Whether this persona is the global active one (list endpoint).
+  active?: boolean
 }
 
 export interface PersonaPatch {
@@ -45,6 +49,7 @@ export interface PersonaPatch {
   category?: string
   genre?: string | null
   default_mount_ids?: string[]
+  tool_profile?: 'base' | 'code' | 'minimal'
 }
 
 interface EditPersonaDialogProps {
@@ -66,6 +71,7 @@ interface PersonaDetail {
   category?: string
   genre?: string | null
   default_mount_ids?: string[]
+  tool_profile?: 'base' | 'code' | 'minimal'
 }
 
 /**
@@ -91,6 +97,7 @@ export function EditPersonaDialog({
   const { data: mountsData } = useMounts()
   const [category, setCategory] = useState('general')
   const [genre, setGenre] = useState<string>('')
+  const [toolProfile, setToolProfile] = useState<'base' | 'code' | 'minimal'>('code')
   const [defaultMountIds, setDefaultMountIds] = useState<string[]>([])
 
   const detail = useQuery({
@@ -109,6 +116,7 @@ export function EditPersonaDialog({
       setCapabilities(detail.data.capabilities ?? [])
       setCategory(detail.data.category ?? 'general')
       setGenre(detail.data.genre ?? '')
+      setToolProfile(detail.data.tool_profile ?? 'code')
       setDefaultMountIds(detail.data.default_mount_ids ?? [])
     } else {
       setName(persona.name)
@@ -131,6 +139,7 @@ export function EditPersonaDialog({
       category,
       genre: category === 'writing' && genre ? genre : null,
       default_mount_ids: defaultMountIds,
+      tool_profile: toolProfile,
     })
   }
 
@@ -237,6 +246,18 @@ export function EditPersonaDialog({
                   ]}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('personas.toolProfile')}</Label>
+              <p className="text-xs text-muted-foreground">{t('personas.toolProfileHint')}</p>
+              <Select
+                value={toolProfile}
+                onValueChange={(v) => setToolProfile(v as 'base' | 'code' | 'minimal')}
+                options={(['base', 'code', 'minimal'] as const).map((p) => ({
+                  label: t(`personas.toolProfiles.${p}`),
+                  value: p,
+                }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t('personas.defaultMounts')}</Label>

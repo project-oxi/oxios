@@ -28,6 +28,10 @@ pub struct PersonaSummary {
     role: String,
     description: String,
     enabled: bool,
+    /// Whether this persona is the global active persona.
+    active: bool,
+    /// Tool access profile: `base` | `code` | `minimal`.
+    tool_profile: String,
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
@@ -44,10 +48,13 @@ pub struct PersonaSummary {
 /// GET /api/personas — List all personas.
 pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<PersonaSummary>> {
     let personas = state.kernel.persona.list();
+    let active_id = state.kernel.persona.active_id();
     Json(
         personas
             .into_iter()
             .map(|p| PersonaSummary {
+                active: active_id.as_deref() == Some(p.id.as_str()),
+                tool_profile: p.tool_profile.to_string(),
                 id: p.id,
                 name: p.name,
                 role: p.role,
@@ -82,6 +89,8 @@ pub async fn handle_persona_get(
             "category": p.category,
             "genre": p.genre,
             "default_mount_ids": p.default_mount_ids,
+            "active": state.kernel.persona.active_id().as_deref() == Some(p.id.as_str()),
+            "tool_profile": p.tool_profile.to_string(),
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -110,6 +119,9 @@ pub struct PersonaCreateRequest {
     /// Mount IDs auto-attached by the chat composer when selected.
     #[serde(default)]
     default_mount_ids: Option<Vec<String>>,
+    /// Tool access profile: `base` | `code` | `minimal`. Defaults to `code`.
+    #[serde(default)]
+    tool_profile: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -143,6 +155,11 @@ pub async fn handle_persona_create(
         category: body.category.unwrap_or_else(default_category),
         genre: body.genre,
         default_mount_ids: body.default_mount_ids.unwrap_or_default(),
+        tool_profile: body
+            .tool_profile
+            .as_deref()
+            .map(oxios_kernel::ToolProfile::from_str_loose)
+            .unwrap_or_default(),
     };
     let created_id = persona.id.clone();
     let created_name = persona.name.clone();
@@ -176,6 +193,7 @@ pub struct PersonaUpdateRequest {
     category: Option<String>,
     genre: Option<String>,
     default_mount_ids: Option<Vec<String>>,
+    tool_profile: Option<String>,
 }
 
 /// PUT /api/personas/:id — Update a persona.
@@ -206,6 +224,11 @@ pub async fn handle_persona_update(
         category: body.category.unwrap_or(existing.category),
         genre: body.genre.or(existing.genre),
         default_mount_ids: body.default_mount_ids.unwrap_or(existing.default_mount_ids),
+        tool_profile: body
+            .tool_profile
+            .as_deref()
+            .map(oxios_kernel::ToolProfile::from_str_loose)
+            .unwrap_or(existing.tool_profile),
     };
 
     state
@@ -349,6 +372,8 @@ mod tests {
             category: "general".into(),
             genre: None,
             default_mount_ids: vec![],
+            active: true,
+            tool_profile: "base".into(),
         };
         let json = serde_json::to_value(&summary).expect("serialize");
         let caps: Vec<String> = json

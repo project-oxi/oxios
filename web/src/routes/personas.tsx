@@ -44,6 +44,7 @@ function PersonasPage() {
   const [systemPrompt, setSystemPrompt] = useState('')
   const [category, setCategory] = useState('general')
   const [genre, setGenre] = useState('')
+  const [createToolProfile, setCreateToolProfile] = useState<'base' | 'code' | 'minimal'>('code')
 
   const {
     data: personas,
@@ -68,6 +69,7 @@ function PersonasPage() {
       system_prompt: string
       category: string
       genre: string | null
+      tool_profile: string
     }) => api.post('/api/personas', p),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personas'] })
@@ -77,6 +79,7 @@ function PersonasPage() {
       setSystemPrompt('')
       setCategory('general')
       setGenre('')
+      setCreateToolProfile('code')
     },
   })
 
@@ -197,6 +200,17 @@ function PersonasPage() {
                 />
               </div>
             </div>
+            <div className="space-y-1">
+              <Label>{t('personas.toolProfile')}</Label>
+              <Select
+                value={createToolProfile}
+                onValueChange={(v) => setCreateToolProfile(v as 'base' | 'code' | 'minimal')}
+                options={(['base', 'code', 'minimal'] as const).map((p) => ({
+                  label: t(`personas.toolProfiles.${p}`),
+                  value: p,
+                }))}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -216,6 +230,7 @@ function PersonasPage() {
                   system_prompt: systemPrompt,
                   category,
                   genre: category === 'writing' && genre ? genre : null,
+                  tool_profile: createToolProfile,
                 })
               }
             >
@@ -246,8 +261,10 @@ function PersonasPage() {
                       <div>
                         <CardTitle className="text-base flex items-center gap-2">
                           <Users className="h-4 w-4" /> {persona.name}
-                          {persona.enabled && (
-                            <Star className="h-3 w-3 text-warning fill-warning" />
+                          {persona.active && (
+                            <span className="rounded bg-success/15 px-1.5 py-0.5 text-2xs font-medium text-success">
+                              {t('personas.activeBadge')}
+                            </span>
                           )}
                         </CardTitle>
                         {persona.description && (
@@ -265,7 +282,7 @@ function PersonasPage() {
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        {!persona.enabled && (
+                        {persona.enabled && !persona.active && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -288,6 +305,13 @@ function PersonasPage() {
                     <CardContent>
                       <p className="text-xs text-muted-foreground">
                         {t('personas.role')}: {persona.role}
+                        {persona.tool_profile && (
+                          <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-2xs font-medium">
+                            {t(`personas.profileBadge.${persona.tool_profile}`, {
+                              defaultValue: persona.tool_profile,
+                            })}
+                          </span>
+                        )}
                       </p>
                       {persona.system_prompt && (
                         <p className="text-xs text-muted-foreground line-clamp-2 mt-1">

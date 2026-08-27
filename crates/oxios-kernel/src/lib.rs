@@ -182,7 +182,7 @@ pub use memory_agent::sona::{
 #[cfg(feature = "embedding-gguf")]
 pub use embedding::gguf::{EmbeddingDimension, GgufEmbeddingProvider, GgufModelLoader};
 
-pub use persona::{Persona, PersonaManager, PersonaStore, default_personas};
+pub use persona::{Persona, PersonaManager, PersonaStore, ToolProfile, default_personas};
 
 // ─── Tools & Skills ────────────────────────────────────────────────
 pub use hook_runner::CommandHookRunner;

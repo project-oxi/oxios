@@ -542,10 +542,26 @@ impl AccessGate {
     // ─── Layer Implementations ───────────────────────────────────────
 
     fn check_tool(&self, ctx: &AgentContext, tool: &str) -> Result<(), AccessDenied> {
+        // The `exec` tool is backed by the capability model's Exec
+        // resource (shell or structured), not a KernelDomain grant —
+        // accept either so templates that grant `ResourceRef::Exec`
+        // actually unlock the tool.
+        let has_exec_cap = tool == "exec"
+            && (ctx.cspace.can(
+                &ResourceRef::Exec {
+                    mode: "shell".into(),
+                },
+                Rights::EXECUTE,
+            ) || ctx.cspace.can(
+                &ResourceRef::Exec {
+                    mode: "structured".into(),
+                },
+                Rights::EXECUTE,
+            ));
         let resource = ResourceRef::KernelDomain {
             domain: tool.to_string(),
         };
-        if !ctx.cspace.can(&resource, Rights::EXECUTE) {
+        if !has_exec_cap && !ctx.cspace.can(&resource, Rights::EXECUTE) {
             // The always-on tier — registered unconditionally for every
             // agent by `tools::registration::register_always_on` (file ops
             // + web search). CSpace capability is advisory for these tools:
@@ -1094,6 +1110,28 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.layer, DenyLayer::Permission);
+    }
+
+    #[test]
+    fn worker_template_grants_exec_tool() {
+        // The worker/code/base templates grant `ResourceRef::Exec`;
+        // check_tool("exec") must accept that shape (regression: the gate
+        // used to match KernelDomain{"exec"} only, denying every template).
+        let template = crate::capability::template::CapabilityTemplate::worker();
+        let ctx = AgentContext::test_fixture_with_cspace(
+            "test-agent",
+            template.build_for(crate::types::AgentId::new_v4()),
+        );
+        let (gate, _) = make_gate();
+        let result = gate.check(CheckRequest::Tool {
+            context: &ctx,
+            tool_name: "exec",
+        });
+        assert!(
+            result.is_ok(),
+            "worker template must pass check_tool(exec): {:?}",
+            result
+        );
     }
 
     // ─── Exec checks ────────────────────────────────────────────────

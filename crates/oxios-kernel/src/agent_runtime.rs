@@ -395,16 +395,13 @@ impl AgentRuntime {
             .map(|p| p.system_prompt.clone())
             .filter(|s| !s.trim().is_empty());
 
-        // Determine persona role for CSpace resolution.
+        // Determine persona role for model routing (role_routing[role]).
         let persona_role = persona.as_ref().map(|p| p.role.clone());
 
-        // Resolve CSpace from persona role, hint, or default.
-        let cspace = resolve_cspace(
-            cspace_hint,
-            persona_role.as_deref(),
-            Some("worker"),
-            agent_id,
-        );
+        // Resolve CSpace from the persona's tool profile (base | code |
+        // minimal). An explicit directive hint overrides the profile.
+        let tool_profile = persona.as_ref().map(|p| p.tool_profile).unwrap_or_default();
+        let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
         let mut system_prompt = build_system_prompt_inner(

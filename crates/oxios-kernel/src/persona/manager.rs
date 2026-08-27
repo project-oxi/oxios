@@ -104,8 +104,9 @@ impl PersonaManager {
             })
     }
 
-    /// Creates the default personas (Dev, Review, Research, Architect, Mentor,
-    /// Ops, Security, Writer, Planner).
+    /// Creates the default personas and activates `normal` (the base
+    /// persona with full tool access incl. Oxios control) when no persona
+    /// is active yet.
     pub fn create_default_personas(&self) {
         let defaults = default_personas();
         for persona in defaults {
@@ -114,11 +115,11 @@ impl PersonaManager {
                 self.store.register(persona);
             }
         }
-        // Set first persona as active if none is set.
+        // Set the base persona as active if none is set.
         {
             let mut active = self.active_persona_id.write();
             if active.is_none() {
-                *active = Some("dev".to_string());
+                *active = Some("normal".to_string());
             }
         }
         tracing::info!("Default personas initialized");
@@ -216,6 +217,21 @@ impl PersonaManager {
             {
                 updated.category = d.category.clone();
                 let _ = self.store.update(&p.id, updated);
+            }
+        }
+        // Schema v3 backfill: pre-v3 snapshots have no tool_profile field,
+        // so every persona loaded with the serde default (`code`). Restore
+        // the built-ins' intended profiles (normal→base, writing→minimal).
+        // User-created personas are never touched.
+        if snap.schema_version < 3 {
+            for p in &snap.personas {
+                if let Some(d) = defaults.iter().find(|d| d.id == p.id)
+                    && d.tool_profile != p.tool_profile
+                    && let Some(mut updated) = self.store.get(&p.id)
+                {
+                    updated.tool_profile = d.tool_profile;
+                    let _ = self.store.update(&p.id, updated);
+                }
             }
         }
         if let Some(active) = snap.active_persona_id
@@ -326,6 +342,7 @@ mod tests {
             category: "general".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: crate::persona::ToolProfile::Code,
         };
         pm.store().register(custom);
         pm.set_active("custom-1").await.unwrap();
@@ -408,8 +425,8 @@ mod tests {
             default_persona_id: None,
         };
         pm.apply_config(&cfg);
-        // First enabled persona is "dev" (order: dev, review, research).
-        assert_eq!(pm.active_persona_id(), Some("dev".to_string()));
+        // First enabled persona is "normal" (base persona, priority order).
+        assert_eq!(pm.active_persona_id(), Some("normal".to_string()));
     }
 
     #[tokio::test]
@@ -422,8 +439,8 @@ mod tests {
             default_persona_id: Some("review".to_string()),
         };
         pm.apply_config(&cfg);
-        // review is disabled → fall back to first enabled = dev.
-        assert_eq!(pm.active_persona_id(), Some("dev".to_string()));
+        // review is disabled → fall back to first enabled = normal.
+        assert_eq!(pm.active_persona_id(), Some("normal".to_string()));
     }
 
     #[tokio::test]
@@ -444,7 +461,7 @@ mod tests {
         pm.store().set_enabled("review", false).unwrap();
         let result = pm.set_active("review").await;
         assert!(result.is_err());
-        assert_eq!(pm.active_persona_id(), Some("dev".to_string()));
+        assert_eq!(pm.active_persona_id(), Some("normal".to_string()));
     }
 
     #[tokio::test]

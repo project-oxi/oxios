@@ -409,6 +409,10 @@
     "temperature": "온도",
     "maxTokens": "최대 토큰",
     "default": "기본값",
+    "tempPrecise": "정밀",
+    "tempDefault": "균형",
+    "tempCreative": "창의",
+    "custom": "직접 입력",
     "reset": "초기화",
     "compressedExpanded": "이전 메시지 숨기기",
     "compression.summaryTab": "요약",
@@ -522,6 +526,7 @@
     "persona": {
       "label": "페르소나",
       "auto": "자동",
+      "globalDefault": "전역 기본값",
       "globalIs": "전역: {{name}}",
       "none": "페르소나가 없습니다",
       "mountsAttached": "페르소나 기본 마운트를 연결했습니다",
@@ -1465,6 +1470,19 @@
     "genreNone": "없음",
     "defaultMounts": "기본 마운트",
     "defaultMountsHint": "이 페르소나를 채팅에서 선택하면 자동으로 연결되는 마운트",
+    "toolProfile": "도구 접근",
+    "toolProfileHint": "이 페르소나의 에이전트가 받는 도구 범위",
+    "toolProfiles": {
+      "base": "기본 — Oxios 제어 포함 전체 도구",
+      "code": "코딩 — 코딩 도구, Oxios 제어 없음",
+      "minimal": "최소 — 파일 + 웹 검색만"
+    },
+    "activeBadge": "활성",
+    "profileBadge": {
+      "base": "전체 도구",
+      "code": "코딩 도구",
+      "minimal": "최소 도구"
+    },
     "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다"
   },
   "projects": {

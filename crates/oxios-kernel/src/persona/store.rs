@@ -14,9 +14,11 @@ use std::sync::Arc;
 use super::Persona;
 
 /// Canonical ordering for default personas. Ensures `list_enabled()`
-/// returns "dev" first (the primary persona) rather than alphabetical order.
+/// returns "normal" first (the base persona with full tool access)
+/// rather than alphabetical order.
 fn persona_priority(id: &str) -> usize {
     const PRIORITY: &[&str] = &[
+        "normal",
         "dev",
         "review",
         "research",

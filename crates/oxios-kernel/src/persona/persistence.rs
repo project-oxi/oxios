@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use super::Persona;
 use crate::state_store::StateStore;
 
-pub(crate) const SCHEMA_VERSION: u32 = 2;
+pub(crate) const SCHEMA_VERSION: u32 = 3;
 /// Oldest schema version still accepted on load (for backward compat).
 const MIN_SCHEMA_VERSION: u32 = 1;
 
@@ -55,7 +55,9 @@ pub async fn load_from_state_store(store: &StateStore) -> Result<Option<PersonaS
         );
     }
     // v1 → v2: capabilities field defaults to empty via serde(default).
-    // No explicit migration needed — old personas load with [] capabilities.
+    // v2 → v3: tool_profile defaults to `code` via serde(default); the
+    // manager backfills the built-in ids (normal→base, writing→minimal)
+    // so pre-existing registries pick up the intended split.
     Ok(Some(snap))
 }
 
@@ -86,6 +88,7 @@ mod tests {
             category: "general".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: crate::persona::ToolProfile::Code,
         }
     }
 

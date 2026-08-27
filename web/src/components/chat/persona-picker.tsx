@@ -148,7 +148,11 @@ export function PersonaPicker({
           )}
         >
           <Sparkles className="h-3.5 w-3.5" />
-          <span className="max-w-28 truncate">{active ? active.name : t('chat.persona.auto')}</span>
+          {/* Show the effective persona: session override, else the global
+              active persona. "Auto" was misleading — there is no detection. */}
+          <span className="max-w-28 truncate">
+            {active ? active.name : (globalPersonaName ?? t('chat.persona.auto'))}
+          </span>
           <ChevronDown className="h-3 w-3 opacity-60" />
         </button>
       </PopoverTrigger>
@@ -167,7 +171,7 @@ export function PersonaPicker({
             )}
           >
             <span className="flex flex-col">
-              <span>{t('chat.persona.auto')}</span>
+              <span>{t('chat.persona.globalDefault')}</span>
               {globalPersonaName && (
                 <span className="text-xs text-muted-foreground">
                   {t('chat.persona.globalIs', { name: globalPersonaName })}

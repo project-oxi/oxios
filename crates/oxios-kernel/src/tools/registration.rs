@@ -230,7 +230,11 @@ pub fn register_tools_from_cspace(
 
             // Kernel domain tools
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered unconditionally in register_all_kernel_tools */ }
+                "memory" => {
+                    registry.register(crate::tools::MemoryWriteTool::from_kernel(kernel));
+                    registry.register(crate::tools::MemoryReadTool::from_kernel(kernel));
+                    registry.register(crate::tools::MemorySearchTool::from_kernel(kernel));
+                }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
                     registry.register(A2aDelegateTool::from_kernel(kernel, agent_id));
@@ -338,7 +342,11 @@ pub fn register_tools_from_cspace_gated(
 
             // Kernel domain tools (same as ungated — these already use KernelHandle internally)
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered unconditionally in register_all_kernel_tools */ }
+                "memory" => {
+                    registry.register(crate::tools::MemoryWriteTool::from_kernel(kernel));
+                    registry.register(crate::tools::MemoryReadTool::from_kernel(kernel));
+                    registry.register(crate::tools::MemorySearchTool::from_kernel(kernel));
+                }
                 "space" => registry.register(ProjectTool::from_kernel(kernel)),
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {

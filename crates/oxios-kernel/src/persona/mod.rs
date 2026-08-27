@@ -11,6 +11,47 @@ pub use manager::PersonaManager;
 pub use store::PersonaStore;
 
 use serde::{Deserialize, Serialize};
+
+/// Tool access profile — determines which tool tier a persona's agents get.
+///
+/// This is the single source of truth for per-persona tool restriction.
+/// The CSpace is built from this profile (not from the free-form `role`
+/// string), so the gate and registration stay consistent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolProfile {
+    /// Full access: every tool including Oxios control (persona, cron,
+    /// security, budget, resource, agent, a2a, project, mount, …).
+    Base,
+    /// Coding/working tools: exec, browser, memory, knowledge, ask_user.
+    /// No Oxios control tools.
+    #[default]
+    Code,
+    /// Always-on tier only (read, write, edit, grep, find, ls, web_search).
+    Minimal,
+}
+
+impl ToolProfile {
+    /// Parse from a config/API string; unknown values fall back to [`Code`].
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "base" => Self::Base,
+            "minimal" => Self::Minimal,
+            _ => Self::Code,
+        }
+    }
+}
+
+impl std::fmt::Display for ToolProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Base => "base",
+            Self::Code => "code",
+            Self::Minimal => "minimal",
+        };
+        write!(f, "{s}")
+    }
+}
 /// Exactly one persona is active at a time (single slot). RFC-039.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Persona {
@@ -51,6 +92,12 @@ pub struct Persona {
     /// still carries explicit `mount_ids`; this never forces a grant.
     #[serde(default)]
     pub default_mount_ids: Vec<String>,
+    /// Tool access profile: `base` (every tool incl. Oxios control) |
+    /// `code` (coding/working tools, no Oxios control) | `minimal`
+    /// (file + web-search only). Drives CSpace resolution in the agent
+    /// runtime. Old files load with the serde default (`code`).
+    #[serde(default)]
+    pub tool_profile: ToolProfile,
 }
 
 /// Serde default for [`Persona::category`].
@@ -73,6 +120,7 @@ impl Default for Persona {
             category: default_category(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::default(),
         }
     }
 }
@@ -93,6 +141,7 @@ impl Persona {
             category: default_category(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::default(),
         }
     }
 
@@ -117,29 +166,22 @@ impl Persona {
             category: default_category(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::default(),
         }
     }
 }
 
 /// Creates the default personas for Oxios.
 ///
-/// Core software lifecycle:
-/// - **Dev** — implementation (coding)
-/// - **Review** — verification (coding)
-/// - **Research** — investigation (research)
-/// - **Architect** — system design (general)
-/// - **Mentor** — teaching & explanation (general)
-/// - **Ops** — deployment & reliability (operations)
-/// - **Security** — threat analysis (operations)
-/// - **Writer** — technical communication (writing)
-/// - **Planner** — strategy & prioritization (general)
-///
-/// Baseline + writing genres:
-/// - **Normal** — plain assistant incl. Oxios control (normal)
-/// - **Novelist** — long-form fiction (writing / novel)
-/// - **Scenarist** — screen, game & interactive scenarios (writing / scenario)
-/// - **Essayist** — personal & critical essays (writing / essay)
-/// - **Blogger** — posts & newsletters (writing / blog)
+/// Tool-profile assignment:
+/// - **Normal** (normal / `base`) — plain assistant with every tool
+///   including Oxios control (persona, cron, security, budget, …).
+///   This is the default active persona.
+/// - **Core software lifecycle** (`code`): Dev, Review, Research,
+///   Architect, Mentor, Ops, Security, Planner — coding/working tools
+///   (exec, browser, memory, knowledge, ask_user) but no Oxios control.
+/// - **Writing** (`minimal`): Writer, Novelist, Scenarist, Essayist,
+///   Blogger — file + web-search only; no exec, browser, or control.
 pub fn default_personas() -> Vec<Persona> {
     vec![
         Persona {
@@ -177,6 +219,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "coding".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "review".to_string(),
@@ -212,6 +255,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "coding".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "research".to_string(),
@@ -247,6 +291,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "research".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "architect".to_string(),
@@ -286,6 +331,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "general".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "mentor".to_string(),
@@ -325,6 +371,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "general".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "ops".to_string(),
@@ -362,6 +409,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "operations".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "security".to_string(),
@@ -400,6 +448,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "operations".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "writer".to_string(),
@@ -439,6 +488,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "writing".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Minimal,
         },
         Persona {
             id: "planner".to_string(),
@@ -477,6 +527,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "general".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Code,
         },
         Persona {
             id: "normal".to_string(),
@@ -500,6 +551,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "normal".to_string(),
             genre: None,
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Base,
         },
         Persona {
             id: "novelist".to_string(),
@@ -542,6 +594,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "writing".to_string(),
             genre: Some("novel".to_string()),
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Minimal,
         },
         Persona {
             id: "scenarist".to_string(),
@@ -583,6 +636,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "writing".to_string(),
             genre: Some("scenario".to_string()),
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Minimal,
         },
         Persona {
             id: "essayist".to_string(),
@@ -623,6 +677,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "writing".to_string(),
             genre: Some("essay".to_string()),
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Minimal,
         },
         Persona {
             id: "blogger".to_string(),
@@ -661,6 +716,7 @@ pub fn default_personas() -> Vec<Persona> {
             category: "writing".to_string(),
             genre: Some("blog".to_string()),
             default_mount_ids: vec![],
+            tool_profile: ToolProfile::Minimal,
         },
     ]
 }
@@ -800,6 +856,32 @@ mod tests {
         // No default persona pre-binds mounts; users opt in per persona.
         for p in &personas {
             assert!(p.default_mount_ids.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_default_personas_tool_profiles() {
+        let personas = default_personas();
+        let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
+
+        // Only the base assistant controls Oxios itself.
+        assert_eq!(by_id("normal").tool_profile, ToolProfile::Base);
+        // Coding/research/operations personas get working tools, no control.
+        for id in [
+            "dev",
+            "review",
+            "research",
+            "architect",
+            "mentor",
+            "ops",
+            "security",
+            "planner",
+        ] {
+            assert_eq!(by_id(id).tool_profile, ToolProfile::Code, "{id}");
+        }
+        // Writing personas get the minimal tier.
+        for id in ["writer", "novelist", "scenarist", "essayist", "blogger"] {
+            assert_eq!(by_id(id).tool_profile, ToolProfile::Minimal, "{id}");
         }
     }
 

@@ -410,6 +410,10 @@
     "temperature": "Temperature",
     "maxTokens": "Max tokens",
     "default": "default",
+    "tempPrecise": "Precise",
+    "tempDefault": "Balanced",
+    "tempCreative": "Creative",
+    "custom": "Custom",
     "reset": "Reset",
     "compressedExpanded": "Hide earlier messages",
     "compression.summaryTab": "Summary",
@@ -522,6 +526,7 @@
     "persona": {
       "label": "Persona",
       "auto": "Auto",
+      "globalDefault": "Global default",
       "globalIs": "Global: {{name}}",
       "none": "No personas",
       "mountsAttached": "Attached the persona's default mounts",
@@ -1465,6 +1470,19 @@
     "genreNone": "None",
     "defaultMounts": "Default mounts",
     "defaultMountsHint": "Mounts auto-attached when this persona is selected in chat",
+    "toolProfile": "Tool access",
+    "toolProfileHint": "Which tools this persona's agents receive",
+    "toolProfiles": {
+      "base": "Base — every tool incl. Oxios control",
+      "code": "Code — coding tools, no Oxios control",
+      "minimal": "Minimal — files + web search only"
+    },
+    "activeBadge": "Active",
+    "profileBadge": {
+      "base": "full tools",
+      "code": "coding tools",
+      "minimal": "minimal tools"
+    },
     "sessionPersonaHint": "Pick a per-session persona from the chat composer"
   },
   "projects": {

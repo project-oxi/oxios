@@ -425,6 +425,11 @@ impl Gateway {
                     self.dispatch_switch_persona(channel_name, msg);
                     return;
                 }
+                "get_persona" => {
+                    drop(permit);
+                    self.dispatch_get_persona(channel_name, msg);
+                    return;
+                }
                 _ => {
                     tracing::warn!(action = %action, "Unknown action metadata, forwarding to orchestrator");
                     // Fall through to normal routing
@@ -1121,6 +1126,59 @@ impl Gateway {
                 },
                 (None, _) => {
                     tracing::warn!("switch_persona action received but no PersonaApi configured");
+                }
+                (_, None) => {
+                    tracing::warn!(channel = %channel_name, "Channel no longer registered");
+                }
+            }
+        });
+    }
+
+    /// Handle a `get_persona` action by reporting the active persona.
+    fn dispatch_get_persona(&self, channel_name: String, msg: IncomingMessage) {
+        let persona_api = self.persona_api.clone();
+        let channels = self.channels.clone();
+        let reliability = self.reliability.clone();
+        let conn_id = msg.metadata.get("conn_id").cloned();
+
+        tokio::spawn(async move {
+            // F22: clone the channel Arc out of the lock so the read guard
+            // is released before the (potentially slow) send.
+            let channel: Option<Arc<dyn Channel>> = {
+                let guard = channels.read().await;
+                guard.get(&channel_name).map(|e| e.channel.clone())
+            };
+
+            match (persona_api, channel) {
+                (Some(api), Some(channel)) => {
+                    let response = match api.active() {
+                        Some(p) => format!("Current persona: {} ({})", p.name, p.id),
+                        None => "Current persona: (none)".to_string(),
+                    };
+                    let mut outgoing = OutgoingMessage::success(
+                        msg.id,
+                        &msg.channel,
+                        &msg.user_id,
+                        &response,
+                        HashMap::new(),
+                        ResponseMeta {
+                            session_id: None,
+                            project_id: None,
+                            project_tag: None,
+                            phase: "action".to_string(),
+                            evaluation_passed: Some(true),
+                            duration_ms: None,
+                            error: None,
+                            interview_questions: None,
+                            interview_round: None,
+                        },
+                    );
+                    outgoing.target_conn_id = conn_id;
+                    let outgoing = reliability.assign_seq(outgoing);
+                    let _ = send_with_retry(&channel, outgoing).await;
+                }
+                (None, _) => {
+                    tracing::warn!("get_persona action received but no PersonaApi configured");
                 }
                 (_, None) => {
                     tracing::warn!(channel = %channel_name, "Channel no longer registered");

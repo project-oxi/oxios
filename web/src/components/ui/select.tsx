@@ -34,7 +34,14 @@ function SimpleSelect({
   const displayPlaceholder = placeholder ?? t('common.selectPlaceholder')
 
   return (
-    <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
+    <SelectPrimitive.Root
+      value={value}
+      // Radix emits `onValueChange('')` when a controlled value changes
+      // before the content has mounted; swallowing it keeps the controlled
+      // state intact instead of resetting it to an empty string.
+      onValueChange={(v) => v !== '' && onValueChange?.(v)}
+      disabled={disabled}
+    >
       <SelectPrimitive.Trigger
         id={id}
         data-testid={dataTestId}
@@ -44,7 +51,14 @@ function SimpleSelect({
           className,
         )}
       >
-        <SelectPrimitive.Value placeholder={displayPlaceholder} />
+        {(() => {
+          const selected = options.find((o) => o.value === value)
+          return selected ? (
+            <span className="truncate">{selected.label}</span>
+          ) : (
+            <span className="truncate text-muted-foreground">{displayPlaceholder}</span>
+          )
+        })()}
         <SelectPrimitive.Icon asChild>
           <ChevronDownIcon className="size-4 opacity-50" />
         </SelectPrimitive.Icon>

@@ -606,6 +606,11 @@ export interface Persona {
   genre?: string | null
   /// Mount IDs the chat composer auto-attaches when selected.
   default_mount_ids?: string[]
+  /// Tool access profile: 'base' (all tools incl. Oxios control) |
+  /// 'code' (coding tools, no control) | 'minimal' (file + web search).
+  tool_profile?: 'base' | 'code' | 'minimal'
+  /// Whether this persona is the global active persona (list endpoint only).
+  active?: boolean
 }
 
 // Workspace — matches backend TreeEntry from /api/workspace/tree

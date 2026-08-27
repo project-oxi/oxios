@@ -25,6 +25,7 @@ pub mod knowledge_tool;
 pub mod engine_tool;
 pub mod marketplace_tool;
 pub mod mcp_manage_tool;
+// First-party app module tools (opt-in, feature-gated).
 #[cfg(feature = "memo")]
 pub mod memo_tool;
 pub mod mount_tool;

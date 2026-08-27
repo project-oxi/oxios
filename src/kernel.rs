@@ -1593,6 +1593,7 @@ impl KernelBuilder {
                     Arc::clone(&routing_stats),
                     Arc::clone(&engine_handle),
                 )),
+                // KnowledgeBase — single source of truth (RFC-003), shared
                 knowledge_base.clone(),
                 // KnowledgeLens — semantic overlay, shares same KnowledgeBase
                 Arc::new(

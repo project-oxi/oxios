@@ -978,7 +978,7 @@ export function useSetModel() {
   })
 }
 
-/** Set the default one-shot (QuickAsk) model. Pass null to clear (fall back to default_model). */
+/** Set the Oxios Copilot model. Pass null to clear (fall back to default_model). */
 export function useSetQuickAskModel() {
   const qc = useQueryClient()
   return useMutation({

@@ -1486,7 +1486,8 @@
     "profileBadge": {
       "base": "full tools",
       "code": "coding tools",
-      "minimal": "minimal tools"
+      "minimal": "minimal tools",
+      "control": "Control"
     },
     "sessionPersonaHint": "Pick a per-session persona from the chat composer"
   },
@@ -1563,17 +1564,6 @@
     "title": "Questions",
     "typeAnswer": "Type your answer…",
     "typeSomething": "Type something…"
-  },
-  "quickAsk": {
-    "title": "Quick Ask",
-    "placeholder": "Ask anything — not saved",
-    "copy": "Copy",
-    "promote": "Promote to chat",
-    "notSaved": "Not saved",
-    "openAria": "Open quick ask",
-    "copyFailed": "Failed to copy",
-    "promoted": "Promoted to chat",
-    "promoteFailed": "Failed to promote to chat"
   },
   "oxiosCopilot": {
     "title": "Oxios Copilot",

@@ -1486,7 +1486,8 @@
     "profileBadge": {
       "base": "전체 도구",
       "code": "코딩 도구",
-      "minimal": "최소 도구"
+      "minimal": "최소 도구",
+      "control": "제어"
     },
     "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다"
   },
@@ -1563,17 +1564,6 @@
     "title": "질문",
     "typeAnswer": "답변을 입력하세요…",
     "typeSomething": "직접 입력…"
-  },
-  "quickAsk": {
-    "title": "빠른 질문",
-    "placeholder": "무엇이든 물어보세요 — 저장되지 않습니다",
-    "copy": "복사",
-    "promote": "채팅으로 옮기기",
-    "notSaved": "저장되지 않음",
-    "openAria": "빠른 질문 열기",
-    "copyFailed": "복사하지 못했습니다",
-    "promoted": "채팅으로 옮겼습니다",
-    "promoteFailed": "채팅으로 옮기지 못했습니다"
   },
   "oxiosCopilot": {
     "title": "Oxios Copilot",

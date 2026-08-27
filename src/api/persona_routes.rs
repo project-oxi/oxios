@@ -30,7 +30,7 @@ pub struct PersonaSummary {
     enabled: bool,
     /// Whether this persona is the global active persona.
     active: bool,
-    /// Tool access profile: `base` | `code` | `minimal`.
+    /// Tool access profile: `base` | `code` | `minimal` | `control`.
     tool_profile: String,
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.

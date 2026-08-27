@@ -3,8 +3,7 @@
 //!
 //! The resolution follows a priority chain:
 //!
-//! 1. **Explicit cspace hint** on the directive → template/profile by name.
-//! 2. **Persona tool profile** (`base` | `code` | `minimal`) → the
+//! 2. **Persona tool profile** (`base` | `code` | `minimal` | `control`) → the
 //!    matching persona profile template.
 //! 3. **Default** → fall back to the `code` profile.
 //!
@@ -85,7 +84,7 @@ fn profile_template(profile: ToolProfile) -> CapabilityTemplate {
         ToolProfile::Base => CapabilityTemplate::base_profile(),
         ToolProfile::Code => CapabilityTemplate::code_profile(),
         ToolProfile::Minimal => CapabilityTemplate::minimal_profile(),
-        ToolProfile::Control => todo!(),
+        ToolProfile::Control => CapabilityTemplate::control_profile(),
     }
 }
 
@@ -201,4 +200,22 @@ mod tests {
         assert!(cs.can(&exec_shell(), Rights::EXECUTE));
         assert!(!cs.can(&ResourceRef::A2a, Rights::READ));
     }
+
+    #[test]
+    fn control_profile_resolves_control_domains_only() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(None, ToolProfile::Control, id);
+        assert!(cs.can(
+            &ResourceRef::KernelDomain { domain: "mcp_manage".into() },
+            Rights::EXECUTE
+        ));
+        assert!(cs.can(
+            &ResourceRef::KernelDomain { domain: "engine".into() },
+            Rights::WRITE
+        ));
+        // No exec shell, no browser.
+        assert!(!cs.can(&exec_shell(), Rights::EXECUTE));
+        assert!(!cs.can(&ResourceRef::Browser, Rights::EXECUTE));
+    }
+
 }

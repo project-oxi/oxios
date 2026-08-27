@@ -399,7 +399,7 @@ impl AgentRuntime {
         let persona_role = persona.as_ref().map(|p| p.role.clone());
 
         // Resolve CSpace from the persona's tool profile (base | code |
-        // minimal). An explicit directive hint overrides the profile.
+        // minimal | control). An explicit directive hint overrides the profile.
         let tool_profile = persona.as_ref().map(|p| p.tool_profile).unwrap_or_default();
         let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
         // Build system prompt (without SKILL.md injection — capabilities are

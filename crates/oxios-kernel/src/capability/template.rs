@@ -244,13 +244,23 @@ impl CapabilityTemplate {
     pub fn control_profile() -> Self {
         let mut t = Self { caps: Vec::new() };
         let domains = [
-            "space", "persona", "task", "security", "budget", "resource",
-            "agent", "marketplace", "mcp_manage", "engine",
+            "space",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
         ];
-        t.caps.extend(domains.map(|d| (
-            ResourceRef::KernelDomain { domain: d.into() },
-            Rights::READ | Rights::WRITE | Rights::EXECUTE,
-        )));
+        t.caps.extend(domains.map(|d| {
+            (
+                ResourceRef::KernelDomain { domain: d.into() },
+                Rights::READ | Rights::WRITE | Rights::EXECUTE,
+            )
+        }));
         t
     }
 
@@ -401,8 +411,16 @@ mod tests {
             })
             .collect();
         let mut expected = vec![
-            "space", "persona", "task", "security", "budget",
-            "resource", "agent", "marketplace", "mcp_manage", "engine",
+            "space",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
         ];
         expected.sort();
         let mut got = kd.clone();
@@ -413,9 +431,7 @@ mod tests {
             assert!(
                 !matches!(
                     &cap.resource,
-                    ResourceRef::Exec { .. }
-                        | ResourceRef::Browser
-                        | ResourceRef::Skill { .. }
+                    ResourceRef::Exec { .. } | ResourceRef::Browser | ResourceRef::Skill { .. }
                 ),
                 "control profile must not grant {:?}",
                 cap.resource

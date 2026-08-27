@@ -215,7 +215,10 @@ mod tests {
     #[test]
     fn reserved_persona_cannot_be_updated_or_deleted() {
         let store = PersonaStore::new();
-        let p = default_personas().into_iter().find(|p| p.id == RESERVED_PERSONA_ID).unwrap();
+        let p = default_personas()
+            .into_iter()
+            .find(|p| p.id == RESERVED_PERSONA_ID)
+            .unwrap();
         store.register(p.clone());
 
         let err = store.update(RESERVED_PERSONA_ID, p.clone()).unwrap_err();
@@ -223,7 +226,10 @@ mod tests {
         let err = store.delete(RESERVED_PERSONA_ID).unwrap_err();
         assert!(err.to_string().contains("reserved"));
         // Still present.
-        let mut other = default_personas().into_iter().find(|p| p.id == "dev").unwrap();
+        let mut other = default_personas()
+            .into_iter()
+            .find(|p| p.id == "dev")
+            .unwrap();
         store.register(other.clone());
         other.name = "Dev2".into();
         store.update(&other.id.clone(), other).unwrap();

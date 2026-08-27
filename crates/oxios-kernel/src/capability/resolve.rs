@@ -207,11 +207,15 @@ mod tests {
         let id = AgentId::new_v4();
         let cs = resolve_cspace(None, ToolProfile::Control, id);
         assert!(cs.can(
-            &ResourceRef::KernelDomain { domain: "mcp_manage".into() },
+            &ResourceRef::KernelDomain {
+                domain: "mcp_manage".into()
+            },
             Rights::EXECUTE
         ));
         assert!(cs.can(
-            &ResourceRef::KernelDomain { domain: "engine".into() },
+            &ResourceRef::KernelDomain {
+                domain: "engine".into()
+            },
             Rights::WRITE
         ));
         // No exec shell, no browser.

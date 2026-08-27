@@ -440,7 +440,6 @@ pub(crate) struct SeedResponse {
 /// is what makes the Oxios Copilot dialog "promote to chat" instant and
 /// drift-free: the user sees the exact answer they read in the dialog, now
 /// in a real session.
-
 pub(crate) async fn handle_chat_seed(
     state: State<Arc<AppState>>,
     Json(body): Json<SeedRequest>,
@@ -517,14 +516,10 @@ pub(crate) async fn handle_chat_seed(
         match state.kernel.persona.get(pid) {
             Some(p) if p.enabled => session.active_persona_id = Some(pid.to_string()),
             Some(_) => {
-                return Err(AppError::BadRequest(
-                    "persona is disabled".into(),
-                ));
+                return Err(AppError::BadRequest("persona is disabled".into()));
             }
             None => {
-                return Err(AppError::BadRequest(
-                    format!("persona '{pid}' not found"),
-                ));
+                return Err(AppError::BadRequest(format!("persona '{pid}' not found")));
             }
         }
     }

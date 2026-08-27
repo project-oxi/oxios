@@ -19,15 +19,14 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use oxicode_sdk::{AgentTool, AgentToolResult, ToolContext};
 #[cfg(test)]
 use oxios_mcp::McpBridge;
 use oxios_mcp::McpServer;
-use oxicode_sdk::{AgentTool, AgentToolResult, ToolContext};
 use serde_json::{Value, json};
 
 #[cfg(test)]
 use std::sync::Arc;
-
 
 use crate::kernel_handle::KernelHandle;
 use crate::kernel_handle::McpApi;
@@ -164,11 +163,7 @@ impl McpManageTool {
         for name in &names {
             let entry = match self.api.get_server(name) {
                 Some(server) => {
-                    let connected = self
-                        .api
-                        .client_status(name)
-                        .await
-                        .unwrap_or(false);
+                    let connected = self.api.client_status(name).await.unwrap_or(false);
                     json!({
                         "name": server.name,
                         "command": server.command,
@@ -205,7 +200,10 @@ impl McpManageTool {
             .to_string();
         let args = parse_string_array(params.get("args"));
         let env = parse_env_map(params.get("env"));
-        let enabled = params.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        let enabled = params
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let mut server = McpServer::new(&name, &command);
         server.args = args;
@@ -414,7 +412,12 @@ mod tests {
     async fn unknown_action_is_tool_error() {
         let tool = McpManageTool::for_tests();
         let err = tool
-            .execute("c-1", json!({"action": "nope"}), None, &ToolContext::default())
+            .execute(
+                "c-1",
+                json!({"action": "nope"}),
+                None,
+                &ToolContext::default(),
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Unknown mcp_manage action"));
@@ -424,7 +427,12 @@ mod tests {
     async fn missing_required_param_is_tool_error() {
         let tool = McpManageTool::for_tests();
         let err = tool
-            .execute("c-1", json!({"action": "add"}), None, &ToolContext::default())
+            .execute(
+                "c-1",
+                json!({"action": "add"}),
+                None,
+                &ToolContext::default(),
+            )
             .await
             .unwrap_err();
         assert!(err.to_string().contains("requires"));

@@ -398,10 +398,7 @@ pub fn register_tools_from_cspace_gated(
                 "knowledge" => registry.register(KnowledgeTool::from_kernel(kernel)),
                 "task" => {
                     if let Some(store) = kernel.task_store.clone() {
-                        registry.register(TaskTool::for_store(
-                            store,
-                            Some(agent_id.to_string()),
-                        ));
+                        registry.register(TaskTool::for_store(store, Some(agent_id.to_string())));
                     }
                 }
                 "marketplace" => registry.register(MarketplaceTool::from_kernel(kernel)),

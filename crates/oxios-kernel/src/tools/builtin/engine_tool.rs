@@ -261,7 +261,12 @@ mod tests {
         assert_eq!(tool.name(), "engine");
         let schema = tool.parameters_schema();
         let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
-        for a in ["current", "list_models", "set_default_model", "set_copilot_model"] {
+        for a in [
+            "current",
+            "list_models",
+            "set_default_model",
+            "set_copilot_model",
+        ] {
             assert!(actions.iter().any(|x| x == a), "schema missing action {a}");
         }
     }

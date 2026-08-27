@@ -19,6 +19,7 @@ use super::Persona;
 pub const RESERVED_PERSONA_ID: &str = "oxios";
 
 /// Canonical ordering for default personas. Ensures `list_enabled()`
+/// returns "normal" first (the base persona with full tool access)
 /// rather than alphabetical order.
 fn persona_priority(id: &str) -> usize {
     const PRIORITY: &[&str] = &[
@@ -166,6 +167,7 @@ impl Default for PersonaStoreHandle {
 mod tests {
     use super::*;
     use crate::persona::default_personas;
+
     #[test]
     fn test_register_and_get() {
         let store = PersonaStore::new();

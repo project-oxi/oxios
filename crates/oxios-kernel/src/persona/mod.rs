@@ -865,6 +865,7 @@ mod tests {
     fn test_default_personas_categories_and_genres() {
         let personas = default_personas();
         let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
+
         assert_eq!(by_id("normal").category, "normal");
         assert_eq!(by_id("dev").category, "coding");
         assert_eq!(by_id("review").category, "coding");
@@ -872,6 +873,7 @@ mod tests {
         assert_eq!(by_id("architect").category, "general");
         assert_eq!(by_id("mentor").category, "general");
         assert_eq!(by_id("planner").category, "general");
+        assert_eq!(by_id("ops").category, "operations");
         assert_eq!(by_id("security").category, "operations");
         assert_eq!(by_id("writer").category, "writing");
         assert_eq!(by_id("writer").genre, None);
@@ -923,7 +925,6 @@ mod tests {
         let roles: std::collections::HashSet<&str> =
             personas.iter().map(|p| p.role.as_str()).collect();
         assert_eq!(roles.len(), 15);
-
     }
 
     #[test]

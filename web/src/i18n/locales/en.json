@@ -997,7 +997,8 @@
     "agentsCount": "{{count}} agents",
     "brain": "Memory",
     "brainHealthy": "Brain daemon online",
-    "brainDegraded": "Brain daemon offline — degraded"
+    "brainDegraded": "Brain daemon offline — degraded",
+    "scheduledTasks": "Scheduled tasks"
   },
   "dataTable": {
     "clearFilters": "Clear filters",
@@ -1057,7 +1058,10 @@
     "userLabel": "Username",
     "viewDetails": "View",
     "hidePassword": "Hide password",
-    "showPassword": "Show password"
+    "showPassword": "Show password",
+    "templatesNeedSetup": "Email is not set up yet",
+    "templatesNeedSetupDesc": "Connect an email provider in Settings to use templates.",
+    "goToSetup": "Go to email setup"
   },
   "engine": {
     "reasoning": "Reasoning",
@@ -1385,9 +1389,10 @@
     "envParseError": "Invalid env var format. Use KEY=VALUE per line.",
     "nameImmutable": "Name cannot be changed. Delete and re-register to rename.",
     "envEmptyValue": "Environment variable value is empty. Set a value or remove the line.",
-    "env": "Environment variables (KEY=VALUE per line)",
+    "env": "Environment variables (optional)",
     "noArguments": "No arguments",
-    "name": "Name"
+    "name": "Name",
+    "envPlaceholder": "One KEY=VALUE per line"
   },
   "mounts": {
     "title": "Mounts",
@@ -2175,7 +2180,9 @@
     "loadContentFailed": "Failed to load skill content.",
     "loadDetailFailed": "Failed to load skill detail",
     "collapse": "Collapse details",
-    "expand": "Expand details"
+    "expand": "Expand details",
+    "skillsShNeedsKey": "skills.sh requires an API key",
+    "skillsShNeedsKeyDesc": "Set api_key under [skills_sh] in config.toml (or export SKILLS_SH_TOKEN) and restart. Request a key from skills-api@vercel.com. ClawHub works without a key."
   },
   "spaces": {
     "title": "Spaces",
@@ -2346,6 +2353,17 @@
     "title": "Tasks",
     "subtitle": "Agent task lifecycle management",
     "newTask": "New Task",
+    "viewList": "List",
+    "viewTimeline": "Timeline",
+    "createBlank": "Create Blank Task",
+    "fromTemplate": "Start from a template",
+    "editDialogTitle": "Edit Task",
+    "aiAssist": "AI draft",
+    "aiThinking": "Drafting...",
+    "aiAssistHint": "Draft goal candidates from the current name and instruction",
+    "aiPickOne": "Pick a draft to fill the instruction:",
+    "aiNoSuggestions": "No suggestions — add more detail and retry",
+    "aiFailed": "AI assist failed",
     "all": "All",
     "noTasks": "No tasks yet",
     "noTasksDescription": "Create a task to schedule recurring agent work",
@@ -2382,7 +2400,6 @@
     "statusRunning": "Running",
     "saving": "Saving...",
     "runVerified": "Verified",
-    "editDialogTitle": "Edit Task",
     "editSave": "Save changes",
     "editSaved": "Task updated",
     "editSaveFailed": "Failed to update task",

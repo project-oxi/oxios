@@ -997,7 +997,8 @@
     "agentsCount": "에이전트 {{count}}개",
     "brain": "메모리",
     "brainHealthy": "브레인 데몬 온라인",
-    "brainDegraded": "브레인 데몬 오프라인 — 제한됨"
+    "brainDegraded": "브레인 데몬 오프라인 — 제한됨",
+    "scheduledTasks": "예약된 작업"
   },
   "dataTable": {
     "clearFilters": "필터 초기화",
@@ -1057,7 +1058,10 @@
     "userLabel": "사용자 이름",
     "viewDetails": "보기",
     "hidePassword": "비밀번호 숨기기",
-    "showPassword": "비밀번호 보기"
+    "showPassword": "비밀번호 보기",
+    "templatesNeedSetup": "이메일이 아직 설정되지 않았습니다",
+    "templatesNeedSetupDesc": "템플릿을 사용하려면 설정에서 이메일을 연결하세요.",
+    "goToSetup": "이메일 설정으로 이동"
   },
   "engine": {
     "reasoning": "추론",
@@ -1385,9 +1389,10 @@
     "envParseError": "환경변수 형식이 잘못되었습니다. KEY=VALUE 형식이어야 합니다.",
     "nameImmutable": "이름은 변경할 수 없습니다. 변경하려면 삭제 후 새로 등록하세요.",
     "envEmptyValue": "환경변수 값이 비어있습니다. 값을 지정하거나 해당 줄을 삭제하세요.",
-    "env": "환경변수 (줄당 KEY=VALUE)",
+    "env": "환경변수 (선택)",
     "noArguments": "인자 없음",
-    "name": "이름"
+    "name": "이름",
+    "envPlaceholder": "한 줄에 하나씩 KEY=VALUE 형식"
   },
   "mounts": {
     "title": "마운트",
@@ -2175,7 +2180,9 @@
     "loadContentFailed": "스킬 콘텐츠를 불러오지 못했습니다.",
     "loadDetailFailed": "스킬 상세 정보를 불러오지 못했습니다",
     "collapse": "세부 정보 접기",
-    "expand": "세부 정보 펼치기"
+    "expand": "세부 정보 펼치기",
+    "skillsShNeedsKey": "skills.sh에는 API 키가 필요합니다",
+    "skillsShNeedsKeyDesc": "config.toml의 [skills_sh]에 api_key를 설정하거나 SKILLS_SH_TOKEN 환경변수를 지정한 뒤 재시작하세요. 키는 skills-api@vercel.com에 요청할 수 있습니다. ClawHub는 키 없이 동작합니다."
   },
   "spaces": {
     "title": "공간",
@@ -2346,6 +2353,17 @@
     "title": "작업",
     "subtitle": "에이전트 작업 수명주기 관리",
     "newTask": "새 작업",
+    "viewList": "목록",
+    "viewTimeline": "타임라인",
+    "createBlank": "빈 작업 만들기",
+    "fromTemplate": "템플릿으로 시작",
+    "editDialogTitle": "작업 편집",
+    "aiAssist": "AI 초안",
+    "aiThinking": "작성 중...",
+    "aiAssistHint": "현재 이름과 지시문으로 목표 초안을 생성합니다",
+    "aiPickOne": "지시문에 채울 초안을 선택하세요:",
+    "aiNoSuggestions": "제안 없음 — 내용을 더 채워 다시 시도해보세요",
+    "aiFailed": "AI 어시스트 실패",
     "all": "전체",
     "noTasks": "작업이 없습니다",
     "noTasksDescription": "반복되는 에이전트 작업을 예약하려면 작업을 생성하세요",
@@ -2382,7 +2400,6 @@
     "statusRunning": "실행 중",
     "saving": "저장 중...",
     "runVerified": "검증됨",
-    "editDialogTitle": "작업 편집",
     "editSave": "변경 사항 저장",
     "editSaved": "작업이 업데이트되었습니다",
     "editSaveFailed": "작업 업데이트에 실패했습니다",

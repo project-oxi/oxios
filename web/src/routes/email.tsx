@@ -32,7 +32,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { api } from '@/lib/api-client'
+import { api, isSubsystemUnavailable } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 
 export const Route = createFileRoute('/email')({
@@ -759,11 +759,36 @@ function SentEmailDialog({ email }: { email: SentEmail }) {
 
 function TemplatesPanel({ active }: { active: boolean }) {
   const { t } = useTranslation()
-  const { data, isLoading, isError, refetch, isFetching } = useEmailTemplates(active)
+  const navigate = useNavigate({ from: '/email' })
+  const { data, isLoading, isError, error, refetch, isFetching } = useEmailTemplates(active)
 
   const templates = Array.isArray(data?.templates) ? data.templates : []
 
   if (isError) {
+    // 503 "Email subsystem not available" is not a load failure — the
+    // daemon simply has no EmailApi until setup completes. Guide there
+    // instead of showing a scary error state.
+    if (isSubsystemUnavailable(error)) {
+      return (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
+            <MailWarning className="h-8 w-8 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium">{t('email.templatesNeedSetup')}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t('email.templatesNeedSetupDesc')}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => navigate({ search: (prev) => ({ ...prev, tab: 'setup' }) })}
+            >
+              {t('email.goToSetup')}
+            </Button>
+          </CardContent>
+        </Card>
+      )
+    }
     return (
       <Card>
         <CardContent className="py-8">

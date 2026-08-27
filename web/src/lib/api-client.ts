@@ -12,14 +12,13 @@ export class ApiError extends Error {
     this.name = 'ApiError'
   }
 }
-/** A 503 "subsystem not available" — calendar/email/etc. is disabled in config.
- *  It is a permanent failure and must not be retried. */
+/** A 503 "subsystem not available" — calendar/email/skills.sh/etc. is
+ * disabled in config (no provider credentials, no API key, etc).
+ * It is a permanent failure and must not be retried. We match the status
+ * code rather than the body so new gated endpoints slot in without
+ * updating this matcher. */
 export function isSubsystemUnavailable(error: unknown): boolean {
-  return Boolean(
-    error instanceof ApiError &&
-      error.status === 503 &&
-      error.body?.includes('subsystem not available'),
-  )
+  return Boolean(error instanceof ApiError && error.status === 503)
 }
 
 interface RequestOptions {

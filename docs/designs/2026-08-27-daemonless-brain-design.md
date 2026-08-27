@@ -166,8 +166,6 @@ Lifecycle rules:
   callback — a failed spawn *is* the install trigger when `auto_install` (the
   spawn path first asks `BrainInstaller::ensure_binary()` once per process,
   rate-limited 30 s, mirroring today's lazy-reconnect respawn cadence).
-- **Degradation contract:** every method returns `None`/empty when the child
-  cannot be spawned or a call fails. Identical to RFC-047 §4.
 
 Method surface (callers keep their names; types shift only where oxibrain's
 wire changed):
@@ -175,7 +173,7 @@ wire changed):
 | Method | Notes |
 |---|---|
 | `recall(query, budget)` | MCP `recall`; context-text assembly unchanged |
-| `remember(content, source)` | MCP `remember`; returns `RememberOutcome::{Captured, CapturedPending{pending_count}}`; `CapturedPending` logs the backlog size |
+| `remember(content, source)` | typed client `ingest` — returns the episode id. Extraction is **always deferred**: the MCP `remember` tool's synchronous extraction requires a client-sampling session, which an unscoped stdio session never has. Episodes land in the backlog; the drain timer (§5.5) extracts them. `Captured/CapturedPending` outcomes belong to the facade/CLI path, not this one |
 | `search(query, mode, limit, planes)` | two-plane `SearchResponseDto`; `planes=None` → both |
 | `get_entity(id)` | typed client method (replaces the `entity://` resource read) |
 | `timeline(id, from, to)` | typed client method (replaces `timeline://` resource read) |
@@ -249,8 +247,9 @@ auto_install = true       # RENAMED from auto_manage
      (`config.kernel.resolved_knowledge_root()`:
      `kernel.knowledge_root` → `[vault].path` →
      `~/.oxi/vault`), `space = <resolved space>`. User-authored rows are
-     preserved verbatim; a mismatched existing `vault` row is left alone and
-     logged.
+     preserved as data (the file is re-serialized by the `toml` crate, so
+     formatting may normalize); a mismatched existing `vault` row is left
+     alone and logged.
    - Then one-shot `oxibrain index --documents --embed` (§5.2 command lane).
      Failure logs and degrades — first `search`/`recall` auto-materializes
      anyway (oxibrain does this by design); `--embed` at boot merely warms the
@@ -259,14 +258,15 @@ auto_install = true       # RENAMED from auto_manage
    `with_on_unavailable` hook are deleted.
 
 ### 5.5 Extraction backlog drain
+No daemon drains the extraction backlog anymore; oxios owns the cadence.
+Every kernel-ingested episode lands in the backlog (the MCP surface cannot
+extract inline without a sampling session — §5.1 `remember`), so the timer is
+the *primary* extraction path, not an error handler:
 
-No daemon drains `CapturedPending` episodes anymore; oxios owns the cadence:
-
-- When `remember` returns `CapturedPending`, or when the drain timer fires
-  (every 10 min **while a session child is alive**), call `pending_stats()`;
-  if `count > 0`, spawn one-shot `oxibrain extract --pending` (background,
-  detached). Local GGUF extraction is ~13 s/episode, so the drain is always
-  async and never blocks a turn.
+- Timer (every 10 min **while a session child is alive**): call
+  `pending_stats()`; if `count > 0`, spawn one-shot
+  `oxibrain extract --pending` (background, detached). Local GGUF extraction
+  is ~13 s/episode, so the drain is always async and never blocks a turn.
 - The timer lives in the kernel's existing background-task pattern (same place
   the cron auto-start loop lives); it does nothing when the brain is disabled
   or degraded — a backlog waiting while oxios is not running is the
@@ -274,11 +274,9 @@ No daemon drains `CapturedPending` episodes anymore; oxios owns the cadence:
 
 ### 5.6 `agent_runtime`
 
-- Per-turn recall injection (`brain.recall(goal, 3000)` → "## Relevant
-  Memory"): unchanged call site, now via `BrainSession`.
-- Compaction summary → `remember`: unchanged; handle `CapturedPending` by
-  logging (summary is durably appended to the ledger; extraction catches up
-  via the drain).
+- Compaction summary → `remember`: unchanged (episode id logged); extraction
+  catches up via the drain timer.
+
 
 ### 5.7 Agent surface — skill + CLI replaces memory tools
 
@@ -364,9 +362,8 @@ Shrinks to management verbs; query/ingest verbs belong to the `oxibrain` CLI:
 | `extract` | keep — runs `oxibrain extract --pending` on demand |
 | `ingest`, `ask` | remove — use `oxibrain ingest` / `oxibrain ask` (oxios no longer proxies query verbs) |
 | `consolidate` | remove — no oxibrain 0.8 equivalent verb (facade op); users run `oxibrain reextract` / `regenerate-summaries` |
-| `curate` / `dream` | relocate to `oxios knowledge curate` (it is KnowledgeBase curation, not brain; alias `dream` dropped) |
 | `export` stub | remove |
-| `start` / `stop` | remove — nothing to start/stop |
+| `curate` / `dream` | remove — the subcommands are guidance stubs today (no logic); KnowledgeBase curation lives in the `knowledge_curation` tool |
 
 `main.rs::cmd_brain` rewritten against one-shot CLI + installer; the socket
 helper is deleted.
@@ -399,7 +396,7 @@ helper is deleted.
 | Binary missing, `auto_install=false` | spawn fails once per process (warn), every op `None`; status/doctor say "binary missing" |
 | Binary missing, `auto_install=true` | installer runs once per 30 s max; success → spawn proceeds |
 | Child dies mid-session | call errors → client dropped → next call respawns |
-| Spawn storm prevention | capped backoff [1s, 5s, 30s]; after third consecutive failure stay degraded until an external status probe retries |
+| Spawn storm prevention | capped backoff [1s, 5s, 30s]; after the third consecutive failure retries at most every 30 s |
 | `Locked` writer contention (CLI index/extract concurrent with child) | surfaces as a call error → degrade for that op; op-scoped locks on oxibrain's side bound the window |
 | `index`/`extract` one-shot failure | logged, degraded; retried by next timer tick / boot |
 | Brain disabled | zero spawns, zero CLI invocations, config seeds nothing; all ops `None` (today's contract) |

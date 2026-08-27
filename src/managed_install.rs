@@ -187,6 +187,15 @@ fn is_dev_build(p: &Path) -> bool {
 pub fn install_version_bytes(oxios_home: &Path, version: &str, tar_gz: &[u8]) -> Result<PathBuf> {
     use std::io::Read;
 
+    // Reject non-SemVer version-dir names: prune/rollback/current_target
+    // all rely on `parse_version_dir` recognizing the directory, so an
+    // unparseable tag (e.g. `1.45.0-rc.1`) would install fine but silently
+    // disable launcher protection and rollback. Also blocks hypothetical
+    // path-traversal tags from a tampered API response.
+    if parse_version_dir(version).is_none() {
+        anyhow::bail!("refusing to install non-SemVer version directory: {version:?}");
+    }
+
     let version_dir = versions_dir(oxios_home).join(version);
     std::fs::create_dir_all(&version_dir)
         .with_context(|| format!("create version dir {}", version_dir.display()))?;
@@ -626,6 +635,12 @@ pub fn audit_shadows(oxios_home: &Path, path_env: &str) -> Vec<ShadowEntry> {
                         continue;
                     }
                     ShadowKind::Backup
+                } else if name_str == "oxios.pre-oxios" {
+                    // Aside from our own migration repoint: apply_migration_plan
+                    // renames the old symlink here before replacing it. Folded
+                    // into Backup so doctor reports it and --cleanup reclaims
+                    // it (deleting the aside symlink never touches its target).
+                    ShadowKind::Backup
                 } else {
                     continue;
                 };
@@ -750,6 +765,51 @@ pub fn plan_migration(shadows: &[ShadowEntry]) -> MigrationPlan {
         preserve_as_bak,
     }
 }
+
+/// Ensure the idempotent managed PATH block exists in the user's shell
+/// rc file, mirroring `share/install.sh` step 4 exactly:
+///
+/// ```text
+/// # BEGIN oxios (managed)
+/// export PATH="$OXIOS_HOME/bin:$PATH"
+/// # END oxios (managed)
+/// ```
+///
+/// Design (PATH integration): `$OXIOS_HOME/bin` is prepended "by
+/// `install.sh` AND by `oxios update` migration". Migration renames
+/// plain-file shadows (e.g. `~/.cargo/bin/oxios`) aside to
+/// `.bak.<date>`, so without this block a user who never ran install.sh
+/// would lose `oxios` from PATH entirely after confirming a migration.
+///
+/// rc selection mirrors install.sh: `~/.zshrc` when it exists, else
+/// `~/.zprofile` (created by the append when missing). Idempotent: skips
+/// when a previous managed block marker is already present. Never
+/// touches any other line (the 8/26 incident showed user profiles
+/// prepend `~/bin` last — we must not reorder user lines, only ensure
+/// ours exists).
+///
+/// Returns the rc file written to, or `None` when the block already
+/// existed or the home directory could not be resolved.
+pub fn ensure_path_block(oxios_home: &Path) -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let rc = if home.join(".zshrc").exists() {
+        home.join(".zshrc")
+    } else {
+        home.join(".zprofile")
+    };
+    let existing = std::fs::read_to_string(&rc).unwrap_or_default();
+    if existing.contains("BEGIN oxios (managed)") {
+        return None;
+    }
+    // `$PATH` stays literal in the rc file — the shell expands it at
+    // startup, exactly like the `printf` in install.sh (SC2016).
+    let block = format!(
+        "\n# BEGIN oxios (managed)\nexport PATH=\"{}/bin:$PATH\"\n# END oxios (managed)\n",
+        oxios_home.display()
+    );
+    std::fs::write(&rc, format!("{existing}{block}")).ok()?;
+    Some(rc)
+}
 /// Render the `audit_shadows` table for `oxios doctor`.
 ///
 /// One line per shadow entry: `path -> target (size)` for symlinks, or
@@ -783,12 +843,18 @@ pub fn render_doctor_report(shadows: &[ShadowEntry]) -> String {
 /// Build the list of filesystem paths that `oxios doctor --cleanup` should
 /// remove.
 ///
-/// Pure: takes the shadow list (typically the output of `audit_shadows`).
-/// Includes the `.bak.<YYYYMMDD>` paths the migration planner would create
-/// for plain-file shadows, plus the plain-file shadow paths themselves
-/// (symlinks are handled separately by the installer repointing them).
-/// Symlink shadows are intentionally excluded: the installer repoints them
-/// to the managed launcher rather than deleting them.
+/// `.bak.<date>` projections produced by the migration plan (so a later
+/// `--cleanup` reclaims what a previous migration preserved), plus the
+/// stale versioned copies (`oxios-1.43.1`…) and existing backup renames
+/// (`oxios.bak.<date>`) the audit found. This matches the design scope:
+/// ".bak.* copies and stale versioned files listed by the audit".
+///
+/// Symlinks are intentionally excluded: the installer repoints them to
+/// the managed launcher rather than deleting them. Plain-file Canonical
+/// shadows (e.g. a live `~/.cargo/bin/oxios` from `cargo install`) are
+/// also NOT deletion targets: deleting them outright could remove the
+/// user's only `oxios` on PATH. Migration renames them to `.bak.<date>`
+/// first, and that `.bak` then becomes reclaimable here.
 pub fn doctor_cleanup_targets(shadows: &[ShadowEntry]) -> Vec<PathBuf> {
     let plan = plan_migration(shadows);
     let mut targets: Vec<PathBuf> = plan
@@ -797,18 +863,7 @@ pub fn doctor_cleanup_targets(shadows: &[ShadowEntry]) -> Vec<PathBuf> {
         .map(|(_, bak)| bak.clone())
         .collect();
     for entry in shadows {
-        // Versioned copies (`oxios-1.42.0-livestream*`, `oxios-1.43.1`,
-        // etc.) and Backup renames (`oxios.bak.<date>`) are always
-        // deletion candidates — they are the stale files themselves, not
-        // aliases the installer can repoint. Plain-file Canonical
-        // shadows (e.g. `~/.cargo/bin/oxios` from a `cargo install`)
-        // continue to be targeted; symlink Canonical shadows stay
-        // excluded because the installer repoints them rather than
-        // deleting them.
-        let deletion_candidate = match entry.kind {
-            ShadowKind::Versioned | ShadowKind::Backup => true,
-            ShadowKind::Canonical => entry.symlink_target.is_none(),
-        };
+        let deletion_candidate = matches!(entry.kind, ShadowKind::Versioned | ShadowKind::Backup);
         if deletion_candidate {
             targets.push(entry.path.clone());
         }
@@ -1110,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn doctor_cleanup_targets_excludes_symlinks_and_includes_baks_and_plain_files() {
+    fn doctor_cleanup_targets_excludes_symlinks_and_plain_files_includes_baks() {
         let tmp = tempfile::tempdir().unwrap();
         let real = tmp.path().join("oxios-1.43.1");
         std::fs::write(&real, b"x").unwrap();
@@ -1135,9 +1190,12 @@ mod tests {
         let targets = doctor_cleanup_targets(&shadows);
         // Symlink is excluded (installer repoints it, doesn't delete).
         assert!(!targets.contains(&link));
-        // Plain shadow path is included directly.
-        assert!(targets.contains(&plain));
-        // Plus the .bak.<date> path produced by plan_migration for the plain shadow.
+        // Plain-file Canonical shadow is NOT a direct deletion target —
+        // deleting it could remove the user's only `oxios` on PATH. The
+        // migration renames it to .bak.<date> first; only that .bak is
+        // reclaimable.
+        assert!(!targets.contains(&plain));
+        // The .bak.<date> projection from plan_migration is reclaimable.
         assert!(targets.iter().any(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
@@ -1193,6 +1251,58 @@ mod tests {
         assert!(!paths.iter().any(|(n, _)| n == "oxios.sh"));
     }
 
+    #[test]
+    fn audit_classifies_pre_oxios_aside_as_backup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let dir = tmp.path().join("p");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        // A migration aside: apply_migration_plan renamed an old symlink here.
+        std::os::unix::fs::symlink("/nonexistent/target", dir.join("oxios.pre-oxios")).unwrap();
+        let path_env = dir.to_str().unwrap().to_string();
+        let shadows = audit_shadows(&home, &path_env);
+        let aside = shadows
+            .iter()
+            .find(|s| s.path.file_name().unwrap() == "oxios.pre-oxios");
+        assert!(aside.is_some(), ".pre-oxios aside must be audited");
+        assert_eq!(aside.unwrap().kind, ShadowKind::Backup);
+        // And doctor --cleanup must reclaim it (it's our own litter).
+        let targets = doctor_cleanup_targets(&shadows);
+        assert!(targets.iter().any(|p| p.ends_with("oxios.pre-oxios")));
+    }
+
+    #[test]
+    fn install_rejects_non_semver_version_dirs() {
+        // F7: a non-SemVer tag (e.g. `1.45.0-rc.1`) would install fine but
+        // silently disable prune's launcher protection and rollback, since
+        // both rely on parse_version_dir recognizing the directory.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        // Minimal single-member tar.gz containing just `oxios`.
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(4);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "oxios", std::io::Cursor::new(b"bin\n"))
+            .unwrap();
+        let tar = builder.into_inner().unwrap();
+        let mut gz = Vec::new();
+        {
+            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            std::io::Write::write_all(&mut enc, &tar).unwrap();
+            enc.finish().unwrap();
+        }
+        for bad in ["1.45.0-rc.1", "1.45", "abc", "../escape"] {
+            let err = install_version_bytes(&home, bad, &gz).unwrap_err();
+            assert!(
+                format!("{err}").contains("non-SemVer"),
+                "version {bad:?} must be rejected, got: {err}"
+            );
+        }
+    }
     #[test]
     fn cleanup_targets_includes_versioned_and_backup() {
         let dir = std::env::temp_dir();

@@ -495,7 +495,7 @@ pub(crate) enum UpdateDispatch {
     /// explicitly sent `via: "cargo"` (the F10 version-validation gate
     /// is preserved). The handler spawns `cargo` with these args.
     Cargo {
-        /// Args after the binary name. `["install", "oxios", "locked"]`
+        /// Args after the binary name. `["install", "oxios", "--locked"]`
         /// for an unpinned run, plus `--version <v>` if a target version
         /// was supplied.
         args: Vec<String>,
@@ -523,8 +523,13 @@ fn oxios_home_from_state(state: &AppState) -> PathBuf {
 /// Classify the install channel for the running daemon and combine it
 /// with the user-supplied `via` to pick an [`UpdateDispatch`].
 ///
-/// `via == Some("cargo")` forces the legacy `cargo install` branch
-/// regardless of the detected channel — the user explicitly opted in.
+/// The CLI contract is refuse-first: Brew and Dev channels are refused
+/// BEFORE any `--via` handling (run_update:200-212), so `--via cargo`
+/// on a Brew/Dev install refuses rather than shadowing the channel's
+/// manager. This function mirrors that order: channel classification
+/// runs first, Brew/Dev refuse regardless of `via`, and only then does
+/// `via == Some("cargo")` route to the legacy block.
+///
 /// For `None` (Auto), `exe` (typically `std::env::current_exe()`) is
 /// classified against `oxios_home` via
 /// [`managed_install::classify_channel`]. Per the design's channel
@@ -543,17 +548,17 @@ pub(crate) fn classify_update_dispatch(
     version: Option<&str>,
 ) -> UpdateDispatch {
     use crate::managed_install::Channel;
-    // via=cargo is the ONLY path to the legacy block. It overrides
-    // everything (the F10 version gate + the legacy `cargo install`
-    // block both apply).
-    if via == Some("cargo") {
-        return UpdateDispatch::Cargo {
-            args: cargo_args(version),
-        };
-    }
     match crate::managed_install::classify_channel(exe, oxios_home) {
-        Channel::Managed => UpdateDispatch::Managed,
-        // Brew: refuse, print the brew upgrade hint. No install.
+        Channel::Managed => {
+            if via == Some("cargo") {
+                return UpdateDispatch::Cargo {
+                    args: cargo_args(version),
+                };
+            }
+            UpdateDispatch::Managed
+        }
+        // Brew: refuse, print the brew upgrade hint. No install — even
+        // with via=cargo (cargo install would shadow the brew copy).
         Channel::Brew => UpdateDispatch::Brew,
         // Dev: refuse with a rebuild hint.
         Channel::Dev => UpdateDispatch::Dev,
@@ -561,8 +566,15 @@ pub(crate) fn classify_update_dispatch(
         // channel table: the daemon was installed via cargo, the user
         // can opt into the managed store via the TTY surface, but
         // over HTTP we run the managed install + audit and never
-        // auto-migrate.
-        Channel::Cargo | Channel::Unmanaged => UpdateDispatch::Unmanaged,
+        // auto-migrate. Explicit via=cargo still takes the legacy block.
+        Channel::Cargo | Channel::Unmanaged => {
+            if via == Some("cargo") {
+                return UpdateDispatch::Cargo {
+                    args: cargo_args(version),
+                };
+            }
+            UpdateDispatch::Unmanaged
+        }
     }
 }
 
@@ -574,7 +586,7 @@ pub(crate) fn classify_update_dispatch(
 /// supplied so a pinned run actually installs that version, not the
 /// latest.
 fn cargo_args(version: Option<&str>) -> Vec<String> {
-    let mut args: Vec<String> = vec!["install".into(), "oxios".into(), "locked".into()];
+    let mut args: Vec<String> = vec!["install".into(), "oxios".into(), "--locked".into()];
     if let Some(v) = version {
         args.push("--version".into());
         args.push(v.to_string());
@@ -3198,7 +3210,7 @@ mod update_route_tests {
                 args: vec![
                     "install".to_string(),
                     "oxios".to_string(),
-                    "locked".to_string(),
+                    "--locked".to_string(),
                 ],
             },
             "via=cargo (no version) must select the Cargo branch with the unpinned argv"
@@ -3219,12 +3231,51 @@ mod update_route_tests {
                 args: vec![
                     "install".to_string(),
                     "oxios".to_string(),
-                    "locked".to_string(),
+                    "--locked".to_string(),
                     "--version".to_string(),
                     "1.40.0".to_string(),
                 ],
             },
             "via=cargo + version must pin the cargo install argv"
+        );
+    }
+
+    #[test]
+    fn via_cargo_on_brew_channel_refuses_rather_than_install() {
+        // CLI contract (run_update:200-212) is refuse-first: Brew channels
+        // refuse BEFORE any --via handling — `cargo install` would silently
+        // shadow the brew copy. The HTTP dispatch must mirror that order.
+        let oxios_home = PathBuf::from("/nonexistent/.oxios");
+        let exe = PathBuf::from("/opt/homebrew/bin/oxios");
+        let d = classify_update_dispatch(&oxios_home, &exe, Some("cargo"), None);
+        assert_eq!(
+            d,
+            UpdateDispatch::Brew,
+            "via=cargo on a Brew channel must refuse, not install"
+        );
+    }
+
+    #[test]
+    fn via_cargo_on_dev_channel_refuses_rather_than_install() {
+        // Same refuse-first contract for dev builds: explicit via=cargo
+        // must not shadow a workspace build with a crates.io copy.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let oxios_home = tmp.path().join(".oxios");
+        std::fs::create_dir_all(&oxios_home).expect("mkdir");
+        // Synthetic dev-build exe: a file under a directory that contains
+        // Cargo.toml + crates/oxios-kernel (the workspace marker).
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws).expect("mkdir ws");
+        std::fs::write(ws.join("Cargo.toml"), b"[workspace]").expect("write");
+        std::fs::create_dir_all(ws.join("crates").join("oxios-kernel")).expect("mkdir");
+        std::fs::create_dir_all(ws.join("target").join("debug")).expect("mkdir");
+        let exe = ws.join("target").join("debug").join("oxios");
+        std::fs::write(&exe, b"dev").expect("write");
+        let d = classify_update_dispatch(&oxios_home, &exe, Some("cargo"), None);
+        assert_eq!(
+            d,
+            UpdateDispatch::Dev,
+            "via=cargo on a Dev channel must refuse, not install"
         );
     }
 

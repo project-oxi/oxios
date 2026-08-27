@@ -17,7 +17,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-const GITHUB_REPO: &str = "a7garden/oxios";
+/// Single source of truth: the managed-install module owns the repo
+/// identity so the binary updater, the HTTP route, and the web-dist
+/// fetcher can never drift (design: "switch both call sites to one
+/// canonical constant").
+const GITHUB_REPO: &str = crate::managed_install::GITHUB_REPO;
 
 /// Returns `~/.oxios/web/` (download staging root + marker location).
 fn user_web_root() -> Option<PathBuf> {

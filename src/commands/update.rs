@@ -155,8 +155,11 @@ pub async fn run_update(
     // ── Determine what to update ────────────────────────────────────────────
     // Rollback always flips the launcher — treat it as a binary op even when
     // the user passed --web-only, so the header matches the actual behavior.
+    // Web sync never runs on a rollback (no network), so fold that into
+    // `update_web` too — otherwise `--web-only --rollback` would print
+    // "Update web UI: yes" and then skip the web block.
     let update_binary = !web_only || rollback;
-    let update_web = !binary_only;
+    let update_web = !binary_only && !rollback;
 
     println!();
     println!(
@@ -236,6 +239,9 @@ pub async fn run_update(
                     style("⟲").cyan(),
                     prev
                 );
+                // Rollback is terminal: nothing else may run after a flip
+                // (no fetch, no web sync, no migration audit).
+                return Ok(outcome);
             }
             None => {
                 anyhow::bail!("no previous version to roll back to");
@@ -614,6 +620,10 @@ fn apply_migration_plan(
         println!(
             "  ⚠ The shadow binary at the front of PATH will win until the migration above is applied."
         );
+        println!(
+            "  ⚠ Migration renames plain-file shadows to <name>.bak.<date>; make sure {} is on PATH (see share/install.sh's managed PATH block).",
+            launcher.display()
+        );
         return Ok(());
     }
     for r in &plan.repoint {
@@ -633,6 +643,18 @@ fn apply_migration_plan(
         }
         std::fs::rename(from, to)
             .with_context(|| format!("rename {} -> {}", from.display(), to.display()))?;
+    }
+    // Design (PATH integration): the managed PATH block is written by
+    // install.sh AND by `oxios update` migration. Plain-file shadows were
+    // just renamed aside, so a user who never ran install.sh would lose
+    // `oxios` from PATH without this. Idempotent; prints what it added.
+    if let Some(rc) = crate::managed_install::ensure_path_block(oxios_home) {
+        println!(
+            "  {} Added managed PATH entry to {} — restart your shell or `export PATH=\"{}/bin:$PATH\"`.",
+            style("✓").green(),
+            rc.display(),
+            oxios_home.display()
+        );
     }
     println!(
         "  {} PATH shadows migrated ({} repoint, {} preserved).",

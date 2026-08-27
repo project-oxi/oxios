@@ -53,7 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Unmanaged` channels, `oxios update` audits shadows and offers to
   repoint symlinks (e.g. `~/bin/oxios → ~/.oxios/bin/oxios`) and rename
   real files to `<path>.bak.<YYYYMMDD>` (one copy preserved for
-  rollback). TTY confirm or `--adopt` for non-TTY.
+  rollback). When the migration applies, it also ensures the managed
+  `PATH` block (`$OXIOS_HOME/bin`) exists in `~/.zshrc`/`~/.zprofile`
+  so a renamed-away plain-file shadow never leaves `oxios` off PATH.
+  TTY confirm or `--adopt` for non-TTY.
 - **`oxios doctor` shadow report + `--cleanup`** — `oxios doctor` now
   reports the shadow list as part of the diagnostics. `--cleanup`
   deletes `.bak.*` and stale versioned copies listed by the audit,

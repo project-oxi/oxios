@@ -260,7 +260,8 @@ export function ChatInput({
     }
     try {
       const mRes = await mem.mutateAsync({ query, limit: 5 })
-      for (const hit of mRes ?? []) {
+      const memoryHits = mRes?.memory ?? []
+      for (const hit of memoryHits) {
         results.push({
           type: 'memory',
           id: hit.entity_id,

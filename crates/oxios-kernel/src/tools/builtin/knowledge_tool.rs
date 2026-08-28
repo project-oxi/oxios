@@ -1,8 +1,7 @@
 //! Knowledge tool — agent-facing tool for markdown note management.
 //!
-//! Provides a single `knowledge` tool with action-based dispatch, following
-//! the same pattern as `memory_tools.rs`. Actions: read, write, delete,
-//! move, tree, search, backlinks.
+//! Provides a single `knowledge` tool with action-based dispatch. Actions:
+//! read, write, delete, move, tree, search, backlinks.
 
 use async_trait::async_trait;
 use std::sync::Arc;

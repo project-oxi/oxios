@@ -6,11 +6,11 @@
 //!
 //! **RFC-003: Knowledge Base Independent Separation**
 //! - Semantic search lives in the kernel (AI layer), not oxios-markdown
-//! - Vault ingestion (the daemon watching the markdown vault) is the
-//!   oxibrain daemon's job — `BrainConnection::register_vault_source` on
-//!   boot, registered once. The lens is a read-side overlay only; the
-//!   previous file-change → `remember` chain (index_to_brain) was removed
-//!   in T17 (vault unification) so a single ingestion path owns it.
+//! - Vault ingestion is the oxibrain daemon's job — the boot sequence
+//!   registers the vault root in the brain's `documents.toml` once. The lens
+//!   is a read-side overlay only; the previous file-change → `remember`
+//!   chain (index_to_brain) was removed in T17 (vault unification) so a
+//!   single ingestion path owns it.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ use anyhow::Result;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-use crate::brain::BrainConnection;
+use crate::brain::BrainSession;
 
 /// Knowledge context injected into agent prompts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -81,7 +81,7 @@ pub struct KnowledgeLens {
     /// The underlying knowledge base.
     kb: Arc<oxios_markdown::KnowledgeBase>,
     /// Brain daemon connection (RFC-047) — `None` when unattached.
-    brain: Option<Arc<BrainConnection>>,
+    brain: Option<Arc<BrainSession>>,
     /// Tracks which files were written by agents.
     agent_writes: Arc<RwLock<HashSet<String>>>,
 }
@@ -99,7 +99,7 @@ impl KnowledgeLens {
     /// (T17 single ingestion path). The lens is purely read-side.
     pub fn new(
         kb: Arc<oxios_markdown::KnowledgeBase>,
-        brain: Option<Arc<BrainConnection>>,
+        brain: Option<Arc<BrainSession>>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             kb,
@@ -224,20 +224,26 @@ impl KnowledgeLens {
         // 3. Memory context
         let mut referenced_memories = Vec::new();
         if let Some(brain) = &self.brain
-            && let Some(value) = brain.search(question, "hybrid", 3).await
-            && let Some(items) = value.get("items").and_then(|i| i.as_array())
+            && let Some(resp) = brain.search(question, "hybrid", 3, Some(&["memory"])).await
         {
-            for item in items {
+            for item in &resp.memory {
+                // 0.8 envelope uses entity_* keys; fall back to the
+                // legacy /target/* shape so older daemon builds still
+                // produce useful context. Prefer `entity_surface` for
+                // the label (display name) over `entity_id`.
                 let kind = item
-                    .pointer("/target/kind")
+                    .pointer("/entity_type")
+                    .or_else(|| item.pointer("/target/kind"))
                     .and_then(|k| k.as_str())
                     .unwrap_or("memory");
-                let id = item
-                    .pointer("/target/id")
-                    .and_then(|i| i.as_str())
+                let label = item
+                    .pointer("/entity_surface")
+                    .or_else(|| item.pointer("/entity_id"))
+                    .or_else(|| item.pointer("/target/id"))
+                    .and_then(|v| v.as_str())
                     .unwrap_or("?");
-                context_parts.push(format!("## Memory [{kind}]: {id}"));
-                referenced_memories.push(id.to_string());
+                context_parts.push(format!("## Memory [{kind}]: {label}"));
+                referenced_memories.push(label.to_string());
             }
         }
 

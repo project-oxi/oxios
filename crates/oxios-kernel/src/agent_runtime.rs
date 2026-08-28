@@ -1149,8 +1149,8 @@ async fn run_agent(
     // Shared mutable state for the event callback.
     let exec_state = Arc::new(Mutex::new(ExecuteState::default()));
     let exec_state_cb = Arc::clone(&exec_state);
-    let brain_for_callback: Option<Arc<crate::brain::BrainConnection>> =
-        kernel_handle.brain.as_ref().map(|b| b.connection());
+    let brain_for_callback: Option<Arc<crate::brain::BrainSession>> =
+        kernel_handle.brain.as_ref().map(|b| b.session());
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();
@@ -1749,17 +1749,17 @@ fn infer_domain(goal: &str) -> String {
 
 /// Handle compaction completion by storing the summary in the brain.
 ///
-/// Extracts the compaction summary from the event and spawns a background
-/// task to persist it via the brain daemon (RFC-047).
+/// Spawns a background task so a degraded brain never blocks the turn.
+/// Extraction is deferred to the kernel's backlog-drain timer.
 fn handle_compaction(
     summary: String,
     session_id: String,
-    brain: Option<Arc<crate::brain::BrainConnection>>,
+    brain: Option<Arc<crate::brain::BrainSession>>,
 ) {
     let content = if session_id.is_empty() {
         summary
     } else {
-        format!("[session {session_id}]\n{summary}")
+        format!("[session {session_id}] {summary}")
     };
     tokio::spawn(async move {
         if let Some(brain) = brain
@@ -1846,7 +1846,7 @@ fn build_system_prompt_inner(
          - **File tools**: read, write, edit files; grep, find, ls for searching\n\
          - **Web tools**: web_search for searching the web, get_search_results for retrieving cached results\n\
          - **Exec**: run shell commands\n\
-         - **Memory tools**: memory_write (store facts/preferences), memory_read (list entries), memory_search (find relevant memories) — your cross-session recall. Use memory_write proactively when the user shares preferences, facts, or corrections worth remembering.
+         - **Memory**: the `brain` skill — remember/ask through the allowlisted `oxibrain` CLI (exec structured mode) — your cross-session recall. Use `remember` proactively when the user shares preferences, facts, or corrections worth remembering.\n\
          - **Knowledge**: knowledge — personal markdown vault for documents and notes\n\
          - **Kernel tools**: agent, project, persona, cron, security, budget, resource\n\n\
          **Important**: When the task involves fetching information from the internet,\n\

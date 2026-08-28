@@ -165,6 +165,46 @@ on a non-TTY it prints the exact commands instead and requires
 
 ---
 
+## Brain — agent memory
+
+Agent memory runs on the standalone `oxibrain` binary — no daemon, no
+background service. Oxios spawns it on demand (`serve --stdio` for the
+session, short-lived commands for maintenance) and degrades gracefully when
+it is missing: turns complete, memory queries just come back empty.
+
+```bash
+$ oxios brain status
+binary: /Users/you/.cargo/bin/oxibrain
+version: oxibrain 0.8.0
+dir: /Users/you/.oxi/brain
+space: personal
+episodes: 297
+pending extraction: 277
+```
+
+The five verbs:
+
+| Command | What it does |
+|---|---|
+| `oxios brain status` | Show binary path/version, data dir, space, episode + backlog counts |
+| `oxios brain install` | Install the `oxibrain` binary from GitHub Releases (sha256-verified) |
+| `oxios brain uninstall` | Remove the managed binary — data under `~/.oxi/brain` stays |
+| `oxios brain reindex` | Re-seed `documents.toml` with the vault root and run `oxibrain index --documents --embed` (dense embed step is best-effort; stock oxibrain 0.8.0 skips it — "dense embed: skipped") |
+| `oxios brain extract` | Drain the extraction backlog (`oxibrain extract --pending`) |
+
+For interactive query/ingest, use the `oxibrain` CLI directly:
+
+```bash
+echo "prefers tabs over spaces" > /tmp/fact.md
+oxibrain ingest --space personal /tmp/fact.md   # `-` reads stdin
+oxibrain ask "what editor does the user use"
+```
+
+Agents inside Oxios reach the same store through the first-party `brain`
+skill (the `oxibrain` binary is pre-allowed in exec structured mode).
+
+---
+
 ## Doctor — diagnostics & cleanup
 
 ```bash

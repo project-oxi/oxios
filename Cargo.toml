@@ -126,7 +126,7 @@ arc-swap = "1.7"
 # Vault-unification (T17): `sync_run` was added in oxibrain v0.6.0; the
 # daemon-side pull-source registration is the single ingestion path. Git
 # tag until crates.io catches up.
-oxibrain-client = { version = "0.6", git = "https://github.com/a7garden/oxibrain", tag = "v0.6.0" }
+oxibrain-client = "0.8"
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).

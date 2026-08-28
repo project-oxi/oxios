@@ -1,5 +1,7 @@
 # RFC-049: Turn Cancellation
 
+> **Superseded (transport/lifecycle):** see docs/designs/2026-08-27-daemonless-brain-design.md — oxibrain 0.8 removed the daemon.
+
 > **Status:** Accepted (implemented)
 > **Created:** 2026-08-19
 > **Depends on:** RFC-015 (chat transparency — WS chunk protocol), RFC-024 (web↔daemon reliability — seq/replay)

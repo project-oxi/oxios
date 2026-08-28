@@ -5,8 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { useBrainSearch } from '@/hooks/use-brain'
-import type { BrainSearchHit } from '@/types/brain'
+import { useBrainDocumentHistory, useBrainSearch } from '@/hooks/use-brain'
+import type { BrainSearchHit, DocumentHit } from '@/types/brain'
 
 // Match the oxibrain daemon's RetrievalMode enum
 // (oxibrain-mcp/server.rs: enum values hybrid|lexical|lexical-vector|graph|community).
@@ -34,7 +34,44 @@ function HitRow({ hit, onSelect }: { hit: BrainSearchHit; onSelect: (id: string)
   )
 }
 
-/** Hybrid (and mode-specific) search over the brain; hits open the entity page. */
+/** One document row in the documents plane; toggles its gix-backed history. */
+function DocRow({ d }: { d: DocumentHit }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const hist = useBrainDocumentHistory(d.root, d.locator, 8, open)
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="font-mono text-xs truncate">{d.locator}</span>
+        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+          {d.score.toFixed(3)}
+        </span>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground line-clamp-2">{d.text}</p>
+      <button
+        type="button"
+        className="text-xs text-muted-foreground underline mt-1"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? t('brain.hideHistory') : t('brain.showHistory')}
+      </button>
+      {open && (
+        <ul className="mt-2 space-y-1">
+          {(hist.data ?? []).map((r) => (
+            <li key={r.revision} className="text-xs text-muted-foreground font-mono">
+              {new Date(r.committed_at_ms).toLocaleDateString()} · {r.revision.slice(0, 8)}
+            </li>
+          ))}
+          {hist.data && hist.data.length === 0 && (
+            <li className="text-xs text-muted-foreground">{t('brain.noHistory')}</li>
+          )}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Two-plane search: memory hits (entities) + documents hits (vault). */
 export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) => void }) {
   const { t } = useTranslation()
   const [q, setQ] = useState('')
@@ -42,7 +79,9 @@ export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) 
   const [submitted, setSubmitted] = useState('')
   const { data, isLoading } = useBrainSearch(submitted, mode, 20, true)
 
-  const items = Array.isArray(data) ? data : []
+  const items = data?.memory ?? []
+  const docs = data?.documents ?? []
+  const hasAnyHits = items.length > 0 || docs.length > 0
 
   return (
     <div className="space-y-4">
@@ -72,7 +111,7 @@ export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) 
       <div role="status" aria-live="polite">
         {isLoading && <p className="text-sm text-muted-foreground">{t('brain.searching')}</p>}
 
-        {!isLoading && submitted && items.length === 0 && (
+        {!isLoading && submitted && !hasAnyHits && (
           <p className="text-sm text-muted-foreground">{t('brain.noSearchResults')}</p>
         )}
       </div>
@@ -83,6 +122,24 @@ export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) 
             <div className="space-y-2">
               {items.map((hit) => (
                 <HitRow key={hit.entity_id} hit={hit} onSelect={onSelectEntity ?? (() => {})} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {docs.length > 0 && data && (
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+              {t('brain.documents')} ·{' '}
+              {t('brain.freshness', {
+                roots: data.freshness.reconciled_roots.join(', '),
+              })}
+            </p>
+            <div className="space-y-2">
+              {docs.map((d) => (
+                <DocRow key={`${d.document_id}-${d.ordinal}`} d={d} />
               ))}
             </div>
           </CardContent>

@@ -1,40 +1,26 @@
 /**
- * Brain daemon types (RFC-047) — the oxibrain-powered memory surface.
+ * Brain types (oxibrain 0.8 — daemonless session model).
  *
- * These mirror the daemon's wire contracts (verified against a live v0.6.x
- * daemon; see docs/designs/2026-08-24-brain-tab-redesign.md). The daemon
- * serves entity/timeline/space data as MCP resources and pages/graph/console
- * data as MCP tools.
+ * Status and search contracts mirror the wire shapes emitted by the
+ * oxios-kernel handlers in `src/api/routes/workspace.rs`. The supervisor
+ * lifecycle is gone: `available` flips on a real brain session, while
+ * `binary.installed` reports the bundled oxibrain CLI on disk. See
+ * docs/designs/2026-08-27-daemonless-brain-design.md.
  */
 
-export type SupervisorState =
-  | 'disabled'
-  | 'not_installed'
-  | 'installing'
-  | 'starting'
-  | 'online'
-  | 'failed'
-
-export type ManagedBy = 'none' | 'launchd' | 'spawn' | 'external'
-
-export interface BrainSupervisorStatus {
-  state: SupervisorState
-  installed_version: string | null
-  daemon_version: string | null
-  managed_by: ManagedBy
-  last_error: string | null
+export interface BrainBinaryStatus {
+  installed: boolean
+  path: string | null
+  version: string | null
 }
 
 /** GET /api/brain/status */
 export interface BrainStatus {
-  /** Daemon reachable via Unix socket. */
   available: boolean
-  /** Configured space name (null when unavailable). */
   space: string | null
-  /** Episode count in the space (null when unavailable). */
   episodes: number | null
-  /** Optional first-party supervisor lifecycle (2026-08-19 spec). */
-  supervisor?: BrainSupervisorStatus | null
+  pending_extraction: number | null
+  binary: BrainBinaryStatus
 }
 
 /** GET /api/brain/stats — fields can be null when the daemon is degraded. */
@@ -51,9 +37,8 @@ export interface BrainRecallResponse {
 }
 
 /**
- * GET /api/brain/search — a bare array of entity hits (daemon contract).
- * The search tool targets entities only; as_of/known_at/min_confidence
- * filter beliefs server-side.
+ * GET /api/brain/search — memory-plane entity hit (engine shape, deserialized
+ * straight from the two-plane envelope's `memory` field).
  */
 export interface BrainSearchHit {
   entity_id: string
@@ -61,6 +46,41 @@ export interface BrainSearchHit {
   entity_type: string
   score: number
   snippet: string
+}
+
+/** Documents-plane hit in the two-plane search envelope. */
+export interface DocumentHit {
+  document_id: string
+  root: string
+  locator: string
+  revision: string
+  ordinal: number
+  text: string
+  /** Millis since epoch; wire key is `modified_at`. */
+  modified_at: number
+  score: number
+}
+
+export interface DocumentFreshness {
+  reconciled_roots: string[]
+  skipped_roots: [string, string][]
+  skipped_files: number
+  stale_after_retry: string[]
+  dense_coverage: number | null
+}
+
+/** GET /api/brain/search — two-plane envelope (oxibrain 0.8). */
+export interface SearchResponse {
+  memory: BrainSearchHit[]
+  documents: DocumentHit[]
+  freshness: DocumentFreshness
+}
+
+/** GET /api/brain/document-history — gix-backed revisions, oldest first. */
+export interface DocumentRevision {
+  revision: string
+  committed_at_ms: number
+  content: string
 }
 
 /** Mirrors `oxibrain_core::knowledge::Belief` (entity:// resource). */

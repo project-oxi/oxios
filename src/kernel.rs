@@ -8,13 +8,13 @@ use anyhow::{Context, Result};
 use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
-    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
-    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, EngineHandle, EventBus,
-    GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator, OxiosConfig,
-    OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
-    SkillsShInstaller, SubsystemState, Supervisor, VaultRegisterPolicy,
-    access_manager::AccessManager, auth::AuthManager, config::load_config, git_layer::rel_path,
-    mcp::validate_mcp_command, resolve_space,
+    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainSession,
+    BudgetManager, ClawHubClient, ClawHubInstaller, EngineHandle, EventBus, GitLayer,
+    KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator, OxiosConfig, OxiosEngine,
+    PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
+    SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
+    auth::AuthManager, config::load_config, git_layer::rel_path, mcp::validate_mcp_command,
+    resolve_space,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
@@ -41,12 +41,10 @@ pub struct Kernel {
     persona_manager: Arc<PersonaManager>,
     mcp_bridge: Arc<McpBridge>,
     /// Brain daemon connection (RFC-047). Degrades when the daemon is down.
-    brain: Arc<BrainConnection>,
-    /// First-party supervisor (RFC-047 + 2026-08-19) — installs/manages the
-    /// oxibrain daemon via launchd/spawn. Built at boot, drives ensure().
-    brain_supervisor: Arc<oxios_kernel::BrainSupervisor>,
+    /// Supervisor handle dropped with the oxibrain 0.8 daemonless cutover.
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
-
+    brain: Arc<BrainSession>,
+    brain_installer: Arc<oxios_kernel::BrainInstaller>,
     git_layer: Arc<GitLayer>,
     /// T16: vault-rooted `GitLayer` used for knowledge auto-commit,
     /// history, and restore. Distinct from `git_layer` (workspace). See
@@ -137,6 +135,7 @@ impl Kernel {
         KernelBuilder {
             config_path: oxios_kernel::config::expand_home("~/.oxios/config.toml"),
             watch_vault: false,
+            daemon: false,
         }
     }
 
@@ -240,16 +239,12 @@ impl Kernel {
                     self.token_maxer.clone(),
                 ));
                 // RFC-047: brain daemon facade — the /api/brain/* surface.
-                // BrainSupervisor built at boot (src/kernel.rs boot block);
-                // attach it so /api/brain/status surfaces install/launchd state.
+                // Supervisor handle dropped with the oxibrain 0.8 daemonless cutover.
                 let kh = kh.with_brain(oxios_kernel::BrainApi::new(
                     self.brain.clone(),
-                    self.brain_supervisor.clone(),
+                    self.brain_installer.clone(),
                 ));
                 // RFC-043: attach the task store so web routes, the auto-run
-                // tick, and the `task` agent tool share ONE store. Boot
-                // continues without it (web surface hard-requires it and
-                // will fail its own expect).
                 let kh = match oxios_kernel::task::TaskStore::open(
                     &(self.config.kernel.workspace.clone() + "/tasks.db"),
                 ) {
@@ -1005,6 +1000,14 @@ pub struct KernelBuilder {
     /// subscription + debounce thread + join for nothing. Defaults
     /// to `false`; `main` enables it on the daemon paths.
     watch_vault: bool,
+    /// Daemon-mode signal for boot work that only makes sense in a
+    /// long-lived process (brain legacy cleanup, documents.toml seed +
+    /// warm index, extraction-drain timer). One-shot CLI commands
+    /// (run/chat/status/doctor/…) must spawn none of it — overlapping
+    /// `index --documents --embed` children on the same brain dir are
+    /// the failure mode. Defaults to `false`; `main` enables it on the
+    /// daemon paths, exactly like `watch_vault`.
+    daemon: bool,
 }
 
 impl KernelBuilder {
@@ -1021,11 +1024,19 @@ impl KernelBuilder {
         self
     }
 
+    /// Mark this build as a long-lived daemon process: enables brain
+    /// boot work (legacy cleanup, documents seed + warm index, drain
+    /// timer). One-shot commands leave it off.
+    pub fn daemon(mut self, on: bool) -> Self {
+        self.daemon = on;
+        self
+    }
+
     /// Assemble all kernel components and wire them together.
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
 
-        let config = if config_path.exists() {
+        let mut config = if config_path.exists() {
             tracing::info!(path = %config_path.display(), "Loading config");
             load_config(&config_path)?
         } else {
@@ -1231,69 +1242,174 @@ impl KernelBuilder {
         // These are needed before KernelHandle creation (for AgentRuntime).
         // Order doesn't matter — they're independent.
 
-        // Brain daemon connection (RFC-047 + 2026-08-19 first-party supervision).
+        // Brain (oxibrain 0.8 daemonless): lazy session child + installer.
+        // Nothing spawns at boot; the first brain call starts the child
+        // (degradation contract: every method returns None when the binary
+        // is missing or the child fails).
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let brain_supervisor = Arc::new(oxios_kernel::BrainSupervisor::new(
-            oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+        let installer = Arc::new(oxios_kernel::BrainInstaller::from_brain_section(
+            &home,
+            &config.brain,
         ));
-        // Boot-time install/start: only when the surface is enabled AND
-        // auto-management is opted in. Otherwise stays fully degraded.
-        if config.brain.enabled && config.brain.auto_manage {
-            brain_supervisor.ensure().await;
-        }
-        let socket_path = if config.brain.enabled {
-            oxios_kernel::brain::resolved_socket_path(
-                &home,
-                &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
+        let brain_dir = oxios_kernel::brain::resolved_brain_dir(&home, &config.brain.dir);
+        // T17 precedence: `~/.oxi/config.toml [vault].space` wins.
+        let space = resolve_space(&home, &config.brain.space);
+        let brain = Arc::new(if config.brain.enabled {
+            oxios_kernel::BrainSession::new(
+                installer.clone(),
+                config.brain.auto_install,
+                oxios_kernel::BrainConfig::new(brain_dir.clone(), space.clone()),
             )
         } else {
-            // Fully degraded: connect against a socket that will never exist.
-            PathBuf::from("/nonexistent/oxibrain.sock")
-        };
-        // T17 (vault unification): resolve the brain space with the
-        // documented precedence — `~/.oxi/config.toml [vault].space` wins
-        // over the kernel's brain config. Best-effort, never blocks boot.
-        let space = resolve_space(&home, &config.brain.space);
+            // `enabled = false` ⇒ never spawn the child, never invoke the
+            // installer, never poll the binary. NoopSpawn errors every
+            // spawn attempt; BrainApi stays attached so routes serve the
+            // degraded shape (None / 503) instead of 500.
+            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(
+                brain_dir.clone(),
+                space.clone(),
+            ))
+        });
 
-        let mut brain_conn =
-            BrainConnection::connect(BrainConfig::new(socket_path, space.clone())).await;
-        // On lazy-reconnect failure, ask the supervisor to respawn the daemon
-        // (rate-limited 30s). Only when the surface is enabled — a disabled
-        // surface must never trigger an auto-start.
-        if config.brain.enabled {
-            let sv = Arc::clone(&brain_supervisor);
-            brain_conn = brain_conn.with_on_unavailable(Arc::new(move || {
-                let sv = Arc::clone(&sv);
-                Box::pin(async move {
-                    sv.respawn_if_needed().await;
-                })
-            }));
-        }
-        let brain = Arc::new(brain_conn);
+        // Agent CLI lane: pre-allow the oxibrain binary so exec structured
+        // mode auto-approves (brain skill path, spec §5.7). Applied before
+        // the AgentRuntime takes its exec-allowlist snapshot. Pure config
+        // mutation — no process cost, so it runs on every build path.
+        seed_oxibrain_exec_allowlist(&mut config);
 
-        // T17 (vault unification): single ingestion path. Register the
-        // resolved vault as a daemon-side pull source on boot. Detached so
-        // an unreachable daemon never blocks startup (C1); bounded retry
-        // (R17 round 1 P2) handles the user-managed daemon case and the
-        // vault-dir-not-yet-created case without dead-ending ingestion.
-        // Skipped when the surface is disabled — a fully-degraded process
-        // must not try to contact the daemon.
-        if config.brain.enabled {
-            let brain_for_register = brain.clone();
-            let knowledge_root = config.kernel.resolved_knowledge_root();
+        // Brain boot work is daemon-surface only: one-shot commands
+        // (run/chat/status/doctor/…) share `build()` and must not spawn
+        // overlapping `index --documents --embed` children on the same
+        // brain dir, nor pay the drain timer. Same gating pattern as
+        // `watch_vault` above.
+        if config.brain.enabled && self.daemon {
+            // Daemon-era leftovers (launchd plist, stale socket/pid) — once.
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
             tokio::spawn(async move {
-                let dir = knowledge_root;
-                let policy = VaultRegisterPolicy::default();
-                let _ = policy
-                    .retry(&dir, || {
-                        let brain = brain_for_register.clone();
-                        let dir = dir.clone();
-                        async move { brain.register_vault_source(&dir).await.map(|_| ()) }
-                    })
-                    .await;
+                inst.legacy_cleanup(&dir).await;
+            });
+
+            // Document-plane declaration + warm index (C1: never blocks boot).
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
+            let knowledge_root = config.kernel.resolved_knowledge_root();
+            let vault_space = space.clone();
+            tokio::spawn(async move {
+                match oxios_kernel::brain::ensure_vault_root(
+                    &dir.join("documents.toml"),
+                    &knowledge_root,
+                    &vault_space,
+                ) {
+                    Ok(true) => tracing::info!("documents.toml: seeded vault root"),
+                    Ok(false) => {}
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "documents.toml seed failed — first search auto-materializes"
+                    ),
+                }
+                if let Some(bin) = inst.locate_binary() {
+                    // Stock oxibrain 0.8.0 `index --embed` always reports
+                    // "no embedding port configured" — no non-test caller
+                    // attaches an embedder. Degrade exactly that case by
+                    // retrying without `--embed` so the lexical reconcile
+                    // above still warms the index. Revisit when oxibrain
+                    // ships a built-in dense embedder or a stable flag to
+                    // disable the embed step.
+                    match oxios_kernel::brain::run_cli(
+                        &bin,
+                        &dir,
+                        &["index", "--documents", "--embed"],
+                    )
+                    .await
+                    {
+                        Ok(out) if out.status.success() => {
+                            tracing::info!("document index warmed")
+                        }
+                        Ok(out) => {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            if oxios_kernel::brain::embed_gap(&stderr) {
+                                match oxios_kernel::brain::run_cli(
+                                    &bin,
+                                    &dir,
+                                    &["index", "--documents"],
+                                )
+                                .await
+                                {
+                                    Ok(out) if out.status.success() => {
+                                        tracing::info!("document index warmed")
+                                    }
+                                    Ok(out) => tracing::warn!(
+                                        stderr = %String::from_utf8_lossy(&out.stderr),
+                                        "document index retry exited non-zero"
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        error = %e,
+                                        "document index retry spawn failed"
+                                    ),
+                                }
+                            } else {
+                                tracing::warn!(
+                                    stderr = %stderr,
+                                    "document index exited non-zero"
+                                );
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, "document index spawn failed"),
+                    }
+                }
+            });
+
+            // Extraction-backlog drain (the MCP surface cannot extract
+            // inline; the timer is the primary extraction path, spec §5.5).
+            let session = brain.clone();
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tick.tick().await;
+                    if !session.is_available() {
+                        continue;
+                    }
+                    let Some(pending) = session.pending_stats().await else {
+                        continue;
+                    };
+                    if pending.count == 0 {
+                        continue;
+                    }
+                    if let Some(bin) = inst.locate_binary() {
+                        tracing::info!(count = pending.count, "draining brain extraction backlog");
+                        // Bound the drain so a stuck child never wedges the
+                        // 600 s tick. 30 min is generous for any realistic
+                        // backlog; longer means the run is hung, not slow.
+                        let extract_fut =
+                            oxios_kernel::brain::run_cli(&bin, &dir, &["extract", "--pending"]);
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(1800),
+                            extract_fut,
+                        )
+                        .await
+                        {
+                            Ok(Ok(out)) if out.status.success() => {
+                                tracing::debug!("brain extraction backlog drained");
+                            }
+                            Ok(Ok(out)) => tracing::warn!(
+                                stderr = %String::from_utf8_lossy(&out.stderr),
+                                "brain extract --pending exited non-zero"
+                            ),
+                            Ok(Err(e)) => {
+                                tracing::warn!(error = %e, "brain extract --pending spawn failed")
+                            }
+                            Err(_) => {
+                                tracing::warn!("brain extract --pending timed out after 30 min")
+                            }
+                        }
+                    }
+                }
             });
         }
-
         // KernelDatabase — shared SQLite connection for mount/project tables.
         // Forward-only migration: the legacy `memory.db` is preserved untouched
         // (spec §9); the kernel's own tables move to `kernel.db`. One-time copy
@@ -1868,7 +1984,7 @@ impl KernelBuilder {
             persona_manager,
             mcp_bridge,
             brain,
-            brain_supervisor,
+            brain_installer: installer.clone(),
             auth_manager,
 
             git_layer,
@@ -2083,9 +2199,6 @@ async fn build_tool_retriever(sm: &SkillManager) -> oxios_kernel::tools::retriev
         ("find", "os-tool", "Find files by name or pattern"),
         ("ls", "os-tool", "List directory contents"),
         ("web_search", "os-tool", "Search the web for information"),
-        ("memory_read", "os-tool", "Recall persistent memories"),
-        ("memory_write", "os-tool", "Store persistent memories"),
-        ("memory_search", "os-tool", "Semantic search over memories"),
         (
             "knowledge",
             "os-service",
@@ -2419,6 +2532,15 @@ fn spawn_vault_watcher(kb: &Arc<KnowledgeBase>) -> Option<WatchGuard> {
     }
 }
 
+/// Pre-allow the `oxibrain` binary in the exec allowlist so structured
+/// exec calls from the brain skill auto-approve (spec §5.7). Idempotent;
+/// a no-op when `[brain] enabled = false`.
+fn seed_oxibrain_exec_allowlist(config: &mut OxiosConfig) {
+    if config.brain.enabled && !config.exec.allowed_commands.iter().any(|c| c == "oxibrain") {
+        config.exec.allowed_commands.push("oxibrain".to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Focused builder-level wiring test for the RFC-050 §3 vault
@@ -2547,5 +2669,48 @@ mod tests {
             !Kernel::builder().watch_vault,
             "one-shot CLI commands must not pay FSEvents + thread + join"
         );
+    }
+
+    /// Task 4 fix round: brain boot work (legacy cleanup, documents
+    /// seed + warm index, drain timer) must NOT spawn for one-shot
+    /// commands — the builder defaults to `daemon: false` and only the
+    /// daemon paths (`main`'s `.daemon(true)`) opt in, exactly like
+    /// `watch_vault`.
+    #[test]
+    fn brain_boot_work_skipped_for_one_shot_builds() {
+        assert!(
+            !Kernel::builder().daemon,
+            "one-shot CLI commands must not spawn brain boot tasks"
+        );
+    }
+
+    /// Task 4 boot wiring: with `[brain] enabled`, `build()` pre-allows
+    /// the `oxibrain` binary in the exec allowlist so structured exec
+    /// calls from the brain skill auto-approve (spec §5.7). Drives the
+    /// exact helper `build()` calls — a full `build()` would boot the
+    /// engine/brain stack (T14 pattern).
+    #[test]
+    fn oxibrain_exec_allowlist_seeded_once_when_brain_enabled() {
+        let mut config = OxiosConfig::default();
+        config.brain.enabled = true;
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert!(config.exec.is_binary_allowed("oxibrain"));
+        // Idempotent: seeding twice must not duplicate the row.
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert_eq!(
+            config
+                .exec
+                .allowed_commands
+                .iter()
+                .filter(|c| *c == &"oxibrain".to_string())
+                .count(),
+            1
+        );
+
+        // Disabled brain: never touches the allowlist.
+        let mut config = OxiosConfig::default();
+        config.brain.enabled = false;
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert!(!config.exec.is_binary_allowed("oxibrain"));
     }
 }

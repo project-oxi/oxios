@@ -1,34 +1,38 @@
-//! Connection configuration for the oxibrain daemon (RFC-047).
+//! Brain session configuration (oxibrain 0.8 daemonless).
 
 use std::path::{Path, PathBuf};
 
-/// How oxios reaches the oxibrain daemon.
+/// Resolved brain session parameters.
 #[derive(Debug, Clone)]
 pub struct BrainConfig {
-    /// Unix-domain socket path the daemon listens on.
-    pub socket_path: PathBuf,
+    /// Brain data directory the session child serves (`--dir`).
+    pub dir: PathBuf,
     /// Space to operate in (default `"personal"`).
     pub space: String,
 }
 
 impl BrainConfig {
     /// Create a new config.
-    pub fn new(socket_path: impl Into<PathBuf>, space: impl Into<String>) -> Self {
+    pub fn new(dir: impl Into<PathBuf>, space: impl Into<String>) -> Self {
         Self {
-            socket_path: socket_path.into(),
+            dir: dir.into(),
             space: space.into(),
         }
     }
 }
 
-/// Resolve the daemon socket path: explicit config value, else the Oxi
-/// Foundation default `~/.oxi/brain/oxibrain.sock`.
-pub fn resolved_socket_path(home: &Path, configured: &str) -> PathBuf {
-    if configured.is_empty() {
-        home.join(".oxi").join("brain").join("oxibrain.sock")
-    } else {
-        PathBuf::from(configured)
+/// Resolve the brain data directory: explicit config value, else
+/// `$OXI_BRAIN_DIR`, else the Oxi Foundation default `~/.oxi/brain`.
+pub fn resolved_brain_dir(home: &Path, configured: &str) -> PathBuf {
+    if !configured.is_empty() {
+        return PathBuf::from(configured);
     }
+    if let Ok(env) = std::env::var("OXI_BRAIN_DIR")
+        && !env.is_empty()
+    {
+        return PathBuf::from(env);
+    }
+    home.join(".oxi").join("brain")
 }
 
 #[cfg(test)]
@@ -36,20 +40,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolved_socket_path_defaults_to_oxi_brain_sock() {
+    fn resolved_brain_dir_explicit_config_wins() {
         let home = PathBuf::from("/Users/alice");
         assert_eq!(
-            resolved_socket_path(&home, ""),
-            PathBuf::from("/Users/alice/.oxi/brain/oxibrain.sock")
+            resolved_brain_dir(&home, "/data/brain"),
+            PathBuf::from("/data/brain")
         );
     }
 
     #[test]
-    fn resolved_socket_path_uses_explicit_value() {
+    fn resolved_brain_dir_env_then_default() {
         let home = PathBuf::from("/Users/alice");
+        // No config, no env → default.
+        unsafe { std::env::remove_var("OXI_BRAIN_DIR") };
         assert_eq!(
-            resolved_socket_path(&home, "/var/run/oxibrain.sock"),
-            PathBuf::from("/var/run/oxibrain.sock")
+            resolved_brain_dir(&home, ""),
+            PathBuf::from("/Users/alice/.oxi/brain")
         );
+        // Env honored when config empty.
+        unsafe { std::env::set_var("OXI_BRAIN_DIR", "/env/brain") };
+        assert_eq!(resolved_brain_dir(&home, ""), PathBuf::from("/env/brain"));
+        unsafe { std::env::remove_var("OXI_BRAIN_DIR") };
     }
 }

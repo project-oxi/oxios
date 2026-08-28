@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::brain::BrainConnection;
+use crate::brain::BrainSession;
 use crate::engine::EngineHandle;
 use crate::event_bus::{EventBus, KernelEvent};
 use crate::memory_agent::sona::TrajectoryStep;
@@ -85,7 +85,7 @@ pub struct KnowledgeSaveRecord {
 /// to memory and/or knowledge, using heuristic rules first and an
 /// optional LLM reflection pass for ambiguous cases.
 pub struct PersistenceHook {
-    brain: Option<Arc<BrainConnection>>,
+    brain: Option<Arc<BrainSession>>,
     knowledge_base: Arc<KnowledgeBase>,
     engine_handle: Arc<EngineHandle>,
     state_store: Arc<StateStore>,
@@ -100,7 +100,7 @@ impl PersistenceHook {
     /// and execute. `brain` is the daemon connection (RFC-047); `None` when
     /// the daemon is unavailable (memory writes degrade silently).
     pub fn new(
-        brain: Option<Arc<BrainConnection>>,
+        brain: Option<Arc<BrainSession>>,
         knowledge_base: Arc<KnowledgeBase>,
         engine_handle: Arc<EngineHandle>,
         state_store: Arc<StateStore>,

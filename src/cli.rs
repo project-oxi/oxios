@@ -260,9 +260,9 @@ pub(crate) enum Command {
         action: EmailAction,
     },
 
-    /// Interact with the oxibrain daemon (RFC-047) — status, ingest, ask.
-    /// Talks to the daemon directly over its Unix socket; the kernel is not
-    /// required. `export` is unsupported in this release (use `oxibrain export`).
+    /// Manage the oxibrain integration (daemonless, oxibrain 0.8):
+    /// binary install, document-plane reindex, extraction drain.
+    /// Query/ingest verbs live in the `oxibrain` CLI (`oxibrain ask`, …).
     Brain {
         #[command(subcommand)]
         command: BrainCmd,
@@ -277,54 +277,18 @@ pub(crate) enum Command {
 /// `oxios brain` subcommands.
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum BrainCmd {
-    /// Show daemon status: online/offline, space, episode count.
+    /// Show integration status: binary path/version, dir, space, stats.
     Status,
-    /// Ingest a file (or `-` for stdin) as a brain episode.
-    Ingest {
-        /// File path, or `-` to read stdin.
-        path: std::path::PathBuf,
-    },
-    /// Assemble recall context for a query (3000-token budget) and print it.
-    Ask {
-        /// Query to recall context for.
-        query: String,
-    },
-    /// (Unsupported) — use the oxibrain CLI: `oxibrain export`.
-    Export {
-        #[arg(long)]
-        format: String,
-        #[arg(long)]
-        output: Option<String>,
-    },
-    /// Consolidate Brain episodes (derived/sourced/uncertain). RFC-048
-    /// splits Brain consolidation from KnowledgeBase curation. Brain
-    /// consolidation never writes KnowledgeBase files.
-    Consolidate {
-        /// Optional max episodes to consolidate.
-        #[arg(long)]
-        max: Option<usize>,
-    },
-    /// Curate raw KnowledgeBase notes (LLM-only note refinement). RFC-048
-    /// names this operation `curate`; `dream` remains as a deprecated
-    /// alias below.
-    Curate {
-        /// Optional maximum notes to curate in this run.
-        #[arg(long)]
-        max: Option<usize>,
-    },
-    /// Deprecated alias for `curate`. Kept for one minor.
-    #[command(hide = true)]
-    Dream,
-    /// Install the oxibrain binary from GitHub Releases (first-party
-    /// supervision, RFC-047). sha256-verified; reports no-release-asset
-    /// until the oxibrain repo has a tagged binary release.
+    /// Install the oxibrain binary from GitHub Releases (sha256-verified).
     Install,
-    /// Start an already-installed oxibrain binary (no install attempt).
-    Start,
-    /// Stop a daemon this supervisor started (launchd bootout + kill).
-    Stop,
-    /// Stop + remove the launchd plist (binary and data stay).
+    /// Remove the managed binary (data under ~/.oxi/brain stays) and
+    /// clean up daemon-era leftovers.
     Uninstall,
+    /// Re-seed documents.toml with the vault root and run
+    /// `oxibrain index --documents --embed`.
+    Reindex,
+    /// Run `oxibrain extract --pending` (drain the extraction backlog).
+    Extract,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -351,9 +315,10 @@ pub(crate) enum FoundationCmd {
     Status,
     /// Run the idempotent bootstrap (create directory, handshake Brain).
     Bootstrap {
-        /// When set, allow attempting to start a missing compatible daemon.
+        /// When set, allow installing a missing compatible `oxibrain`
+        /// binary during the handshake.
         #[arg(long)]
-        may_start: bool,
+        may_install: bool,
     },
     /// Register a non-secret Foundation profile from a JSON file.
     Register {

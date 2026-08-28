@@ -1,7 +1,7 @@
 # Daemonless Brain Integration — oxibrain 0.8 Cutover Design
 
 **Date:** 2026-08-27
-**Status:** Proposed (supersedes the transport/lifecycle half of RFC-047 and all of RFC-049)
+**Status:** Accepted (implemented 2026-08-28; supersedes the transport/lifecycle half of RFC-047 and all of RFC-049)
 **Scope:** oxios ↔ oxibrain integration after the oxibrain v2.11 daemonless cutover
 
 ---

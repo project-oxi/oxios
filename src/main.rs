@@ -1591,213 +1591,130 @@ fn main() {
     }
 }
 
-/// Resolve the brain daemon socket path from config (empty → default).
-fn brain_socket_path(config: &OxiosConfig) -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    oxios_kernel::brain::resolved_socket_path(
-        &home,
-        &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
-    )
-}
-
-/// `oxios brain` — talk to the oxibrain daemon directly (RFC-047).
+/// `oxios brain` — manage the daemonless oxibrain integration.
 async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
-    use oxibrain_client::BrainClient;
+    use oxibrain_client::{BrainClient, LocalProcessEndpoint};
 
-    let socket = brain_socket_path(config);
-    let space = config.brain.space.clone();
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let installer = oxios_kernel::BrainInstaller::from_brain_section(&home, &config.brain);
+    let dir = oxios_kernel::brain::resolved_brain_dir(
+        &home,
+        &oxios_kernel::config::expand_home(&config.brain.dir).to_string_lossy(),
+    );
+    let space = oxios_kernel::resolve_space(&home, &config.brain.space);
 
     match cmd {
         BrainCmd::Status => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            let sup = sv.status();
-            let mut online = false;
-            match BrainClient::connect(&socket).await {
-                Ok(mut client) => {
-                    let episodes = client
-                        .stats(&space)
-                        .await
-                        .ok()
-                        .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()))
-                        .unwrap_or(0);
-                    println!("brain: online");
-                    println!("space: {space}");
-                    println!("episodes: {episodes}");
-                    online = true;
-                }
-                Err(e) => {
-                    println!("brain: unavailable ({e})");
-                }
-            }
-            println!("supervisor: {:?}", sup.state);
-            println!("managed_by: {:?}", sup.managed_by);
-            if let Some(v) = &sup.installed_version {
-                println!("installed: {v}");
-            }
-            if let Some(v) = &sup.daemon_version {
-                println!("daemon: {v}");
-            }
-            if let Some(e) = &sup.last_error {
-                println!("last_error: {e}");
-            }
-            if !online {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
-        BrainCmd::Ingest { path } => {
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
-                    std::process::exit(1);
-                }
-            };
-            let content = if path.to_string_lossy() == "-" {
-                use std::io::Read;
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf)?;
-                buf
-            } else {
-                std::fs::read_to_string(path)
-                    .with_context(|| format!("reading {}", path.display()))?
-            };
-            let source = if path.to_string_lossy() == "-" {
-                "stdin".to_string()
-            } else {
-                path.display().to_string()
-            };
-            let id = client
-                .ingest(&content, &space, &source)
-                .await
-                .context("brain ingest failed")?;
-            println!("ingested episode {id}");
-            Ok(())
-        }
-        BrainCmd::Ask { query } => {
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
-                    std::process::exit(1);
-                }
-            };
-            let value = client
-                .recall(query, &space, 3000)
-                .await
-                .context("brain recall failed")?;
-            let layers = value
-                .get("layers")
-                .and_then(|l| l.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if layers.is_empty() {
-                println!("no context found");
-                return Ok(());
-            }
-            for layer in layers {
-                let kind = layer
-                    .get("kind")
-                    .and_then(|k| k.as_str())
-                    .unwrap_or("context");
-                let text = layer.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                if !text.is_empty() {
-                    println!("## {kind}\n{text}\n");
-                }
-            }
-            Ok(())
-        }
-        BrainCmd::Export { .. } => {
-            anyhow::bail!(
-                "oxios brain export is unsupported in this release — use the oxibrain CLI: oxibrain export"
-            );
-        }
-        BrainCmd::Consolidate { .. } => {
-            // RFC-048 §5: explicit Brain consolidation command — delegates to
-            // the oxibrain daemon's consolidation semantics and never writes
-            // KnowledgeBase files. oxibrain-client 0.2 does not expose a
-            // typed consolidation method yet; the call is documented and
-            // guarded by the existing handshake so the operator sees an
-            // actionable error when the daemon lacks the verb.
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "brain daemon unavailable at {} ({e}); brain consolidate requires a compatible oxibrain daemon",
-                        socket.display()
+            let binary = installer.locate_binary();
+            match &binary {
+                Some(b) => {
+                    println!("binary: {}", b.display());
+                    println!(
+                        "version: {}",
+                        oxios_kernel::BrainInstaller::version_of(b)
+                            .as_deref()
+                            .unwrap_or("<unknown>")
                     );
-                    std::process::exit(1);
                 }
-            };
-            let stats = client.stats(&space).await.unwrap_or_else(|e| {
-                eprintln!("brain stats failed: {e}");
-                serde_json::json!({"episodes": 0})
-            });
-            println!(
-                "brain consolidate: delegated to oxibrain daemon (episodes in space: {})",
-                stats
-                    .get("episodes")
-                    .cloned()
-                    .unwrap_or(serde_json::json!(0))
-            );
+                None => println!("binary: not installed (run `oxios brain install`)"),
+            }
+            println!("dir: {}", dir.display());
+            println!("space: {space}");
+            if let Some(b) = binary {
+                let ep = LocalProcessEndpoint::new(b, &dir);
+                match BrainClient::spawn_local(ep).await {
+                    Ok(mut client) => {
+                        match client.stats(&space).await {
+                            Ok(stats) => println!(
+                                "episodes: {}",
+                                stats.get("episodes").and_then(|e| e.as_i64()).unwrap_or(0)
+                            ),
+                            Err(e) => println!("stats: unavailable ({e})"),
+                        }
+                        match client.pending_stats().await {
+                            Ok(p) => println!("pending extraction: {}", p.count),
+                            Err(e) => println!("pending: unavailable ({e})"),
+                        }
+                    }
+                    Err(_) => {
+                        println!("session: spawn failed (store locked or dir missing)");
+                    }
+                }
+            }
             Ok(())
-        }
-        BrainCmd::Curate { max } => {
-            // RFC-048 §5: knowledge-note curation runs entirely inside Oxios.
-            // It reads raw KnowledgeBase notes, refines them via the embedded
-            // SDK agent, and writes app-owned notes only. It does NOT touch
-            // the Brain connector.
-            let _ = max;
-            eprintln!(
-                "knowledge curate runs inside Oxios against the KnowledgeBase; \
-                 use `oxios brain consolidate` to consolidate Brain episodes."
-            );
-            std::process::exit(0);
-        }
-        BrainCmd::Dream => {
-            eprintln!(
-                "`oxios brain dream` is deprecated by RFC-048 — use `oxios brain curate` for note curation \
-                 or `oxios brain consolidate` for Brain episode consolidation."
-            );
-            std::process::exit(2);
         }
         BrainCmd::Install => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            let bin = sv.install().await?;
+            let bin = installer.install().await?;
             println!("installed oxibrain -> {}", bin.display());
             Ok(())
         }
-        BrainCmd::Start => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            sv.start().await?;
-            println!("oxibrain started");
-            Ok(())
-        }
-        BrainCmd::Stop => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            sv.stop().await?;
-            println!("oxibrain stopped");
-            Ok(())
-        }
         BrainCmd::Uninstall => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            installer.remove_managed()?;
+            installer.legacy_cleanup(&dir).await;
+            println!(
+                "oxibrain binary removed (data at {} untouched)",
+                dir.display()
             );
-            sv.uninstall().await?;
-            println!("oxibrain uninstalled");
+            Ok(())
+        }
+        BrainCmd::Reindex => {
+            let bin = installer
+                .locate_binary()
+                .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
+            let vault = config.kernel.resolved_knowledge_root();
+            if oxios_kernel::brain::ensure_vault_root(&dir.join("documents.toml"), &vault, &space)?
+            {
+                println!("documents.toml: seeded vault root");
+            }
+            // `--embed` is best-effort (spec §5.4: boot degrades the same
+            // way). Stock oxibrain 0.8.0 never attaches an embedder in the
+            // CLI, so the embed step reports "no embedding port configured"
+            // even though the lexical reconcile above it already committed.
+            // Degrade exactly that case: rerun without `--embed` so the
+            // reconcile report prints and the verb exits 0. Any other
+            // failure propagates (exit-status contract, Task 8).
+            let out =
+                oxios_kernel::brain::run_cli(&bin, &dir, &["index", "--documents", "--embed"])
+                    .await?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if oxios_kernel::brain::embed_gap(&stderr) {
+                    let retry =
+                        oxios_kernel::brain::run_cli(&bin, &dir, &["index", "--documents"]).await?;
+                    if !retry.status.success() {
+                        anyhow::bail!(
+                            "`oxibrain index --documents` exited with status {}: {}",
+                            retry.status,
+                            String::from_utf8_lossy(&retry.stderr).trim_end()
+                        );
+                    }
+                    println!("{}", String::from_utf8_lossy(&retry.stdout));
+                    println!("dense embed: skipped (no embedding port configured)");
+                    return Ok(());
+                }
+                anyhow::bail!(
+                    "`oxibrain index --documents --embed` exited with status {}: {}",
+                    out.status,
+                    stderr.trim_end()
+                );
+            }
+            println!("{}", String::from_utf8_lossy(&out.stdout));
+            Ok(())
+        }
+        BrainCmd::Extract => {
+            let bin = installer
+                .locate_binary()
+                .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
+            let out = oxios_kernel::brain::run_cli(&bin, &dir, &["extract", "--pending"]).await?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                anyhow::bail!(
+                    "`oxibrain extract --pending` exited with status {}: {}",
+                    out.status,
+                    stderr.trim_end()
+                );
+            }
+            println!("{}", String::from_utf8_lossy(&out.stdout));
             Ok(())
         }
     }
@@ -1810,15 +1727,17 @@ async fn cmd_foundation(
     cmd: &crate::cli::FoundationCmd,
 ) -> Result<()> {
     use oxios_kernel::foundation;
-    use oxios_kernel::foundation::bootstrap::{BootstrapConfig, bootstrap, quick_probe};
+    use oxios_kernel::foundation::bootstrap::{
+        BootstrapConfig, bootstrap, brain_endpoint, quick_probe,
+    };
     use oxios_kernel::foundation::migrate::InMemoryKeychain;
     use oxios_kernel::foundation::profile::ProfileRegistry;
 
     let home = oxios_home.parent().unwrap_or(oxios_home);
-    let socket = if config.foundation.brain_socket.is_empty() {
-        foundation::default_brain_socket(home)
+    let dir = if config.foundation.brain_dir.is_empty() {
+        foundation::default_brain_dir(home)
     } else {
-        oxios_kernel::config::expand_home(&config.foundation.brain_socket)
+        oxios_kernel::config::expand_home(&config.foundation.brain_dir)
     };
     let registry_path = if config.foundation.registry_path.is_empty() {
         foundation::versioned_root(home).join(foundation::PROFILES_FILE)
@@ -1833,8 +1752,14 @@ async fn cmd_foundation(
                 foundation::versioned_root(home).display()
             );
             println!("registry:       {}", registry_path.display());
-            println!("brain socket:   {}", socket.display());
-            let state = quick_probe(&socket).await;
+            println!("brain dir:      {}", dir.display());
+            let installer = oxios_kernel::BrainInstaller::from_brain_section(home, &config.brain);
+            match installer.locate_binary() {
+                Some(binary) => println!("brain binary:   {}", binary.display()),
+                None => println!("brain binary:   (missing — run `oxios brain install`)"),
+            }
+            let endpoint = brain_endpoint(home, dir.clone(), Some(&installer));
+            let state = quick_probe(&endpoint.executable);
             println!("brain state:    {state:?}");
             if registry_path.exists() {
                 match std::fs::read_to_string(&registry_path) {
@@ -1849,12 +1774,16 @@ async fn cmd_foundation(
             }
             Ok(())
         }
-        crate::cli::FoundationCmd::Bootstrap { may_start } => {
+        crate::cli::FoundationCmd::Bootstrap { may_install } => {
+            let installer = Arc::new(oxios_kernel::BrainInstaller::from_brain_section(
+                home,
+                &config.brain,
+            ));
             let cfg = BootstrapConfig {
                 home: home.to_path_buf(),
-                socket_path: Some(socket.clone()),
-                may_start_daemon: *may_start,
-                starter: None,
+                brain_dir: Some(dir.clone()),
+                may_install: *may_install,
+                installer: Some(installer),
             };
             let report = bootstrap(&cfg).await.context("foundation bootstrap")?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -2153,14 +2082,17 @@ async fn run(cli: Cli) -> Result<()> {
     let _ = term.write_str(&format!("  {} Starting Oxios...\r", style("⠋").cyan()));
     let _ = term.flush();
 
-    // RFC-050 §3 vault watcher is a daemon-surface concern only
-    // (whole-branch R2 P3): one-shot commands (run/chat/status/
-    // doctor/…) would pay the FSEvents subscription + debounce
-    // thread + join for nothing.
+    // RFC-050 §3 vault watcher and the daemonless-brain boot work
+    // (legacy cleanup, documents seed + warm index, extraction drain
+    // timer) are daemon-surface concerns only: one-shot commands
+    // (run/chat/status/doctor/…) would pay the FSEvents subscription +
+    // debounce thread + join — and overlapping `index --documents
+    // --embed` children on the same brain dir — for nothing.
     let daemon_command = matches!(cli.command.as_ref(), None | Some(Command::Start { .. }));
     let mut kernel = Kernel::builder()
         .config_path(config_path.clone())
         .watch_vault(daemon_command)
+        .daemon(daemon_command)
         .build()
         .await?;
 

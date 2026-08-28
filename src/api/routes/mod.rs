@@ -188,14 +188,15 @@ pub(crate) use token_maxing_routes::{
 };
 pub(crate) use tools::handle_tools_registry;
 pub(crate) use workspace::{
-    handle_brain_brief, handle_brain_contradictions, handle_brain_entity, handle_brain_graph,
-    handle_brain_operations, handle_brain_recall, handle_brain_search, handle_brain_space,
-    handle_brain_spaces, handle_brain_stats, handle_brain_status, handle_brain_timeline,
-    handle_brain_why, handle_skill_content, handle_skill_content_update, handle_skill_create,
-    handle_skill_delete, handle_skill_disable, handle_skill_enable, handle_skill_get,
-    handle_skill_import_file, handle_skill_import_text, handle_skill_import_url,
-    handle_skills_list, handle_workspace_file_create, handle_workspace_file_delete,
-    handle_workspace_file_get, handle_workspace_file_put, handle_workspace_tree,
+    handle_brain_brief, handle_brain_contradictions, handle_brain_document_history,
+    handle_brain_entity, handle_brain_graph, handle_brain_operations, handle_brain_recall,
+    handle_brain_search, handle_brain_space, handle_brain_spaces, handle_brain_stats,
+    handle_brain_status, handle_brain_timeline, handle_brain_why, handle_skill_content,
+    handle_skill_content_update, handle_skill_create, handle_skill_delete, handle_skill_disable,
+    handle_skill_enable, handle_skill_get, handle_skill_import_file, handle_skill_import_text,
+    handle_skill_import_url, handle_skills_list, handle_workspace_file_create,
+    handle_workspace_file_delete, handle_workspace_file_get, handle_workspace_file_put,
+    handle_workspace_tree,
 };
 
 // ---------------------------------------------------------------------------
@@ -427,10 +428,16 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Import — file upload (multipart). Relies on the raised global
         // API_BODY_LIMIT (32 MB); a per-route layer could not exceed it.
         .route("/api/skills/import", post(handle_skill_import_file))
-        // Brain daemon (RFC-047) — replaces the retired /api/memory/* surface
+        // Brain daemonless surface (RFC-047, RFC-049) — replaces the
+        // retired /api/memory/* surface; binary install/run state is
+        // handled by `oxios brain install` (BrainInstaller).
         .route("/api/brain/status", get(handle_brain_status))
         .route("/api/brain/recall", post(handle_brain_recall))
         .route("/api/brain/search", get(handle_brain_search))
+        .route(
+            "/api/brain/document-history",
+            get(handle_brain_document_history),
+        )
         .route("/api/brain/entity/{id}", get(handle_brain_entity))
         .route("/api/brain/timeline", get(handle_brain_timeline))
         .route("/api/brain/why/{statement_id}", get(handle_brain_why))

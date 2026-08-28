@@ -47,17 +47,19 @@ pub(crate) async fn handle_readiness(
     components.insert("git".into(), serde_json::json!({"healthy": git_ok}));
     // Git failure is degraded, not fatal
 
-    // Brain daemon (RFC-047): degraded when unavailable, not fatal.
-    let brain_available = state
+    // Brain daemonless (RFC-047 / RFC-049): degraded when unavailable,
+    // but a healthy binary on disk is still "pass" — install via
+    // `oxios brain install` to bring the session online.
+    let brain_ok = state
         .kernel
         .brain
         .as_ref()
-        .map(|b| b.is_available())
+        .map(|b| {
+            let snap = b.status_snapshot();
+            snap.available || snap.binary_installed
+        })
         .unwrap_or(false);
-    components.insert(
-        "brain".into(),
-        serde_json::json!({"healthy": brain_available}),
-    );
+    components.insert("brain".into(), serde_json::json!({"healthy": brain_ok}));
 
     let status = if all_healthy { "healthy" } else { "degraded" };
     let body = serde_json::json!({
@@ -189,12 +191,16 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
     // Event bus — always healthy if we got this far
     let event_bus_healthy = true;
 
-    // Brain daemon health (RFC-047)
-    let brain_available = state
+    // Brain daemonless health — session child is up OR the binary is
+    // installed (first brain call will spawn the child).
+    let brain_ok = state
         .kernel
         .brain
         .as_ref()
-        .map(|b| b.is_available())
+        .map(|b| {
+            let snap = b.status_snapshot();
+            snap.available || snap.binary_installed
+        })
         .unwrap_or(false);
     let episodes = match state.kernel.brain.as_ref() {
         Some(brain) => brain
@@ -204,7 +210,7 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
         None => None,
     };
     let brain_health = BrainHealth {
-        available: brain_available,
+        available: brain_ok,
         episodes,
     };
 
@@ -2488,27 +2494,23 @@ pub(crate) async fn handle_doctor(state: State<Arc<AppState>>) -> Json<DoctorRes
         });
     }
 
-    // 8. Brain daemon (RFC-047)
-    let brain_available = state
+    // 8. Brain daemonless (RFC-047 / RFC-049) — "ready" iff session is up
+    // OR the managed binary is installed. Otherwise prompt to install.
+    let brain_ok = state
         .kernel
         .brain
         .as_ref()
-        .map(|b| b.is_available())
+        .map(|b| {
+            let snap = b.status_snapshot();
+            snap.available || snap.binary_installed
+        })
         .unwrap_or(false);
-    let brain_episodes = match state.kernel.brain.as_ref() {
-        Some(brain) => brain
-            .stats()
-            .await
-            .and_then(|s| s.get("episodes").and_then(|e| e.as_i64())),
-        None => None,
-    };
     results.push(DoctorCheck {
         name: "brain".into(),
-        status: if brain_available { "pass" } else { "warn" }.into(),
-        message: match (brain_available, brain_episodes) {
-            (true, Some(n)) => format!("Brain daemon: online, {n} episodes"),
-            (true, None) => "Brain daemon: online (episode count unavailable)".into(),
-            (false, _) => "Brain daemon: offline — memory operations degraded".into(),
+        status: if brain_ok { "pass" } else { "warn" }.into(),
+        message: match brain_ok {
+            true => "Brain: ready (daemonless session)".into(),
+            false => "Brain: binary missing — install with `oxios brain install`".into(),
         },
     });
 

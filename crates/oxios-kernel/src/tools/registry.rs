@@ -87,9 +87,6 @@ const TOOL_CATALOG: &[ToolMeta] = &[
     // ── Kernel domain tools (CSpace-driven) ───────────────────────
     ToolMeta::new("exec", "tools.exec", "exec").with_intervention(HumanIntervention::Required),
     ToolMeta::new("browse", "tools.browse", "comms"),
-    ToolMeta::new("memory_read", "tools.memoryRead", "memory"),
-    ToolMeta::new("memory_write", "tools.memoryWrite", "memory"),
-    ToolMeta::new("memory_search", "tools.memorySearch", "memory"),
     ToolMeta::new("project", "tools.project", "system"),
     ToolMeta::new("kernel_agent", "tools.kernelAgent", "system"),
     ToolMeta::new("a2a_delegate", "tools.a2aDelegate", "a2a"),
@@ -122,8 +119,8 @@ mod tests {
             "exec tool should be in catalog"
         );
         assert!(
-            tools.iter().any(|t| t.name == "memory_read"),
-            "memory_read should be in catalog"
+            !tools.iter().any(|t| t.name == "memory_read"),
+            "memory tools removed with the brain skill migration"
         );
     }
 

@@ -2656,11 +2656,7 @@
     "why": "Why",
     "provenance": "Provenance",
     "noContradictions": "No contradicted statements.",
-    "installing": "Installing oxibrain… — starts automatically when done.",
-    "starting": "Starting the brain daemon…",
-    "failedTitle": "Brain daemon failed to start",
-    "failedDescription": "Auto-retry in 30 s or at next boot.",
-    "manualDescription": "Memory operations are degraded. Start it manually with `oxibrain serve --daemon` or set [brain] auto_manage = true.",
+    "manualDescription": "Memory operations are degraded. The next brain call retries the session child; if it keeps failing, run `oxios brain status` to diagnose.",
     "page": "Page",
     "pageUnavailable": "No page available for this entity.",
     "noBeliefs": "No active beliefs.",
@@ -2703,6 +2699,13 @@
     "noEntitiesYet": "No entities yet.",
     "spaces": "Spaces",
     "spaceName": "Space",
-    "spaceCurrent": "current"
+    "spaceCurrent": "current",
+    "notInstalled": "Brain binary not installed",
+    "notInstalledHint": "Run `oxios brain install` to set up the bundled oxibrain CLI.",
+    "documents": "Documents",
+    "freshness": "Freshness · reconciled: {{roots}}",
+    "showHistory": "Show history",
+    "hideHistory": "Hide history",
+    "noHistory": "No revisions recorded yet."
   }
 }

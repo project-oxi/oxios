@@ -79,39 +79,57 @@ fn default_true_inline() -> bool {
     true
 }
 
-/// Brain daemon connection configuration (RFC-047).
+/// Brain integration configuration (oxibrain 0.8 daemonless).
 ///
-/// oxios connects to the standalone oxibrain daemon over a Unix-domain socket.
-/// When the daemon is unavailable the kernel degrades (memory ops return empty)
-/// and agent turns complete normally.
+/// oxios spawns a caller-owned `oxibrain serve --stdio` child against an
+/// explicit data directory. When the binary is unavailable the kernel
+/// degrades (memory ops return empty) and agent turns complete normally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrainSection {
-    /// Connect to the daemon at boot. `false` skips the connection attempt
-    /// entirely (fully degraded).
+    /// Enable the brain surface. `false` disables every spawn and CLI call.
     pub enabled: bool,
-    /// Unix-domain socket path. Empty → `~/.oxi/brain/oxibrain.sock`.
-    pub socket_path: String,
-    /// Space to operate in.
+    /// Brain data directory. Empty → `~/.oxi/brain` (`$OXI_BRAIN_DIR` honored).
+    pub dir: String,
+    /// Space to operate in (fallback; `~/.oxi/config.toml [vault].space` wins).
     pub space: String,
-    /// First-party supervision (2026-08-19 spec): install the daemon from
-    /// GitHub Releases when absent, keep it running via launchd with a
-    /// detached-spawn fallback. `false` restores pure degradation.
-    pub auto_manage: bool,
-    /// Explicit daemon binary path. Non-empty skips the download entirely.
+    /// Explicit binary path. Non-empty skips auto-install.
     pub binary_path: String,
+    /// Install the binary from GitHub Releases when absent.
+    pub auto_install: bool,
 }
 
 impl Default for BrainSection {
     fn default() -> Self {
         Self {
             enabled: true,
-            socket_path: String::new(),
+            dir: String::new(),
             space: "personal".to_string(),
-            auto_manage: true,
             binary_path: String::new(),
+            auto_install: true,
         }
     }
+}
+
+/// Report daemon-era `[brain]` keys that no longer exist. The section parses
+/// fine without them (serde ignores unknown fields); this makes the removal
+/// visible once instead of failing the config.
+pub fn warn_removed_brain_keys(raw: &toml::Value) -> Vec<&'static str> {
+    let mut removed = Vec::new();
+    if let Some(brain) = raw.get("brain") {
+        for key in ["socket_path", "auto_manage"] {
+            if brain.get(key).is_some() {
+                removed.push(key);
+            }
+        }
+    }
+    if !removed.is_empty() {
+        tracing::warn!(
+            keys = ?removed,
+            "[brain] keys removed with the oxibrain 0.8 daemonless cutover — ignored"
+        );
+    }
+    removed
 }
 /// Foundation settings (RFC-048).
 ///
@@ -130,8 +148,8 @@ pub struct FoundationConfig {
     pub registry_path: String,
     /// Override the package lock path. Empty → `~/.oxi/foundation/v1/packages.lock`.
     pub packages_lock_path: String,
-    /// Override the Brain daemon socket. Empty → `~/.oxi/brain/oxibrain.sock`.
-    pub brain_socket: String,
+    /// Override the Brain data directory. Empty → `~/.oxi/brain`.
+    pub brain_dir: String,
 }
 
 impl Default for FoundationConfig {
@@ -140,7 +158,7 @@ impl Default for FoundationConfig {
             auto_bootstrap: true,
             registry_path: String::new(),
             packages_lock_path: String::new(),
-            brain_socket: String::new(),
+            brain_dir: String::new(),
         }
     }
 }
@@ -2511,6 +2529,14 @@ impl Default for BrowserConfig {
 /// Loads configuration from a TOML file.
 pub fn load_config(path: &std::path::Path) -> anyhow::Result<OxiosConfig> {
     let content = std::fs::read_to_string(path)?;
+    // Pre-parse only to scan for removed `[brain]` keys (serde ignores
+    // unknown fields, so the real deserialize below still succeeds on
+    // legacy configs). The actual `OxiosConfig` is then deserialized
+    // straight from the original text so TOML error spans line up with
+    // what the user wrote.
+    if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+        warn_removed_brain_keys(&raw);
+    }
     let config: OxiosConfig = toml::from_str(&content)?;
     let (errors, warnings) = config.validate();
     for w in warnings {
@@ -2716,17 +2742,35 @@ mod tests {
     fn brain_section_defaults_and_overrides() {
         let sec: BrainSection = toml::from_str("").unwrap();
         assert!(sec.enabled);
-        assert!(sec.auto_manage);
-        assert_eq!(sec.binary_path, "");
+        assert!(sec.auto_install);
+        assert_eq!(sec.dir, "");
         assert_eq!(sec.space, "personal");
+        assert_eq!(sec.binary_path, "");
 
         let sec: BrainSection = toml::from_str(
-            "enabled = false\nauto_manage = false\nbinary_path = \"/opt/oxibrain\"\n",
+            "enabled = false\nauto_install = false\ndir = \"/data/brain\"\nbinary_path = \"/opt/oxibrain\"\n",
         )
         .unwrap();
         assert!(!sec.enabled);
-        assert!(!sec.auto_manage);
+        assert!(!sec.auto_install);
+        assert_eq!(sec.dir, "/data/brain");
         assert_eq!(sec.binary_path, "/opt/oxibrain");
+
+        // Removed daemon-era keys are ignored (warn-and-ignore), not fatal.
+        let sec: BrainSection =
+            toml::from_str("socket_path = \"/tmp/s.sock\"\nauto_manage = true\n").unwrap();
+        assert!(sec.enabled);
+        assert!(sec.auto_install);
+    }
+
+    #[test]
+    fn warn_removed_brain_keys_reports() {
+        let raw: toml::Value =
+            toml::from_str("[brain]\nsocket_path = \"/tmp/s.sock\"\n[other]\nx = 1\n").unwrap();
+        // Must not panic; presence check happens inside. Assert via return value.
+        assert_eq!(warn_removed_brain_keys(&raw), vec!["socket_path"]);
+        let clean: toml::Value = toml::from_str("[brain]\nenabled = true\n").unwrap();
+        assert!(warn_removed_brain_keys(&clean).is_empty());
     }
     #[test]
     fn telegram_api_base_defaults_and_parses() {

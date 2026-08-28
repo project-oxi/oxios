@@ -168,10 +168,8 @@ pub use mcp::{
     McpBridge, McpCapabilities, McpServer, McpTool, McpToolCallResult as CallToolResult,
 };
 
-// ─── Intelligence ───────────────────────────────────────────────────
 pub use brain::{
-    BrainConfig, BrainConnection, BrainSupervisor, SupervisorConfig, SupervisorStatus,
-    VaultRegisterOutcome, VaultRegisterPolicy, resolve_space,
+    BrainConfig, BrainInstaller, BrainSession, ChildSpawn, Spawn, SpawnBackoff, resolve_space,
 };
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
 pub use memory_agent::sona::{

@@ -221,6 +221,14 @@ Steps performed, in order:
 
 ### 4. Restart the brain
 
+> **Historical (pre-oxibrain 0.8):** this step dates from the daemon era.
+> oxibrain 0.8 removed the daemon and the `register_vault_source` RPC —
+> oxios now seeds the vault root declaratively into
+> `~/.oxi/brain/documents.toml` (see
+> `docs/designs/2026-08-27-daemonless-brain-design.md`). There is nothing
+> to restart; the next `oxibrain index --documents` (or the first
+> search/recall auto-materialize) picks the vault up.
+
 ```bash
 launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.oxi.oxibrain.plist
 ```

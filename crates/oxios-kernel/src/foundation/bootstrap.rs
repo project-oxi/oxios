@@ -2,40 +2,42 @@
 //!
 //! The first-run path is:
 //!   1. Ensure `~/.oxi/foundation/v1` exists.
-//!   2. Verify or install a compatible `oxibrain` daemon.
-//!   3. Handshake with the daemon and classify it as
-//!      [`DaemonState::Compatible`] / [`DaemonState::Unavailable`] /
-//!      [`DaemonState::Incompatible`].
+//!   2. Locate a compatible `oxibrain` binary (installing on demand when
+//!      the caller allows it).
+//!   3. Spawn a short-lived session child, perform the capability
+//!      handshake, and classify the server as [`DaemonState::Compatible`]
+//!      / [`DaemonState::Unavailable`] / [`DaemonState::Incompatible`].
 //!   4. Report the result. Never write the lockfile from a turn — the lock
 //!      file is owned by Foundation imports, not by agent execution.
 
 use anyhow::{Context, Result};
-use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use super::{DaemonState, default_brain_socket, versioned_root};
+use super::{DaemonState, default_brain_dir, versioned_root};
+use crate::brain::BrainInstaller;
 
-/// Optional hook invoked once when the first connect attempt fails, before
-/// the retry. Lets the bootstrap step delegate to a host-specific daemon
-/// starter (e.g. the `BrainSupervisor`) without coupling the Foundation
-/// module to the kernel's install machinery.
-pub type Starter = Arc<dyn Fn(&Path) -> BoxFuture<'static, ()> + Send + Sync>;
-
-/// Minimum protocol version accepted from the oxibrain daemon.
+/// Minimum protocol version accepted from the oxibrain server.
 pub const MIN_BRAIN_PROTOCOL_VERSION: u32 = 1;
-/// Maximum protocol version accepted from the oxibrain daemon.
+/// Maximum protocol version accepted from the oxibrain server.
 pub const MAX_BRAIN_PROTOCOL_VERSION: u32 = 2;
 
-/// Brain handshake result. Carries the daemon's reported protocol version
+/// Identity advertised in the handshake hello (`ClientHello::client_version`).
+const CLIENT_VERSION: &str = concat!("oxios ", env!("CARGO_PKG_VERSION"));
+
+/// Brain handshake result. Carries the server's negotiated protocol version
 /// so a future bump can give actionable diagnostics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainHandshake {
     pub state: DaemonState,
-    pub socket_path: PathBuf,
+    /// Brain data directory the endpoint serves (the child's `--dir`).
+    pub dir: PathBuf,
+    /// Wire protocol version negotiated with the server; `None` when no
+    /// handshake completed.
     pub protocol_version: Option<u32>,
+    /// Server identity and version from the handshake, when it got that far.
     pub daemon_build: Option<String>,
 }
 
@@ -52,31 +54,30 @@ pub struct BootstrapReport {
     pub idempotent: bool,
 }
 
-/// Configuration for a single bootstrap run. The `socket_path` mirrors
-/// `BrainSection::socket_path`; when empty, the Foundation default is used.
+/// Configuration for a single bootstrap run. The `brain_dir` mirrors
+/// `FoundationConfig.brain_dir`; when empty, the Foundation default is used.
 #[derive(Clone)]
 pub struct BootstrapConfig {
     pub home: PathBuf,
-    pub socket_path: Option<PathBuf>,
-    /// When `true`, the bootstrap step is allowed to (idempotently) start
-    /// a missing compatible daemon. `false` (default) reports
-    /// `Unavailable` and lets the user run `foundation bootstrap`
-    /// explicitly.
-    pub may_start_daemon: bool,
-    /// Optional hook invoked exactly once when the first connect attempt
-    /// fails, before the retry. Hosts that want a self-managed daemon
-    /// wire this to their supervisor. `None` (default) leaves the
-    /// handshake in its two-attempt read-only shape.
-    pub starter: Option<Starter>,
+    pub brain_dir: Option<PathBuf>,
+    /// When `true`, the bootstrap step is allowed to (idempotently) install
+    /// a missing compatible binary through the supplied `installer`.
+    /// `false` (default) reports `Unavailable` and lets the user run
+    /// `oxios brain install` explicitly.
+    pub may_install: bool,
+    /// Installer consulted to resolve — and, when `may_install` is set,
+    /// fetch — the `oxibrain` binary. `None` (default) probes only the
+    /// managed `~/.oxi/bin/oxibrain` location.
+    pub installer: Option<Arc<BrainInstaller>>,
 }
 
 impl std::fmt::Debug for BootstrapConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BootstrapConfig")
             .field("home", &self.home)
-            .field("socket_path", &self.socket_path)
-            .field("may_start_daemon", &self.may_start_daemon)
-            .field("starter", &self.starter.as_ref().map(|_| "Some(<starter>)"))
+            .field("brain_dir", &self.brain_dir)
+            .field("may_install", &self.may_install)
+            .field("installer", &self.installer.as_ref().map(|_| "<installer>"))
             .finish()
     }
 }
@@ -85,9 +86,9 @@ impl Default for BootstrapConfig {
     fn default() -> Self {
         Self {
             home: dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
-            socket_path: None,
-            may_start_daemon: false,
-            starter: None,
+            brain_dir: None,
+            may_install: false,
+            installer: None,
         }
     }
 }
@@ -97,10 +98,10 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
     let foundation_dir = versioned_root(&cfg.home);
     ensure_directory(&foundation_dir)
         .with_context(|| format!("create foundation directory {}", foundation_dir.display()))?;
-    let socket = cfg
-        .socket_path
+    let dir = cfg
+        .brain_dir
         .clone()
-        .unwrap_or_else(|| default_brain_socket(&cfg.home));
+        .unwrap_or_else(|| default_brain_dir(&cfg.home));
 
     // The first time we see an empty Foundation dir we are *not* idempotent.
     let fresh = std::fs::read_dir(&foundation_dir)
@@ -113,19 +114,20 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
         );
     }
 
-    let brain = handshake_brain_with(&socket, cfg.may_start_daemon, cfg.starter.clone()).await?;
+    let endpoint = brain_endpoint(&cfg.home, dir, cfg.installer.as_deref());
+    let brain = handshake_brain_with(&endpoint, cfg.may_install, cfg.installer.clone()).await?;
     match brain.state {
         DaemonState::Compatible => info!(
-            socket = %socket.display(),
-            "brain daemon handshake ok"
+            dir = %brain.dir.display(),
+            "brain handshake ok"
         ),
         DaemonState::Unavailable => warn!(
-            socket = %socket.display(),
-            "brain daemon unavailable — degraded mode is expected (RFC-047)"
+            dir = %brain.dir.display(),
+            "brain unavailable — degraded mode is expected (RFC-047)"
         ),
         DaemonState::Incompatible => warn!(
-            socket = %socket.display(),
-            "brain daemon protocol incompatible — install a compatible release"
+            dir = %brain.dir.display(),
+            "brain protocol incompatible — install a compatible release"
         ),
     }
 
@@ -137,98 +139,132 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
     })
 }
 
-/// Perform the Brain handshake and classify the daemon.
-pub async fn handshake_brain(socket: &Path, may_start: bool) -> Result<BrainHandshake> {
-    handshake_brain_with(socket, may_start, None).await
+/// Build the spawn endpoint for a brain data directory. Resolution follows
+/// the installer (explicit config → managed root → `PATH`); with no
+/// installer — or no binary locatable yet — the managed `~/.oxi/bin/oxibrain`
+/// location is used so a post-install retry can succeed.
+pub fn brain_endpoint(
+    home: &Path,
+    dir: PathBuf,
+    installer: Option<&BrainInstaller>,
+) -> oxibrain_client::LocalProcessEndpoint {
+    let executable = installer
+        .and_then(|i| i.locate_binary())
+        .unwrap_or_else(|| home.join(".oxi").join("bin").join("oxibrain"));
+    oxibrain_client::LocalProcessEndpoint::new(executable, dir)
 }
 
-/// Connect to the daemon, optionally call `starter` once on first failure,
-/// retry the connect once, then classify via [`finish_handshake`]. This is
-/// the testable core of the bootstrap handshake.
-///
-/// When `may_start` is `false` OR `starter` is `None`, the function is
-/// read-only: a single connect attempt is made and any failure is reported
-/// as `Unavailable`.
-pub async fn handshake_brain_with(
-    socket: &Path,
-    may_start: bool,
-    starter: Option<Starter>,
-) -> Result<BrainHandshake> {
-    use oxibrain_client::BrainClient;
-
-    let client = match BrainClient::connect(socket).await {
-        Ok(c) => c,
-        Err(e) => {
-            if !(may_start && starter.is_some()) {
-                if may_start {
-                    warn!(
-                        socket = %socket.display(),
-                        error = %e,
-                        "may_start_daemon=true but no starter is wired — reporting unavailable"
-                    );
-                }
-                return Ok(BrainHandshake {
-                    state: DaemonState::Unavailable,
-                    socket_path: socket.to_path_buf(),
-                    protocol_version: None,
-                    daemon_build: None,
-                });
-            }
-            // Invoke the (host-supplied) daemon starter exactly once, then
-            // retry the connect. If the retry still fails the daemon is
-            // genuinely missing — surface Unavailable.
-            let starter = starter.expect("checked is_some above");
-            tracing::info!(
-                socket = %socket.display(),
-                "first connect failed — invoking starter before retry"
-            );
-            starter(socket).await;
-            match BrainClient::connect(socket).await {
-                Ok(c) => c,
-                Err(e2) => {
-                    warn!(
-                        socket = %socket.display(),
-                        error = %e2,
-                        "starter ran but daemon still unreachable — reporting unavailable"
-                    );
-                    return Ok(BrainHandshake {
-                        state: DaemonState::Unavailable,
-                        socket_path: socket.to_path_buf(),
-                        protocol_version: None,
-                        daemon_build: None,
-                    });
-                }
-            }
-        }
-    };
-
-    finish_handshake(client, socket).await
+/// How one handshake attempt failed. Drives both the classification and
+/// whether an installer pass is worth attempting.
+enum HandshakeFailure {
+    /// The session child could not be spawned (missing binary, EACCES…).
+    Spawn(anyhow::Error),
+    /// The server answered but rejected our hello with a typed handshake
+    /// error (protocol range, store format…).
+    Rejected(oxibrain_client::HandshakeError),
+    /// Transport failed after a successful spawn (child exited early, IO).
+    Transport(anyhow::Error),
 }
 
-/// Classify an already-connected daemon via a `ping`. `ping` returns Ok on
-/// a compatible daemon; on Err we report `Incompatible`. The function
-/// emits no warnings — callers wrap into their own context.
-async fn finish_handshake(
-    mut client: oxibrain_client::BrainClient,
-    socket: &Path,
-) -> Result<BrainHandshake> {
-    // `ping` returns Ok on a compatible daemon. There is no explicit
-    // version handshake in oxibrain-client 0.2 yet; we treat any
-    // successful handshake as Compatible and reserve Incompatible for a
-    // future protocol version mismatch field.
-    match client.ping().await {
-        Ok(()) => Ok(BrainHandshake {
-            state: DaemonState::Compatible,
-            socket_path: socket.to_path_buf(),
-            protocol_version: Some(1),
-            daemon_build: None,
-        }),
-        Err(_) => Ok(BrainHandshake {
-            state: DaemonState::Incompatible,
-            socket_path: socket.to_path_buf(),
+impl HandshakeFailure {
+    /// Degrade the failure into a report. Logs once — bootstrap itself
+    /// never errors out on a failed handshake (RFC-047).
+    fn into_handshake(self, endpoint: &oxibrain_client::LocalProcessEndpoint) -> BrainHandshake {
+        let state = match &self {
+            HandshakeFailure::Spawn(e) => {
+                warn!(
+                    error = %e,
+                    dir = %endpoint.dir.display(),
+                    "brain spawn failed — degraded (RFC-047)"
+                );
+                DaemonState::Unavailable
+            }
+            HandshakeFailure::Rejected(typed) => {
+                warn!(
+                    error = %typed,
+                    dir = %endpoint.dir.display(),
+                    "brain rejected the handshake — incompatible"
+                );
+                DaemonState::Incompatible
+            }
+            HandshakeFailure::Transport(e) => {
+                warn!(
+                    error = %e,
+                    dir = %endpoint.dir.display(),
+                    "brain handshake transport failed — degraded (RFC-047)"
+                );
+                DaemonState::Unavailable
+            }
+        };
+        BrainHandshake {
+            state,
+            dir: endpoint.dir.clone(),
             protocol_version: None,
             daemon_build: None,
-        }),
+        }
+    }
+}
+
+/// Connect (spawn a short-lived session child), negotiate capabilities,
+/// and classify. `may_install` + `installer` trigger one binary install
+/// pass when the first attempt fails before completing a handshake; a
+/// successful pass is retried exactly once. A typed rejection is never
+/// retried — installing cannot fix a protocol mismatch.
+pub async fn handshake_brain_with(
+    endpoint: &oxibrain_client::LocalProcessEndpoint,
+    may_install: bool,
+    installer: Option<Arc<BrainInstaller>>,
+) -> Result<BrainHandshake> {
+    let failure = match attempt(endpoint).await {
+        Ok(handshake) => return Ok(handshake),
+        Err(failure) => failure,
+    };
+    if !matches!(failure, HandshakeFailure::Rejected(_))
+        && may_install
+        && let Some(installer) = &installer
+        && installer.ensure_binary(true).await.is_some()
+        && let Ok(handshake) = attempt(endpoint).await
+    {
+        return Ok(handshake);
+    }
+    Ok(failure.into_handshake(endpoint))
+}
+
+/// One spawn + bring-up attempt, with failures classified for the caller.
+async fn attempt(
+    endpoint: &oxibrain_client::LocalProcessEndpoint,
+) -> Result<BrainHandshake, HandshakeFailure> {
+    let mut client = oxibrain_client::BrainClient::spawn_local(endpoint.clone())
+        .await
+        .map_err(HandshakeFailure::Spawn)?;
+    let caps = client
+        .bring_up(None, oxibrain_client::default_client_hello(CLIENT_VERSION))
+        .await
+        .map_err(
+            |e| match e.downcast_ref::<oxibrain_client::HandshakeError>() {
+                Some(typed) => HandshakeFailure::Rejected(typed.clone()),
+                None => HandshakeFailure::Transport(e),
+            },
+        )?;
+    Ok(classify(endpoint, caps))
+}
+
+/// Classify negotiated capabilities against the accepted protocol range.
+fn classify(
+    endpoint: &oxibrain_client::LocalProcessEndpoint,
+    caps: oxibrain_client::BrainCapabilities,
+) -> BrainHandshake {
+    let version = caps.protocol_version.0;
+    let in_range = (MIN_BRAIN_PROTOCOL_VERSION..=MAX_BRAIN_PROTOCOL_VERSION).contains(&version);
+    BrainHandshake {
+        state: if in_range {
+            DaemonState::Compatible
+        } else {
+            DaemonState::Incompatible
+        },
+        dir: endpoint.dir.clone(),
+        protocol_version: Some(version),
+        daemon_build: Some(format!("{} {}", caps.server_name, caps.server_version)),
     }
 }
 
@@ -246,17 +282,16 @@ fn ensure_directory(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Quick non-async readiness probe used by `foundation status`. Does not
-/// open a connection — just inspects the socket path and returns
-/// [`DaemonState::Unavailable`] when nothing is listening.
-pub async fn quick_probe(socket: &Path) -> DaemonState {
-    use oxibrain_client::BrainClient;
-    match BrainClient::connect(socket).await {
-        Ok(mut c) => match c.ping().await {
-            Ok(()) => DaemonState::Compatible,
-            Err(_) => DaemonState::Incompatible,
-        },
-        Err(_) => DaemonState::Unavailable,
+/// Quick non-spawning readiness probe used by `foundation status`.
+///
+/// Daemonless readiness is binary presence: `Compatible` means a spawnable
+/// `oxibrain` exists at `binary`. The full protocol classification still
+/// comes from [`handshake_brain_with`].
+pub fn quick_probe(binary: &Path) -> DaemonState {
+    if binary.is_file() {
+        DaemonState::Compatible
+    } else {
+        DaemonState::Unavailable
     }
 }
 
@@ -283,26 +318,141 @@ mod tests {
         assert!(err.contains("not a directory"), "got: {err}");
     }
 
-    /// When a connection fails and a `starter` is provided, the starter
-    /// must be invoked exactly once and the second connect attempt must
-    /// be made (still failing here → `Unavailable`). TDD guard for the
-    /// foundation `Starter` hook.
+    /// Spawning an endpoint whose executable does not exist fails without
+    /// any server involvement and degrades to `Unavailable`.
     #[tokio::test]
-    async fn starter_is_invoked_on_connect_failure_and_retried_once() {
+    async fn handshake_unavailable_when_binary_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let sock = tmp.path().join("no.sock");
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let calls_hook = Arc::clone(&calls);
-        let starter: Starter = Arc::new(move |_path| {
-            let calls = Arc::clone(&calls_hook);
-            Box::pin(async move {
-                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            })
-        });
-        let hs = handshake_brain_with(&sock, true, Some(starter))
+        let ep = oxibrain_client::LocalProcessEndpoint::new(
+            tmp.path().join("missing-oxibrain"),
+            tmp.path().join("brain"),
+        );
+        let hs = handshake_brain_with(&ep, false, None).await.unwrap();
+        assert_eq!(hs.state, DaemonState::Unavailable);
+        assert_eq!(hs.protocol_version, None);
+        assert_eq!(hs.dir, tmp.path().join("brain"));
+    }
+
+    #[test]
+    fn classify_marks_out_of_range_version_incompatible() {
+        let ep = oxibrain_client::LocalProcessEndpoint::new("oxibrain", "/brain");
+        let caps = oxibrain_client::BrainCapabilities {
+            protocol_version: oxibrain_client::BrainProtocolVersion::new(
+                MAX_BRAIN_PROTOCOL_VERSION + 1,
+            ),
+            store_format_version: 1,
+            supported_operations: vec![],
+            server_name: "stub".into(),
+            server_version: "0".into(),
+        };
+        let hs = classify(&ep, caps);
+        assert_eq!(hs.state, DaemonState::Incompatible);
+        assert_eq!(hs.protocol_version, Some(MAX_BRAIN_PROTOCOL_VERSION + 1));
+        assert_eq!(hs.daemon_build.as_deref(), Some("stub 0"));
+    }
+
+    #[cfg(unix)]
+    fn write_stub(path: &Path, body: &str) {
+        std::fs::write(path, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A stub `oxibrain` shell script: counts spawns in `counter`, dies
+    /// before answering on the first spawn, answers the handshake after.
+    #[cfg(unix)]
+    fn flaky_stub(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let stub = dir.join("oxibrain");
+        let counter = dir.join("spawns");
+        write_stub(
+            &stub,
+            &format!(
+                "#!/bin/sh\n\
+                 n=$(cat {counter} 2>/dev/null || echo 0)\n\
+                 n=$((n+1))\n\
+                 echo $n > {counter}\n\
+                 if [ \"$n\" -eq 1 ]; then exit 1; fi\n\
+                 read line\n\
+                 echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"min_compatible\":1,\"max_compatible\":1,\"store_format_version\":1,\"supported_operations\":[],\"server_name\":\"stub\",\"server_version\":\"0.8.0-stub\"}}}}'\n",
+                counter = counter.display()
+            ),
+        );
+        (stub, counter)
+    }
+
+    /// The installer hook runs exactly once when `may_install` is set:
+    /// `ensure_binary` resolves the (already present) stub without any
+    /// network access, and the single retry completes the handshake —
+    /// exactly two spawns in total.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handshake_retries_once_after_installer_hook() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (stub, counter) = flaky_stub(tmp.path());
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..Default::default()
+        };
+        let installer = Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section));
+        let ep = oxibrain_client::LocalProcessEndpoint::new(stub, tmp.path().join("brain"));
+        let hs = handshake_brain_with(&ep, true, Some(installer))
+            .await
+            .unwrap();
+        assert_eq!(hs.state, DaemonState::Compatible);
+        assert_eq!(hs.protocol_version, Some(1));
+        assert_eq!(hs.daemon_build.as_deref(), Some("stub 0.8.0-stub"));
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "2");
+    }
+
+    /// Without `may_install` there is no hook and no retry: one spawn,
+    /// then `Unavailable`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handshake_does_not_retry_without_may_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (stub, counter) = flaky_stub(tmp.path());
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..Default::default()
+        };
+        let installer = Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section));
+        let ep = oxibrain_client::LocalProcessEndpoint::new(stub, tmp.path().join("brain"));
+        let hs = handshake_brain_with(&ep, false, Some(installer))
             .await
             .unwrap();
         assert_eq!(hs.state, DaemonState::Unavailable);
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "1");
+    }
+
+    /// A typed protocol rejection classifies `Incompatible` and is never
+    /// retried — installing a binary cannot fix a protocol mismatch.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn handshake_incompatible_on_typed_protocol_rejection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stub = tmp.path().join("oxibrain");
+        let counter = tmp.path().join("spawns");
+        write_stub(
+            &stub,
+            &format!(
+                "#!/bin/sh\n\
+                 echo 1 > {counter}\n\
+                 read line\n\
+                 echo '{{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{{\"code\":-32000,\"message\":\"incompatible protocol\",\"data\":{{\"kind\":\"incompatible_protocol\",\"requested\":1,\"min_compatible\":9,\"max_compatible\":9}}}}}}'\n",
+                counter = counter.display()
+            ),
+        );
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..Default::default()
+        };
+        let installer = Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section));
+        let ep = oxibrain_client::LocalProcessEndpoint::new(stub, tmp.path().join("brain"));
+        let hs = handshake_brain_with(&ep, true, Some(installer))
+            .await
+            .unwrap();
+        assert_eq!(hs.state, DaemonState::Incompatible);
+        assert_eq!(hs.protocol_version, None);
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "1");
     }
 }

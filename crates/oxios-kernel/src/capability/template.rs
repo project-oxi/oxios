@@ -327,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_adds_memory_read() {
+    fn standard_grants_memory_domain_read_only() {
         let cs = CapabilityTemplate::standard().build();
         assert!(cs.can(
             &ResourceRef::KernelDomain {

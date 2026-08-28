@@ -10,7 +10,10 @@ import { BrainSearch } from './search'
 // (see web/src/components/brain/status-banner.test.tsx).
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: Record<string, unknown>) => {
+      if (params && 'roots' in params) return `${key}:${String(params.roots)}`
+      return key
+    },
     i18n: { language: 'en' },
   }),
 }))
@@ -22,8 +25,7 @@ function withQueryClient(ui: React.ReactNode) {
   return <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
 }
 
-// Daemon search contract: a bare array of entity hits.
-const HITS = [
+const MEMORY_HITS = [
   {
     entity_id: 'ent-user-1',
     entity_surface: 'The user',
@@ -40,13 +42,48 @@ const HITS = [
   },
 ]
 
+const ENVELOPE = {
+  memory: MEMORY_HITS,
+  documents: [],
+  freshness: {
+    reconciled_roots: [],
+    skipped_roots: [],
+    skipped_files: 0,
+    stale_after_retry: [],
+    dense_coverage: null,
+  },
+}
+
+const ENVELOPE_WITH_DOCS = {
+  memory: MEMORY_HITS,
+  documents: [
+    {
+      document_id: 'doc-1',
+      root: 'vault',
+      locator: 'notes/2026-08-27.md',
+      revision: 'rev-abcdef0123456789',
+      ordinal: 0,
+      text: 'oxibrain 0.8 ships a daemonless session model.',
+      modified_at: 1700000000000,
+      score: 0.91,
+    },
+  ],
+  freshness: {
+    reconciled_roots: ['vault'],
+    skipped_roots: [],
+    skipped_files: 0,
+    stale_after_retry: [],
+    dense_coverage: 0.85,
+  },
+}
+
 describe('BrainSearch', () => {
   afterEach(() => {
     server.resetHandlers()
   })
 
-  it('renders daemon hit rows (surface, snippet, score, type) and selects the entity on click', async () => {
-    server.use(http.get('/api/brain/search', () => HttpResponse.json(HITS)))
+  it('renders memory hit rows and selects the entity on click', async () => {
+    server.use(http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE)))
     const onSelectEntity = vi.fn()
     render(withQueryClient(<BrainSearch onSelectEntity={onSelectEntity} />))
 
@@ -63,8 +100,22 @@ describe('BrainSearch', () => {
     expect(onSelectEntity).toHaveBeenCalledWith('ent-user-1')
   })
 
-  it('shows the empty state when the daemon returns no hits', async () => {
-    server.use(http.get('/api/brain/search', () => HttpResponse.json([])))
+  it('shows the empty state when the envelope has no memory or document hits', async () => {
+    server.use(
+      http.get('/api/brain/search', () =>
+        HttpResponse.json({
+          memory: [],
+          documents: [],
+          freshness: {
+            reconciled_roots: [],
+            skipped_roots: [],
+            skipped_files: 0,
+            stale_after_retry: [],
+            dense_coverage: null,
+          },
+        }),
+      ),
+    )
     render(withQueryClient(<BrainSearch />))
 
     const user = userEvent.setup()
@@ -74,5 +125,60 @@ describe('BrainSearch', () => {
     await waitFor(() =>
       expect(screen.getByRole('status')).toHaveTextContent('brain.noSearchResults'),
     )
+  })
+
+  it('renders the documents card when the envelope carries document hits', async () => {
+    server.use(http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)))
+    render(withQueryClient(<BrainSearch />))
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
+    await user.click(screen.getByRole('button', { name: 'brain.search' }))
+
+    expect(await screen.findByText(/^brain\.documents/)).toBeInTheDocument()
+    expect(screen.getByText('oxibrain 0.8 ships a daemonless session model.')).toBeInTheDocument()
+    expect(screen.getByText('brain.showHistory')).toBeInTheDocument()
+  })
+
+  const HISTORY = [
+    { revision: 'rev-abcdef0123456789', committed_at_ms: 1700000000000, content: 'v1' },
+    { revision: 'rev-1234567890abcdef', committed_at_ms: 1700100000000, content: 'v2' },
+  ]
+
+  it('renders revision rows when the history toggle opens a document', async () => {
+    server.use(
+      http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)),
+      http.get('/api/brain/document-history', () => HttpResponse.json(HISTORY)),
+    )
+    render(withQueryClient(<BrainSearch />))
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
+    await user.click(screen.getByRole('button', { name: 'brain.search' }))
+
+    const toggle = await screen.findByRole('button', { name: 'brain.showHistory' })
+    expect(screen.queryByText(/rev-abcd/)).not.toBeInTheDocument()
+    await user.click(toggle)
+
+    // Both revisions render as `date · revision.slice(0, 8)` rows, and the
+    // toggle flips to the hide label.
+    expect(await screen.findByText(/rev-abcd/)).toBeInTheDocument()
+    expect(screen.getByText(/rev-1234/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'brain.hideHistory' })).toBeInTheDocument()
+  })
+
+  it('shows the no-history empty path when document history is empty', async () => {
+    server.use(
+      http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)),
+      http.get('/api/brain/document-history', () => HttpResponse.json([])),
+    )
+    render(withQueryClient(<BrainSearch />))
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
+    await user.click(screen.getByRole('button', { name: 'brain.search' }))
+
+    await user.click(await screen.findByRole('button', { name: 'brain.showHistory' }))
+    expect(await screen.findByText('brain.noHistory')).toBeInTheDocument()
   })
 })

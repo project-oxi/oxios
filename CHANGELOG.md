@@ -78,6 +78,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Daemonless brain cutover (oxibrain 0.8).** oxibrain 0.8 deleted the
+  resident daemon, the listening socket, the vault watcher, and the
+  background extraction queue; Oxios now consumes it the way its ecosystem
+  contracts prescribe — three lanes, one binary, one data dir
+  (`docs/designs/2026-08-27-daemonless-brain-design.md`, superseding the
+  transport/lifecycle half of RFC-047 and all of RFC-049):
+  - **Session child** — one lazily-spawned, kernel-owned
+    `oxibrain serve --stdio` child (`BrainSession`, via `oxibrain-client`
+    0.8 from crates.io) serves all interactive surfaces; it dies with the
+    Oxios process. No launchd, no PID files, no reconnect machinery.
+  - **One-shot CLI** — admin verbs (`index --documents --embed`,
+    `extract --pending`, `--version` probes) run as short-lived invocations;
+    `BrainInstaller` keeps only the GitHub-Releases install path
+    (`~/.oxi/bin/oxibrain`, sha256-verified) plus a one-time daemon-era
+    cleanup (launchd plist bootout, stale socket/pid).
+  - **Skill + CLI for agents** — the `memory_{write,read,search}` kernel
+    tools are removed; agents get the first-party `brain` skill and call
+    the pre-allowed `oxibrain` CLI through exec structured mode (fifteen
+    verbs instead of three proxied tools).
+  - **Vault ingestion is a declaration** — boot idempotently seeds
+    `~/.oxi/brain/documents.toml` with the vault root instead of a
+    registration RPC; `search`/`recall` auto-materialize, so a failed
+    boot-time warm index never blocks.
+  - **Extraction drain owned by Oxios** — `remember` parks episodes in the
+    backlog; a 10-minute kernel timer (while a session child is alive)
+    drains it via `oxibrain extract --pending`.
+  - **Config** — `[brain] socket_path` and `auto_manage` removed (old
+    configs warn-and-ignore); new `dir` and `auto_install`.
+  - **CLI** — `oxios brain {ingest,ask,start,stop}` removed;
+    `oxios brain {status,install,uninstall,reindex,extract}` remain, and
+    query/ingest move to `oxibrain ask` / `oxibrain ingest`. `reindex`
+    degrades the best-effort `--embed` step (stock oxibrain 0.8.0 ships
+    no CLI embedder) and still reports the lexical reconcile.
+  - **Web** — Brain tab renders two-plane search (memory + documents),
+    a daemonless status banner, and gix-backed document history.
+  - Degradation contract unchanged: missing binary → empty results,
+    turns still complete, boot never blocks.
+
 - **`oxios update` binary strategy: cargo install → release tarball.**
   The default `oxios update` no longer shells out to `cargo install`;
   it downloads the GitHub Release tarball, sha256-verifies it, and
@@ -87,6 +125,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is faster, reproducible across machines (no local Rust toolchain
   needed), and avoids the silent "PATH shadow" failure mode that
   `cargo install` could not detect.
+
+### Removed
+
+- **`memory_{write,read,search}` kernel tools** — replaced by the `brain`
+  skill + allowlisted `oxibrain` CLI (daemonless brain cutover).
+- **`oxios brain {ingest,ask,start,stop}`** — `ingest`/`ask` move to
+  `oxibrain ingest`/`ask`; `start`/`stop` are meaningless without a
+  daemon.
 
 ## [1.44.0] - 2026-08-26
 

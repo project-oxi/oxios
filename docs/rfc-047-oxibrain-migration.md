@@ -1,5 +1,7 @@
 # RFC-047: Oxibrain Migration — Retire `oxios-memory`, Route Through the Brain
 
+> **Superseded (transport/lifecycle):** see docs/designs/2026-08-27-daemonless-brain-design.md — oxibrain 0.8 removed the daemon.
+
 > **Note**: superseded for bootstrap / profile / credential guidance by
 > [RFC-048](rfc-048-oxi-foundation-integration.md) — Foundation adds the
 > non-secret profile registry, OS Keychain-backed credentials, and the

@@ -2656,11 +2656,7 @@
     "why": "근거",
     "provenance": "출처",
     "noContradictions": "모순된 스테이트먼트가 없습니다.",
-    "installing": "oxibrain 설치 중… — 완료 후 자동으로 시작됩니다.",
-    "starting": "브레인 데몬 시작 중…",
-    "failedTitle": "브레인 데몬 시작 실패",
-    "failedDescription": "자동 재시도는 30초 후 또는 다음 부팅에 시도됩니다.",
-    "manualDescription": "메모리 기능이 제한됩니다. `oxibrain serve --daemon`으로 직접 시작하거나 [brain] auto_manage = true로 설정하세요.",
+    "manualDescription": "메모리 기능이 제한됩니다. 다음 브레인 호출 시 세션을 다시 시도합니다. 계속 실패하면 `oxios brain status`로 진단하세요.",
     "page": "페이지",
     "pageUnavailable": "이 엔티티에는 표시할 페이지가 없습니다.",
     "noBeliefs": "활성 신념이 없습니다.",
@@ -2703,6 +2699,13 @@
     "noEntitiesYet": "아직 엔티티가 없습니다.",
     "spaces": "스페이스",
     "spaceName": "스페이스",
-    "spaceCurrent": "현재"
+    "spaceCurrent": "현재",
+    "notInstalled": "브레인 바이너리가 설치되지 않았습니다",
+    "notInstalledHint": "`oxios brain install`로 번들된 oxibrain CLI를 설치하세요.",
+    "documents": "문서",
+    "freshness": "신선도 · 동기화 완료: {{roots}}",
+    "showHistory": "기록 보기",
+    "hideHistory": "기록 닫기",
+    "noHistory": "아직 기록된 리비전이 없습니다."
   }
 }

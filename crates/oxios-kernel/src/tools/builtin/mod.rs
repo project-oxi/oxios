@@ -67,7 +67,7 @@ pub use timeline_tool::TimelineTool;
 use std::sync::Arc;
 
 use crate::KernelHandle;
-use crate::tools::{AskUserTool, MemoryReadTool, MemorySearchTool, MemoryWriteTool};
+use crate::tools::AskUserTool;
 use crate::types::AgentId;
 use oxicode_sdk::ToolRegistry;
 
@@ -85,13 +85,9 @@ pub fn register_all_kernel_tools(
     // ExecTool (stores Arc<KernelHandle>)
     registry.register(crate::tools::ExecTool::from_kernel(kernel));
 
-    // Memory tools — brain-backed (BrainConnection), registered unconditionally.
-    // Oxios is a personal agent OS: every agent gets memory read + write.
-    // The CSpace-gated path in registration.rs is removed (redundant).
-    // See docs/designs/2026-07-11-memory-system-overhaul-design.md Phase 1.
-    registry.register(MemoryWriteTool::from_kernel(kernel));
-    registry.register(MemoryReadTool::from_kernel(kernel));
-    registry.register(MemorySearchTool::from_kernel(kernel));
+    // Memory access moved to the `brain` skill + allowlisted `oxibrain` CLI
+    // (exec structured mode) with the oxibrain 0.8 daemonless cutover —
+    // see share/default-skills/brain/SKILL.md.
 
     // Subagent tool — oxicode-agent's native `subagent` tool (RFC-035 gap 3).
     // Wired via AgentConfig.subagent_runner (set in agent_runtime.rs).

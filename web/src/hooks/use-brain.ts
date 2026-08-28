@@ -4,15 +4,16 @@ import type {
   Belief,
   BrainBriefResponse,
   BrainRecallResponse,
-  BrainSearchHit,
   BrainStats,
   BrainStatus,
   ContradictionDetail,
+  DocumentRevision,
   ExplainBlock,
   ExtractionFailure,
   MergeRecord,
   OperationsSection,
   RetrievalMode,
+  SearchResponse,
   SourceRow,
   SpaceOverview,
   SpaceSummary,
@@ -20,7 +21,6 @@ import type {
   TraversalResult,
 } from '@/types/brain'
 
-// ── Status ──
 export function useBrainStatus() {
   return useQuery({
     queryKey: ['brain', 'status'],
@@ -39,17 +39,23 @@ export function useBrainStats() {
   })
 }
 
-// ── Search (bare array contract) ──
+// ── Search (two-plane envelope, oxibrain 0.8) ──
 export function useBrainSearch(
   q: string,
   mode: RetrievalMode | string = 'hybrid',
   limit = 20,
   enabled = false,
+  planes: 'memory' | 'documents' | 'both' = 'both',
 ) {
   return useQuery({
-    queryKey: ['brain', 'search', q, mode, limit],
+    queryKey: ['brain', 'search', q, mode, limit, planes],
     queryFn: () =>
-      api.get<BrainSearchHit[]>('/api/brain/search', { q, mode, limit: String(limit) }),
+      api.get<SearchResponse | null>('/api/brain/search', {
+        q,
+        mode,
+        limit: String(limit),
+        planes,
+      }),
     enabled: enabled && q.trim().length > 0,
   })
 }
@@ -58,11 +64,31 @@ export function useBrainSearch(
 export function useBrainSearchMutation() {
   return useMutation({
     mutationFn: ({ query, limit }: { query: string; limit?: number }) =>
-      api.get<BrainSearchHit[]>('/api/brain/search', {
+      api.get<SearchResponse | null>('/api/brain/search', {
         q: query,
         mode: 'hybrid',
         limit: String(limit ?? 5),
+        planes: 'both',
       }),
+  })
+}
+
+// ── Document history (gix-backed revisions of one tracked vault document) ──
+export function useBrainDocumentHistory(
+  alias: string,
+  locator: string | null,
+  limit = 32,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['brain', 'document-history', alias, locator, limit],
+    queryFn: () =>
+      api.get<DocumentRevision[] | null>('/api/brain/document-history', {
+        alias,
+        ...(locator ? { locator } : {}),
+        limit: String(limit),
+      }),
+    enabled: enabled && !!locator,
   })
 }
 

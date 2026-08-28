@@ -321,7 +321,8 @@ fn domain_description(domain: &str) -> &'static str {
         "agent" => "Agent lifecycle, runtime, and supervisor.",
         "a2a" => "Agent-to-agent communication and delegation.",
         "memory" => {
-            "Internal agent recall — facts, preferences, behavioral patterns. Not user-visible."
+            "Agent memory via the `brain` skill — remember/ask through the \
+             allowlisted `oxibrain` CLI. Facts, preferences, patterns. Not user-visible."
         }
         "knowledge" => {
             "Personal markdown vault — documents, articles, notes, journal. File-based with backlinks and full-text search."

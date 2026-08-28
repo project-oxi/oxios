@@ -834,12 +834,14 @@ pub(crate) async fn handle_skill_import_file(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Brain daemon routes (RFC-047) — replace the retired /api/memory/* surface.
-// All handlers degrade to empty payloads when the daemon is unavailable
-// (spec §4 degradation contract); GET /api/brain/status reports availability.
+// Brain routes (daemonless, oxibrain 0.8) — replaced the retired
+// /api/memory/* surface. All handlers degrade to empty payloads when the
+// binary is missing or the session child is down (degradation contract);
+// GET /api/brain/status reports session/binary state.
 // ─────────────────────────────────────────────────────────────────────
 
-/// GET /api/brain/status — daemon reachability + space + episode count.
+/// GET /api/brain/status — daemonless session/binary state + space +
+/// episode count + pending extraction backlog.
 pub(crate) async fn handle_brain_status(
     state: State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -848,18 +850,30 @@ pub(crate) async fn handle_brain_status(
             "available": false,
             "space": null,
             "episodes": null,
-            "supervisor": null,
+            "pending_extraction": null,
+            "binary": {
+                "installed": false,
+                "path": null,
+                "version": null,
+            },
         })));
     };
+    let snap = brain.status_snapshot();
     let episodes = brain
         .stats()
         .await
         .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()));
+    let pending_extraction = brain.pending_stats().await.map(|p| p.count);
     Ok(Json(serde_json::json!({
-        "available": brain.is_available(),
-        "space": brain.space(),
+        "available": snap.available,
+        "space": snap.space,
         "episodes": episodes,
-        "supervisor": brain.supervisor_state(),
+        "pending_extraction": pending_extraction,
+        "binary": {
+            "installed": snap.binary_installed,
+            "path": snap.binary_path,
+            "version": snap.binary_version,
+        },
     })))
 }
 
@@ -888,7 +902,7 @@ pub(crate) async fn handle_brain_recall(
     Ok(Json(serde_json::json!({ "context": context })))
 }
 
-/// GET /api/brain/search?q=&mode=&limit= — hybrid/lexical/semantic/graph/community.
+/// GET /api/brain/search?q=&mode=&limit=&planes= — hybrid/lexical/semantic/graph/community.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainSearchQuery {
     pub q: String,
@@ -896,6 +910,8 @@ pub(crate) struct BrainSearchQuery {
     pub mode: String,
     #[serde(default = "default_search_limit")]
     pub limit: usize,
+    /// `memory`, `documents`, or `both` (default). Invalid values 400.
+    pub planes: Option<String>,
 }
 
 fn default_search_mode() -> String {
@@ -910,10 +926,47 @@ pub(crate) async fn handle_brain_search(
     state: State<Arc<AppState>>,
     Query(query): Query<BrainSearchQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let planes: Option<Vec<&str>> = match query.planes.as_deref() {
+        None | Some("both") => None,
+        Some("memory") => Some(vec!["memory"]),
+        Some("documents") => Some(vec!["documents"]),
+        Some(other) => {
+            return Err(AppError::BadRequest(format!(
+                "invalid planes '{other}' — memory|documents|both"
+            )));
+        }
+    };
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.search(&query.q, &query.mode, query.limit).await;
+    let refs = planes.as_deref();
+    let result = brain.search(&query.q, &query.mode, query.limit, refs).await;
+    Ok(Json(
+        result
+            .and_then(|r| serde_json::to_value(r).ok())
+            .unwrap_or(serde_json::Value::Null),
+    ))
+}
+
+/// GET /api/brain/document-history?alias=&locator=&limit= — gix-backed
+/// revision history of one tracked vault document.
+#[derive(Debug, Deserialize)]
+pub(crate) struct BrainDocumentHistoryQuery {
+    pub alias: String,
+    pub locator: String,
+    pub limit: Option<usize>,
+}
+
+pub(crate) async fn handle_brain_document_history(
+    state: State<Arc<AppState>>,
+    Query(query): Query<BrainDocumentHistoryQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let Some(brain) = state.kernel.brain.as_ref() else {
+        return Ok(Json(serde_json::Value::Null));
+    };
+    let result = brain
+        .document_history(&query.alias, &query.locator, query.limit.unwrap_or(32))
+        .await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 

@@ -237,8 +237,8 @@ impl KernelHandle {
         self
     }
 
-    /// Attach the brain daemon facade (RFC-047). Called by the kernel
-    /// assembler at boot after `BrainConnection::connect`.
+    /// Attach the brain facade (RFC-047). Called by the kernel
+    /// assembler at boot after the `BrainSession` is built.
     pub fn with_brain(mut self, brain: BrainApi) -> Self {
         self.brain = Some(brain);
         self

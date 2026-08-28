@@ -840,23 +840,53 @@ pub(crate) async fn handle_skill_import_file(
 // GET /api/brain/status reports session/binary state.
 // ─────────────────────────────────────────────────────────────────────
 
+/// Parse the `planes` search param: `None`/`both` → both planes,
+/// `memory`/`documents` → that plane, anything else → a 400 message.
+fn parse_brain_planes(raw: Option<&str>) -> Result<Option<Vec<&'static str>>, String> {
+    match raw {
+        None | Some("both") => Ok(None),
+        Some("memory") => Ok(Some(vec!["memory"])),
+        Some("documents") => Ok(Some(vec!["documents"])),
+        Some(other) => Err(format!("invalid planes '{other}' — memory|documents|both")),
+    }
+}
+
+/// Build the `/api/brain/status` JSON. One shape for the live brain
+/// (`Some(snapshot)`) and the degraded no-brain branch (`None`).
+fn brain_status_json(
+    snap: Option<oxios_kernel::BrainStatusSnapshot>,
+    episodes: Option<i64>,
+    pending_extraction: Option<u64>,
+) -> serde_json::Value {
+    match snap {
+        None => serde_json::json!({
+            "available": false,
+            "space": null,
+            "episodes": null,
+            "pending_extraction": null,
+            "binary": { "installed": false, "path": null, "version": null },
+        }),
+        Some(s) => serde_json::json!({
+            "available": s.available,
+            "space": s.space,
+            "episodes": episodes,
+            "pending_extraction": pending_extraction,
+            "binary": {
+                "installed": s.binary_installed,
+                "path": s.binary_path,
+                "version": s.binary_version,
+            },
+        }),
+    }
+}
+
 /// GET /api/brain/status — daemonless session/binary state + space +
 /// episode count + pending extraction backlog.
 pub(crate) async fn handle_brain_status(
     state: State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
-        return Ok(Json(serde_json::json!({
-            "available": false,
-            "space": null,
-            "episodes": null,
-            "pending_extraction": null,
-            "binary": {
-                "installed": false,
-                "path": null,
-                "version": null,
-            },
-        })));
+        return Ok(Json(brain_status_json(None, None, None)));
     };
     let snap = brain.status_snapshot();
     let episodes = brain
@@ -864,19 +894,12 @@ pub(crate) async fn handle_brain_status(
         .await
         .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()));
     let pending_extraction = brain.pending_stats().await.map(|p| p.count);
-    Ok(Json(serde_json::json!({
-        "available": snap.available,
-        "space": snap.space,
-        "episodes": episodes,
-        "pending_extraction": pending_extraction,
-        "binary": {
-            "installed": snap.binary_installed,
-            "path": snap.binary_path,
-            "version": snap.binary_version,
-        },
-    })))
+    Ok(Json(brain_status_json(
+        Some(snap),
+        episodes,
+        pending_extraction,
+    )))
 }
-
 /// POST /api/brain/recall — assemble context for an agent turn.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainRecallRequest {
@@ -926,16 +949,7 @@ pub(crate) async fn handle_brain_search(
     state: State<Arc<AppState>>,
     Query(query): Query<BrainSearchQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let planes: Option<Vec<&str>> = match query.planes.as_deref() {
-        None | Some("both") => None,
-        Some("memory") => Some(vec!["memory"]),
-        Some("documents") => Some(vec!["documents"]),
-        Some(other) => {
-            return Err(AppError::BadRequest(format!(
-                "invalid planes '{other}' — memory|documents|both"
-            )));
-        }
-    };
+    let planes = parse_brain_planes(query.planes.as_deref()).map_err(AppError::BadRequest)?;
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
@@ -1295,5 +1309,98 @@ mod tests {
         const MAX_MEMORY_ENTRY: usize = 32 * 1024;
         let big_memory = "m".repeat(MAX_MEMORY_ENTRY + 1);
         assert!(big_memory.len() > MAX_MEMORY_ENTRY);
+    }
+
+    // ── Brain route contracts (daemonless, oxibrain 0.8) ──────────────
+
+    #[test]
+    fn brain_planes_param_contract() {
+        // Default and explicit both → both planes (None).
+        assert_eq!(parse_brain_planes(None), Ok(None));
+        assert_eq!(parse_brain_planes(Some("both")), Ok(None));
+        // Single-plane selection.
+        assert_eq!(parse_brain_planes(Some("memory")), Ok(Some(vec!["memory"])));
+        assert_eq!(
+            parse_brain_planes(Some("documents")),
+            Ok(Some(vec!["documents"]))
+        );
+        // Invalid values carry the documented message shape.
+        let err = parse_brain_planes(Some("memry")).unwrap_err();
+        assert!(err.contains("invalid planes 'memry'"), "{err}");
+        assert!(err.contains("memory|documents|both"), "{err}");
+    }
+
+    #[test]
+    fn brain_status_shape_live_and_degraded() {
+        // Degraded (no brain facade): exact documented shape.
+        let degraded = brain_status_json(None, None, None);
+        assert_eq!(degraded["available"], serde_json::json!(false));
+        assert_eq!(degraded["space"], serde_json::json!(null));
+        assert_eq!(degraded["episodes"], serde_json::json!(null));
+        assert_eq!(degraded["pending_extraction"], serde_json::json!(null));
+        assert_eq!(
+            degraded["binary"],
+            serde_json::json!({"installed": false, "path": null, "version": null})
+        );
+
+        // Live: snapshot fields surface; nulls preserved when stats degrade.
+        let snap = oxios_kernel::BrainStatusSnapshot {
+            available: true,
+            space: "personal".into(),
+            binary_installed: true,
+            binary_path: Some("/opt/oxibrain".into()),
+            binary_version: Some("oxibrain 0.8.0".into()),
+        };
+        let live = brain_status_json(Some(snap), Some(42), Some(7));
+        assert_eq!(live["available"], serde_json::json!(true));
+        assert_eq!(live["space"], serde_json::json!("personal"));
+        assert_eq!(live["episodes"], serde_json::json!(42));
+        assert_eq!(live["pending_extraction"], serde_json::json!(7));
+        assert_eq!(live["binary"]["installed"], serde_json::json!(true));
+        assert_eq!(live["binary"]["path"], serde_json::json!("/opt/oxibrain"));
+        assert_eq!(
+            live["binary"]["version"],
+            serde_json::json!("oxibrain 0.8.0")
+        );
+    }
+
+    #[test]
+    fn brain_search_envelope_serialization_keys() {
+        // The handler serializes SearchResponseDto verbatim; pin the
+        // envelope keys so a rename cannot pass CI silently.
+        let dto = oxibrain_client::SearchResponseDto {
+            memory: vec![serde_json::json!({"entity_id": "e1"})],
+            documents: vec![oxibrain_client::DocumentHitDto {
+                document_id: "d1".into(),
+                root: "vault".into(),
+                locator: "notes/a.md".into(),
+                revision: "r1".into(),
+                ordinal: 0,
+                text: "body".into(),
+                modified_at_ms: 1700000000,
+                score: 0.5,
+            }],
+            freshness: oxibrain_client::DocumentFreshnessDto {
+                reconciled_roots: vec!["vault".into()],
+                skipped_roots: Vec::new(),
+                skipped_files: 0,
+                stale_after_retry: Vec::new(),
+                dense_coverage: None,
+            },
+        };
+        let v = serde_json::to_value(&dto).unwrap();
+        for key in ["memory", "documents", "freshness"] {
+            assert!(v.get(key).is_some(), "envelope missing {key}");
+        }
+        assert_eq!(v["memory"][0]["entity_id"], serde_json::json!("e1"));
+        assert_eq!(
+            v["documents"][0]["locator"],
+            serde_json::json!("notes/a.md")
+        );
+        // Wire field is millis; the JSON key keeps the engine shape.
+        assert_eq!(
+            v["documents"][0]["modified_at"],
+            serde_json::json!(1700000000)
+        );
     }
 }

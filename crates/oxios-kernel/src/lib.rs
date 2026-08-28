@@ -172,6 +172,7 @@ pub use brain::{
     BrainConfig, BrainInstaller, BrainSession, ChildSpawn, Spawn, SpawnBackoff, resolve_space,
 };
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
+pub use kernel_handle::brain_api::BrainStatusSnapshot;
 pub use memory_agent::sona::{
     LearnedPattern, SonaEngine, SonaMode, Trajectory, TrajectoryStep, Verdict,
 };

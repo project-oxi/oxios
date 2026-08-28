@@ -410,7 +410,8 @@ pub(crate) async fn handle_chat(
 
 /// Request body for `POST /api/chat/seed` — persist a captured one-shot
 /// exchange (user message + agent response) as a new session, with no
-/// gateway/orchestrator call. Used by the QuickAsk "promote to chat" flow.
+/// gateway/orchestrator call. Used by the Oxios Copilot dialog
+/// "promote to chat" flow.
 #[derive(Debug, Deserialize)]
 pub(crate) struct SeedRequest {
     pub user_message: String,
@@ -421,6 +422,10 @@ pub(crate) struct SeedRequest {
     pub trajectory_steps: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub reasoning_text: Option<String>,
+    /// Persona the seeded session is bound to. Validated like normal chat
+    /// creation: unknown/disabled → 400. Empty/absent → no binding.
+    #[serde(default)]
+    pub persona_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -432,8 +437,9 @@ pub(crate) struct SeedResponse {
 ///
 /// Writes the user message + agent response verbatim (plus any captured
 /// trajectory/reasoning) directly to the StateStore with no gateway call. This
-/// is what makes QuickAsk "promote to chat" instant and drift-free: the user
-/// sees the exact answer they read in the dialog, now in a real session.
+/// is what makes the Oxios Copilot dialog "promote to chat" instant and
+/// drift-free: the user sees the exact answer they read in the dialog, now
+/// in a real session.
 pub(crate) async fn handle_chat_seed(
     state: State<Arc<AppState>>,
     Json(body): Json<SeedRequest>,
@@ -500,6 +506,22 @@ pub(crate) async fn handle_chat_seed(
         && !pid.is_empty()
     {
         session.project_id = Some(pid.clone());
+    }
+
+    // Session-scoped persona override: validate against the registry the
+    // same way normal chat creation does — unknown/disabled personas are
+    // a 400 rather than a silent global fallback, so a promoted copilot
+    // exchange stays bound to the copilot persona.
+    if let Some(pid) = body.persona_id.as_deref().filter(|s| !s.is_empty()) {
+        match state.kernel.persona.get(pid) {
+            Some(p) if p.enabled => session.active_persona_id = Some(pid.to_string()),
+            Some(_) => {
+                return Err(AppError::BadRequest("persona is disabled".into()));
+            }
+            None => {
+                return Err(AppError::BadRequest(format!("persona '{pid}' not found")));
+            }
+        }
     }
 
     let session_id = session.id.0.clone();
@@ -1256,8 +1278,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 continue;
                             }
                         }
-                        // One-shot (QuickAsk) requests set `ephemeral: true`.
-                        // The recv task skips the pending-message insert so
+                        // One-shot requests from the Oxios Copilot dialog set
+                        // `ephemeral: true`. The recv task skips the
+                        // pending-message insert so
                         // the send task's persist guard finds no
                         // PendingMessage and never writes a session.
                         let incoming_ephemeral = parsed

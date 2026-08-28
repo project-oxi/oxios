@@ -29,6 +29,10 @@ pub enum ToolProfile {
     Code,
     /// Always-on tier only (read, write, edit, grep, find, ls, web_search).
     Minimal,
+    /// Oxios self-control only: project/mount, persona, task, security,
+    /// budget, resource, agent, marketplace, MCP management, engine/model
+    /// settings. No exec, browser, file, memory, knowledge, or A2A tools.
+    Control,
 }
 
 impl ToolProfile {
@@ -36,6 +40,7 @@ impl ToolProfile {
     pub fn from_str_loose(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {
             "base" => Self::Base,
+            "control" => Self::Control,
             "minimal" => Self::Minimal,
             _ => Self::Code,
         }
@@ -48,6 +53,7 @@ impl std::fmt::Display for ToolProfile {
             Self::Base => "base",
             Self::Code => "code",
             Self::Minimal => "minimal",
+            Self::Control => "control",
         };
         write!(f, "{s}")
     }
@@ -554,6 +560,32 @@ pub fn default_personas() -> Vec<Persona> {
             tool_profile: ToolProfile::Base,
         },
         Persona {
+            id: "oxios".to_string(),
+            name: "Oxios".to_string(),
+            role: "copilot".to_string(),
+            description: "Internal copilot for managing Oxios itself — projects, \
+                mounts, tasks, personas, security, budget, marketplace skills, \
+                MCP servers, and model settings.".to_string(),
+            system_prompt: "You are the Oxios Copilot: an internal assistant for \
+                managing this Oxios instance's own configuration. You have no \
+                coding tools (no exec, file access, or browser) — only tools to \
+                inspect and change Oxios's settings. If asked to write code, run \
+                commands, or browse the web, explain that's outside your scope \
+                and suggest switching to a coding persona instead.".to_string(),
+            enabled: true,
+            model: None,
+            personality_traits: vec![
+                "helpful".to_string(),
+                "precise".to_string(),
+                "concise".to_string(),
+            ],
+            capabilities: vec![],
+            category: "normal".to_string(),
+            genre: None,
+            default_mount_ids: vec![],
+            tool_profile: ToolProfile::Control,
+        },
+        Persona {
             id: "novelist".to_string(),
             name: "Novelist".to_string(),
             role: "novelist".to_string(),
@@ -795,7 +827,7 @@ mod tests {
     #[test]
     fn test_default_personas_count_and_ids() {
         let personas = default_personas();
-        assert_eq!(personas.len(), 14);
+        assert_eq!(personas.len(), 15);
 
         let ids: Vec<&str> = personas.iter().map(|p| p.id.as_str()).collect();
         for expected in [
@@ -813,6 +845,7 @@ mod tests {
             "scenarist",
             "essayist",
             "blogger",
+            "oxios",
         ] {
             assert!(
                 ids.contains(&expected),
@@ -866,7 +899,8 @@ mod tests {
 
         // Only the base assistant controls Oxios itself.
         assert_eq!(by_id("normal").tool_profile, ToolProfile::Base);
-        // Coding/research/operations personas get working tools, no control.
+        assert_eq!(by_id("oxios").tool_profile, ToolProfile::Control);
+        assert_eq!(by_id("oxios").category, "normal");
         for id in [
             "dev",
             "review",
@@ -890,7 +924,20 @@ mod tests {
         let personas = default_personas();
         let roles: std::collections::HashSet<&str> =
             personas.iter().map(|p| p.role.as_str()).collect();
-        assert_eq!(roles.len(), 14);
+        assert_eq!(roles.len(), 15);
+    }
+
+    #[test]
+    fn test_tool_profile_control_variant() {
+        assert_eq!(ToolProfile::from_str_loose("control"), ToolProfile::Control);
+        assert_eq!(ToolProfile::Control.to_string(), "control");
+        // Serde round-trip uses lowercase renaming.
+        let json = serde_json::to_string(&ToolProfile::Control).unwrap();
+        assert_eq!(json, r#""control""#);
+        let parsed: ToolProfile = serde_json::from_str(r#""control""#).unwrap();
+        assert_eq!(parsed, ToolProfile::Control);
+        // Unknown values still fall back to Code.
+        assert_eq!(ToolProfile::from_str_loose("nope"), ToolProfile::Code);
     }
 
     #[test]

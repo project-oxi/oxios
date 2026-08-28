@@ -18,41 +18,40 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useEngineConfig } from '@/hooks/use-engine'
 import { api } from '@/lib/api-client'
 import { useChatStore } from '@/stores/chat'
-import { useQuickAskStore } from '@/stores/quick-ask'
-import type { ChatBlock } from '@/types'
+import { buildSeedRequestBody, useOxiosCopilotStore } from '@/stores/oxios-copilot'
 
 /**
- * QuickAskDialog — global one-shot question overlay.
+ * OxiosCopilotDialog — global one-shot question overlay.
  *
  * Renders in AppLayout so it overlays every route. Sends `ephemeral: true`
  * over its own short-lived WS; nothing is persisted. Uses the same ChatInput
  * as the regular chat page so the UX (model picker, queue, stop, streaming)
  * is identical — the only difference is that no session is saved.
  */
-export function QuickAskDialog() {
+export function OxiosCopilotDialog() {
   const { t } = useTranslation()
   const router = useRouter()
-  const open = useQuickAskStore((s) => s.open)
-  const closeQuickAsk = useQuickAskStore((s) => s.closeQuickAsk)
-  const messages = useQuickAskStore((s) => s.messages)
-  const isStreaming = useQuickAskStore((s) => s.isStreaming)
-  const send = useQuickAskStore((s) => s.send)
-  const cancel = useQuickAskStore((s) => s.cancel)
-  const quickAskModel = useQuickAskStore((s) => s.quickAskModel)
-  const setQuickAskModel = useQuickAskStore((s) => s.setQuickAskModel)
-  const queuedCount = useQuickAskStore((s) => s._pendingQueue.length)
-  const lastExchange = useQuickAskStore((s) => s.lastExchange)
-  const activeToolApproval = useQuickAskStore((s) => s.activeToolApproval)
-  const resolveToolApproval = useQuickAskStore((s) => s.resolveToolApproval)
-  const reset = useQuickAskStore((s) => s.reset)
+  const open = useOxiosCopilotStore((s) => s.open)
+  const closeCopilot = useOxiosCopilotStore((s) => s.closeCopilot)
+  const messages = useOxiosCopilotStore((s) => s.messages)
+  const isStreaming = useOxiosCopilotStore((s) => s.isStreaming)
+  const send = useOxiosCopilotStore((s) => s.send)
+  const cancel = useOxiosCopilotStore((s) => s.cancel)
+  const copilotModel = useOxiosCopilotStore((s) => s.copilotModel)
+  const setCopilotModel = useOxiosCopilotStore((s) => s.setCopilotModel)
+  const queuedCount = useOxiosCopilotStore((s) => s._pendingQueue.length)
+  const lastExchange = useOxiosCopilotStore((s) => s.lastExchange)
+  const activeToolApproval = useOxiosCopilotStore((s) => s.activeToolApproval)
+  const resolveToolApproval = useOxiosCopilotStore((s) => s.resolveToolApproval)
+  const reset = useOxiosCopilotStore((s) => s.reset)
 
   // Sync the engine-config one-shot model into the store (single source: Settings).
   const { data: engineConfig } = useEngineConfig()
   useEffect(() => {
     const configured = engineConfig?.quick_ask_model
     const fallback = engineConfig?.default_model || null
-    setQuickAskModel(configured || fallback)
-  }, [engineConfig?.quick_ask_model, engineConfig?.default_model, setQuickAskModel])
+    setCopilotModel(configured || fallback)
+  }, [engineConfig?.quick_ask_model, engineConfig?.default_model, setCopilotModel])
 
   const [input, setInput] = useState('')
   const [copied, setCopied] = useState(false)
@@ -79,44 +78,25 @@ export function QuickAskDialog() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error(t('quickAsk.copyFailed'))
+      toast.error(t('oxiosCopilot.copyFailed'))
     }
   }
 
   const handlePromote = async () => {
     if (!lastExchange) return
     try {
-      const res = await api.post<{ session_id: string }>('/api/chat/seed', {
-        user_message: lastExchange.prompt,
-        agent_response: lastExchange.reply,
-        trajectory_steps: lastExchange.blocks
-          .filter((b) => b.type === 'tool')
-          .map((b) => {
-            const tb = b as Extract<typeof b, { type: 'tool' }>
-            return {
-              tool: tb.apiName,
-              input: tb.arguments,
-              output: typeof tb.result === 'string' ? tb.result : undefined,
-              duration_ms: tb.durationMs,
-            }
-          }),
-        reasoning_text: lastExchange.blocks
-          .filter((b) => b.type === 'reasoning')
-          .map((b) => {
-            const rb = b as Extract<ChatBlock, { type: 'reasoning' }>
-            return rb.text
-          })
-          .join('\n'),
-        project_id: undefined,
-      })
-      closeQuickAsk()
+      const res = await api.post<{ session_id: string }>(
+        '/api/chat/seed',
+        buildSeedRequestBody(lastExchange),
+      )
+      closeCopilot()
       reset()
       router.history.push('/chat')
       // Seed the chat store so /chat shows the promoted exchange immediately.
       await useChatStore.getState().loadSession(res.session_id)
-      toast.success(t('quickAsk.promoted'))
+      toast.success(t('oxiosCopilot.promoted'))
     } catch {
-      toast.error(t('quickAsk.promoteFailed'))
+      toast.error(t('oxiosCopilot.promoteFailed'))
     }
   }
 
@@ -127,7 +107,7 @@ export function QuickAskDialog() {
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        if (!o) closeQuickAsk()
+        if (!o) closeCopilot()
       }}
     >
       <DialogContent
@@ -137,14 +117,14 @@ export function QuickAskDialog() {
       >
         <DialogHeader className="flex-row items-center justify-between border-b px-5 py-3">
           <div className="flex items-center gap-2">
-            <DialogTitle className="text-sm font-medium">{t('quickAsk.title')}</DialogTitle>
+            <DialogTitle className="text-sm font-medium">{t('oxiosCopilot.title')}</DialogTitle>
           </div>
-          <DialogDescription className="sr-only">{t('quickAsk.placeholder')}</DialogDescription>
+          <DialogDescription className="sr-only">{t('oxiosCopilot.placeholder')}</DialogDescription>
           <Button
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={closeQuickAsk}
+            onClick={closeCopilot}
             aria-label={t('common.close')}
           >
             <X className="h-4 w-4" />
@@ -154,9 +134,21 @@ export function QuickAskDialog() {
         <ScrollArea className="flex-1" ref={scrollRef}>
           <div className="space-y-4 px-5 py-4">
             {empty && !isStreaming && (
-              <p className="py-12 text-center text-sm text-muted-foreground">
-                {t('quickAsk.placeholder')}
-              </p>
+              <div className="py-10 text-center">
+                <p className="text-sm font-medium">{t('oxiosCopilot.subtitle')}</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2 px-6">
+                  {(['addMcp', 'budget', 'tasks', 'model'] as const).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => send(t(`oxiosCopilot.chips.${k}`))}
+                      className="rounded-full border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/70"
+                    >
+                      {t(`oxiosCopilot.chips.${k}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
             {messages.map((m) => (
               <MessageBubble key={m.id} message={m} />
@@ -183,7 +175,7 @@ export function QuickAskDialog() {
                 className="h-7 gap-1.5 px-2 text-xs"
               >
                 {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                {t('quickAsk.copy')}
+                {t('oxiosCopilot.copy')}
               </Button>
               <Button
                 variant="ghost"
@@ -192,10 +184,10 @@ export function QuickAskDialog() {
                 className="h-7 gap-1.5 px-2 text-xs"
               >
                 <MessageSquarePlus className="h-3 w-3" />
-                {t('quickAsk.promote')}
+                {t('oxiosCopilot.promote')}
               </Button>
             </div>
-            <span className="text-[10px] text-muted-foreground">{t('quickAsk.notSaved')}</span>
+            <span className="text-[10px] text-muted-foreground">{t('oxiosCopilot.notSaved')}</span>
           </div>
         )}
 
@@ -209,9 +201,10 @@ export function QuickAskDialog() {
             isStreaming={isStreaming}
             connected={true}
             queuedCount={queuedCount}
-            activeModelId={quickAskModel}
-            setActiveModelId={setQuickAskModel}
-            placeholder={t('quickAsk.placeholder')}
+            variant="copilot"
+            activeModelId={copilotModel}
+            setActiveModelId={setCopilotModel}
+            placeholder={t('oxiosCopilot.placeholder')}
           />
         </div>
       </DialogContent>

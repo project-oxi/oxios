@@ -258,7 +258,7 @@ export function parseChunk(raw: unknown): StreamChunk {
 // ---------------------------------------------------------------------------
 // Pure helpers that mutate a message list by transforming the last assistant
 // message (creating a placeholder if absent). chat.ts (RAF token flush,
-// activity/done cases) and quick-ask.ts (token/activity cases) all route
+// activity/done cases) and oxios-copilot.ts (token/activity cases) all route
 // through these so the "find-or-create assistant + copy array + replace"
 // ceremony — the actual duplication that previously let the reasoning-merge
 // bug drift in — is defined exactly once. Per-store handleChunk keeps its own
@@ -325,7 +325,7 @@ export function ensureLastAssistant(
 
 /**
  * Append token text to the last assistant message, creating a placeholder if
- * none exists. Pure. Used by chat's RAF token-flush and quick-ask's immediate
+ * none exists. Pure. Used by chat's RAF token-flush and oxios-copilot's immediate
  * token append — the transformation is identical; only the batching strategy
  * differs (kept per-store).
  */
@@ -345,14 +345,14 @@ export function appendTokenToMessages(
 /**
  * Append/merge an activity onto the last assistant message (creating a
  * placeholder if absent) and accumulate token counts. Pure. Delegates
- * dedup/merge to mergeOrAppendActivity. Used by both chat and quick-ask so the
+ * dedup/merge to mergeOrAppendActivity. Used by both chat and oxios-copilot so the
 
 
 /**
  * Patch the model of the last assistant message; if no assistant message
  * exists yet, return a `pendingModel` signal so the store can stash it for the
  * next placeholder (consumed via AssistantCtx.placeholderModel). Pure. Lets
- * quick-ask patch the live message too, matching chat's behaviour.
+ * oxios-copilot patch the live message too, matching chat's behaviour.
  */
 export function patchAssistantModel(
   messages: ChatMessage[],
@@ -793,7 +793,7 @@ function applyProcessorResult(
 }
 
 // ---------------------------------------------------------------------------
-// Pure content-chunk routing — shared with quick-ask.ts.
+// Pure content-chunk routing — shared with oxios-copilot.ts.
 // Encapsulates adapt → processor → applyProcessorResult so other stores don't
 // duplicate the helpers or the processor map. Returns a new messages array
 // (caller wraps with setState).

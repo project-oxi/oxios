@@ -77,9 +77,11 @@ impl TaskTool {
         })
     }
 
-    /// Store-only constructor (unit tests; `run` unavailable).
-    #[cfg(test)]
-    fn for_store(store: Arc<Mutex<TaskStore>>, agent_id: Option<String>) -> Self {
+    /// Store-only constructor (production registration path; `run` unavailable).
+    /// Public so `register_tools_from_cspace_gated` can build a TaskTool from a
+    /// raw store handle without an `&Arc<KernelHandle>` (the gated function only
+    /// receives `&KernelHandle`, which is not Clone-able).
+    pub fn for_store(store: Arc<Mutex<TaskStore>>, agent_id: Option<String>) -> Self {
         Self {
             store,
             kernel: None,

@@ -272,6 +272,9 @@ pub fn register_tools_from_cspace(
 /// - ExecTool is created with `AgentContext` and wrapped in [`GatedTool`] so
 ///   RFC-035 Step 2.5 also covers shell + structured exec calls (replacing
 ///   the bespoke exec-only shell approval block)
+/// - When `include_always_on_tools` is `false`, Tier 1 (file ops + web search)
+///   is skipped entirely — used for control-only personas (`ToolProfile::Control`)
+///   whose settings-copilot scope must never include the file system or web
 ///
 /// Use this in production. The ungated version exists for backward compatibility.
 ///
@@ -281,7 +284,7 @@ pub fn register_tools_from_cspace(
 /// * `kernel` — Handle to the kernel for constructing tool instances.
 /// * `cspace` — The agent's capability space (determines which tools are available).
 /// * `search_cache` — Shared search cache for web search tools.
-/// * `agent_id` — The agent's ID (used by A2A tools for routing).
+/// * `agent_id` — The agent's ID (used by A2A + Task tools for routing).
 /// * `gate` — The unified access gate for permission checks.
 /// * `context` — The agent's security context.
 /// * `approval_gate` — RFC-035 approval gate; consults declared policy,
@@ -289,6 +292,30 @@ pub fn register_tools_from_cspace(
 /// * `event_bus` — Publishes `KernelEvent::ApprovalRequested` when
 ///   `RequireApproval` is returned.
 /// * `pending_approvals` — Shared registry of pending user decisions.
+/// * `include_always_on_tools` — When `false`, skip Tier 1 entirely
+///   (used for `ToolProfile::Control`).
+///
+/// # CSpace → Tool mapping
+///
+/// | ResourceRef | Required rights | Registered tools |
+/// |-------------|----------------|-----------------|
+/// | `Exec { .. }` | `EXECUTE` | `ExecTool` (gated) |
+/// | `Browser` | `EXECUTE` | SDK browse tools |
+/// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
+/// | `KernelDomain { "space" }` | any | `ProjectTool` + `MountTool` |
+/// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
+/// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
+/// | `KernelDomain { "persona" }` | any | `PersonaTool` |
+/// | `KernelDomain { "program" }` | any | *(deprecated — skills via CSpace)* |
+/// | `KernelDomain { "security" }` | any | `SecurityTool` |
+/// | `KernelDomain { "budget" }` | any | `BudgetTool` |
+/// | `KernelDomain { "resource" }` | any | `ResourceTool` |
+/// | `KernelDomain { "knowledge" }` | any | `KnowledgeTool` |
+/// | `KernelDomain { "task" }` | any | `TaskTool` (when task store attached) |
+/// | `KernelDomain { "marketplace" }` | any | `MarketplaceTool` |
+/// | `KernelDomain { "mcp_manage" }` | any | `McpManageTool` (approval-gated) |
+/// | `KernelDomain { "engine" }` | any | `EngineTool` (approval-gated) |
+/// | `Program { .. }` | — | *(not registered; surfaced via ToolRetriever)* |
 #[allow(clippy::too_many_arguments)]
 pub fn register_tools_from_cspace_gated(
     registry: &ToolRegistry,
@@ -302,18 +329,24 @@ pub fn register_tools_from_cspace_gated(
     event_bus: Option<crate::event_bus::EventBus>,
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
+    include_always_on_tools: bool,
 ) {
     // ── Tier 1: Always-on tools (gated) ──────────────────────────────
-    register_always_on_gated(
-        registry,
-        search_cache,
-        gate.clone(),
-        context.clone(),
-        approval_gate.clone(),
-        event_bus.clone(),
-        pending_approvals.clone(),
-        pending_path_access.clone(),
-    );
+    // Skipped for control-only personas (ToolProfile::Control): the
+    // always-on tier is file ops + web search, which a settings copilot
+    // must not receive.
+    if include_always_on_tools {
+        register_always_on_gated(
+            registry,
+            search_cache,
+            gate.clone(),
+            context.clone(),
+            approval_gate.clone(),
+            event_bus.clone(),
+            pending_approvals.clone(),
+            pending_path_access.clone(),
+        );
+    }
 
     // ── Tier 2: CSpace-driven tools ─────────────────────────────────
     for cap in cspace.iter() {
@@ -346,7 +379,10 @@ pub fn register_tools_from_cspace_gated(
                     registry.register(crate::tools::MemoryReadTool::from_kernel(kernel));
                     registry.register(crate::tools::MemorySearchTool::from_kernel(kernel));
                 }
-                "space" => registry.register(ProjectTool::from_kernel(kernel)),
+                "space" => {
+                    registry.register(ProjectTool::from_kernel(kernel));
+                    registry.register(MountTool::from_kernel(kernel));
+                }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
                     registry.register(A2aDelegateTool::from_kernel(kernel, agent_id));
@@ -360,6 +396,30 @@ pub fn register_tools_from_cspace_gated(
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
                 "knowledge" => registry.register(KnowledgeTool::from_kernel(kernel)),
+                "task" => {
+                    if let Some(store) = kernel.task_store.clone() {
+                        registry.register(TaskTool::for_store(store, Some(agent_id.to_string())));
+                    }
+                }
+                "marketplace" => registry.register(MarketplaceTool::from_kernel(kernel)),
+                "mcp_manage" => registry.register(GatedTool::with_approval(
+                    McpManageTool::from_kernel(kernel),
+                    gate.clone(),
+                    context.clone(),
+                    approval_gate.clone(),
+                    event_bus.clone(),
+                    pending_approvals.clone(),
+                    pending_path_access.clone(),
+                )),
+                "engine" => registry.register(GatedTool::with_approval(
+                    EngineTool::from_kernel(kernel),
+                    gate.clone(),
+                    context.clone(),
+                    approval_gate.clone(),
+                    event_bus.clone(),
+                    pending_approvals.clone(),
+                    pending_path_access.clone(),
+                )),
                 "mcp" => {}
                 _ => {}
             },

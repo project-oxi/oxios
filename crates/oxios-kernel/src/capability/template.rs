@@ -234,6 +234,36 @@ impl CapabilityTemplate {
         Self { caps: Vec::new() }
     }
 
+    /// **Control** — Oxios self-management only. No exec/browser/file tools,
+    /// no user-content tools (email send, calendar events).
+    ///
+    /// Grants exactly the domains needed to inspect and mutate Oxios's own
+    /// configuration: projects/mounts, personas, tasks, security, budget,
+    /// resource limits, running agents, marketplace skills, MCP server
+    /// management, and model/engine settings.
+    pub fn control_profile() -> Self {
+        let mut t = Self { caps: Vec::new() };
+        let domains = [
+            "space",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
+        ];
+        t.caps.extend(domains.map(|d| {
+            (
+                ResourceRef::KernelDomain { domain: d.into() },
+                Rights::READ | Rights::WRITE | Rights::EXECUTE,
+            )
+        }));
+        t
+    }
+
     // ── Builder methods ─────────────────────────────────────────────
 
     /// Add an additional capability to the template.
@@ -367,5 +397,45 @@ mod tests {
         let id = AgentId::new_v4();
         let cs = CapabilityTemplate::worker().build_for(id);
         assert_eq!(cs.agent_id, id);
+    }
+
+    #[test]
+    fn control_profile_grants_only_control_domains() {
+        let t = CapabilityTemplate::control_profile();
+        let cs = t.build_for(AgentId::new_v4());
+        let kd: Vec<String> = cs
+            .iter()
+            .filter_map(|c| match &c.resource {
+                ResourceRef::KernelDomain { domain } => Some(domain.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut expected = vec![
+            "space",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
+        ];
+        expected.sort();
+        let mut got = kd.clone();
+        got.sort();
+        assert_eq!(got, expected);
+        // No exec, browser, memory, knowledge, a2a, or skill resources.
+        for cap in cs.iter() {
+            assert!(
+                !matches!(
+                    &cap.resource,
+                    ResourceRef::Exec { .. } | ResourceRef::Browser | ResourceRef::Skill { .. }
+                ),
+                "control profile must not grant {:?}",
+                cap.resource
+            );
+        }
     }
 }

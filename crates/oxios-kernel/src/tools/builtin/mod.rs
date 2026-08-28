@@ -20,9 +20,11 @@ pub mod budget_tool;
 pub mod calendar_tool;
 
 pub mod email_tool;
+pub mod engine_tool;
 pub mod image_generation_tool;
 pub mod knowledge_tool;
 pub mod marketplace_tool;
+pub mod mcp_manage_tool;
 // First-party app module tools (opt-in, feature-gated).
 #[cfg(feature = "memo")]
 pub mod memo_tool;
@@ -43,9 +45,11 @@ pub use budget_tool::BudgetTool;
 pub use calendar_tool::CalendarTool;
 
 pub use email_tool::EmailTool;
+pub use engine_tool::EngineTool;
 pub use image_generation_tool::ImageGenerationTool;
 pub use knowledge_tool::KnowledgeTool;
 pub use marketplace_tool::MarketplaceTool;
+pub use mcp_manage_tool::McpManageTool;
 #[cfg(feature = "memo")]
 pub use memo_tool::MemoTool;
 pub use mount_tool::MountTool;

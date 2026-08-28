@@ -11,13 +11,13 @@ import {
 } from './chat'
 
 // ---------------------------------------------------------------------------
-// QuickAsk — one-shot, non-persisted question/answer store.
+// Oxios Copilot — one-shot, non-persisted question/answer store.
 //
 // Opens its own short-lived WebSocket, sends `ephemeral: true` so the backend
 // skips session persistence (chat.rs ephemeral flag), streams the reply with
 // the same transparency chunks as /chat, and tears down on `done`/close.
 // No session is ever written to StateStore; nothing appears in the sidebar.
-// See docs/designs/2026-07-05-one-shot-quick-ask-design.md.
+// See docs/designs/2026-07-05-one-shot-oxios-copilot-design.md.
 //
 // Shares the pure chunk parsers / WS URL builder with chat.ts (no duplication).
 // Token batching uses the same RAF pattern as chat.ts so the UX is identical.
@@ -30,14 +30,58 @@ export interface CapturedExchange {
   model?: string
   sessionId?: string
 }
+export const COPILOT_PERSONA_ID = 'oxios' as const
 
-interface QuickAskState {
+/** Pure WS message payload — locked persona, ephemeral, selected model.
+ *  Exported so tests can build the same payload without opening a WebSocket.
+ *  Task 9 locks persona_id here so neither call site can forget it. */
+export function buildCopilotMessagePayload(content: string, model: string | null) {
+  return {
+    type: 'message',
+    content,
+    ephemeral: true,
+    persona_id: COPILOT_PERSONA_ID,
+    model: model ?? '',
+  } as const
+}
+
+/** Pure /api/chat/seed body — same shape the dialog builds today, plus
+ *  `persona_id` so the seeded session is bound to the oxios persona.
+ *  Trajectory/reasoning mapping preserved verbatim from handlePromote
+ *  (tool blocks → {tool, input, output, duration_ms}; reasoning → joined text). */
+export function buildSeedRequestBody(ex: CapturedExchange) {
+  return {
+    user_message: ex.prompt,
+    agent_response: ex.reply,
+    trajectory_steps: ex.blocks
+      .filter((b) => b.type === 'tool')
+      .map((b) => {
+        const tb = b as Extract<ChatBlock, { type: 'tool' }>
+        return {
+          tool: tb.apiName,
+          input: tb.arguments,
+          output: typeof tb.result === 'string' ? tb.result : undefined,
+          duration_ms: tb.durationMs,
+        }
+      }),
+    reasoning_text: ex.blocks
+      .filter((b) => b.type === 'reasoning')
+      .map((b) => {
+        const rb = b as Extract<ChatBlock, { type: 'reasoning' }>
+        return rb.text
+      })
+      .join('\n'),
+    project_id: undefined,
+    persona_id: COPILOT_PERSONA_ID,
+  }
+}
+interface OxiosCopilotState {
   open: boolean
   messages: ChatMessage[]
   isStreaming: boolean
   pendingModel: string | null
   /** From engine config (Settings → One-shot model); falls back to default. */
-  quickAskModel: string | null
+  copilotModel: string | null
   /** Captured exchange for "promote to chat" (§5.6). */
   lastExchange: CapturedExchange | null
   /** Active tool-approval request id, if the one-shot triggers one. */
@@ -48,9 +92,9 @@ interface QuickAskState {
   _pendingQueue: string[]
   _ws: WebSocket | null
 
-  openQuickAsk: () => void
-  closeQuickAsk: () => void
-  setQuickAskModel: (model: string | null) => void
+  openCopilot: () => void
+  closeCopilot: () => void
+  setCopilotModel: (model: string | null) => void
   send: (content: string) => void
   /** Cancel the in-flight stream and discard the queue. */
   cancel: () => void
@@ -80,9 +124,9 @@ function flushPendingTokens(): void {
   if (!_pendingTokens) return
   const content = _pendingTokens
   _pendingTokens = ''
-  useQuickAskStore.setState((s) => ({
+  useOxiosCopilotStore.setState((s) => ({
     messages: applyTextFlush(s.messages, content, {
-      placeholderModel: s.pendingModel ?? s.quickAskModel,
+      placeholderModel: s.pendingModel ?? s.copilotModel,
     }),
   }))
 }
@@ -102,7 +146,7 @@ function discardPendingTokens(): void {
   }
   _pendingTokens = ''
 }
-// Tool-approval ids the user has already acted on. QuickAsk opens its own
+// Tool-approval ids the user has already acted on. Oxios Copilot opens its own
 // short-lived WS, so it keeps a separate set from chat.ts. A reconnect replay
 // can re-deliver a tool_approval chunk for an approval already resolved on
 // the backend; without dedup the replay re-arms a dead card whose every click
@@ -123,18 +167,18 @@ export function __clearResolvedApprovalIdsForTesting(): void {
   _resolvedApprovalIds.clear()
 }
 
-export const useQuickAskStore = create<QuickAskState>((set, get) => ({
+export const useOxiosCopilotStore = create<OxiosCopilotState>((set, get) => ({
   open: false,
   messages: [],
   isStreaming: false,
   pendingModel: null,
-  quickAskModel: null,
+  copilotModel: null,
   lastExchange: null,
   activeToolApproval: null,
   _pendingQueue: [],
   _ws: null,
 
-  openQuickAsk: () => {
+  openCopilot: () => {
     // Opening while streaming focuses the existing dialog (singleton).
     if (get().isStreaming) {
       set({ open: true })
@@ -143,17 +187,17 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
     set({ open: true, messages: [], lastExchange: null, pendingModel: null })
   },
 
-  closeQuickAsk: () => {
+  closeCopilot: () => {
     discardPendingTokens()
     const ws = get()._ws
     if (ws && ws.readyState === WebSocket.OPEN) ws.close()
     set({ open: false, _ws: null, isStreaming: false, _pendingQueue: [] })
   },
 
-  setQuickAskModel: (model) => set({ quickAskModel: model }),
+  setCopilotModel: (model) => set({ copilotModel: model }),
 
   send: (content) => {
-    const { quickAskModel, isStreaming, _ws, messages } = get()
+    const { copilotModel, isStreaming, _ws, messages } = get()
     if (!content.trim()) return
 
     // Queue if currently streaming (same pattern as chat.ts _pendingQueue).
@@ -188,16 +232,8 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
         const ws =
           _ws && _ws.readyState === WebSocket.OPEN ? _ws : new WebSocket(await buildWsUrl())
         set({ _ws: ws })
-
         const sendPayload = () => {
-          ws.send(
-            JSON.stringify({
-              type: 'message',
-              content,
-              ephemeral: true,
-              model: quickAskModel ?? '',
-            }),
-          )
+          ws.send(JSON.stringify(buildCopilotMessagePayload(content, copilotModel)))
         }
 
         if (ws.readyState === WebSocket.OPEN) {
@@ -257,11 +293,11 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
         body: JSON.stringify({ approved, ...(remember ? { remember: true } : {}) }),
       })
       if (!res.ok && res.status !== 404) {
-        console.warn('[quick-ask] tool approval respond failed:', res.status)
+        console.warn('[oxios-copilot] tool approval respond failed:', res.status)
       }
     } catch (e) {
       // Non-blocking — the backend oneshot times out on its own.
-      console.warn('[quick-ask] tool approval respond error:', e)
+      console.warn('[oxios-copilot] tool approval respond error:', e)
     }
     set({ activeToolApproval: null })
   },
@@ -300,14 +336,14 @@ export const useQuickAskStore = create<QuickAskState>((set, get) => ({
 // creation) route through shared pure primitives imported from chat.ts
 // (appendTokenToMessages / appendActivityToMessages / patchAssistantModel) so
 // this store and the chat store cannot drift apart. Token batching uses the
-// same RAF pattern as chat.ts. What stays quick-ask-specific: promote-capture
+// same RAF pattern as chat.ts. What stays oxios-copilot-specific: promote-capture
 // on done, and the divergent done/interview/error/tool_approval side effects.
 // ---------------------------------------------------------------------------
 
 type SetFn = (
-  partial: Partial<QuickAskState> | ((s: QuickAskState) => Partial<QuickAskState>),
+  partial: Partial<OxiosCopilotState> | ((s: OxiosCopilotState) => Partial<OxiosCopilotState>),
 ) => void
-type GetFn = () => QuickAskState
+type GetFn = () => OxiosCopilotState
 
 function updateAssistant(set: SetFn, fn: (m: ChatMessage) => ChatMessage): void {
   set((s) => {
@@ -366,7 +402,7 @@ function handleChunk(chunk: StreamChunk, set: SetFn, get: GetFn): void {
     case 'usage': {
       set((s) => ({
         messages: applyContentChunk(s.messages, chunk, {
-          placeholderModel: s.pendingModel ?? s.quickAskModel ?? undefined,
+          placeholderModel: s.pendingModel ?? s.copilotModel ?? undefined,
         }).messages,
       }))
       break
@@ -416,7 +452,7 @@ function handleChunk(chunk: StreamChunk, set: SetFn, get: GetFn): void {
             prompt,
             reply,
             blocks,
-            model: assistant.model ?? state.pendingModel ?? state.quickAskModel ?? undefined,
+            model: assistant.model ?? state.pendingModel ?? state.copilotModel ?? undefined,
             sessionId: chunk.session_id,
           },
         })

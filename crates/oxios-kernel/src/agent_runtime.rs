@@ -43,7 +43,7 @@ use crate::access_manager::{
 };
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
-use crate::persona::PersonaManager;
+use crate::persona::{PersonaManager, ToolProfile};
 use crate::tools::registration::register_tools_from_cspace_gated;
 
 use crate::KernelHandle;
@@ -399,7 +399,7 @@ impl AgentRuntime {
         let persona_role = persona.as_ref().map(|p| p.role.clone());
 
         // Resolve CSpace from the persona's tool profile (base | code |
-        // minimal). An explicit directive hint overrides the profile.
+        // minimal | control). An explicit directive hint overrides the profile.
         let tool_profile = persona.as_ref().map(|p| p.tool_profile).unwrap_or_default();
         let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
         // Build system prompt (without SKILL.md injection — capabilities are
@@ -585,6 +585,7 @@ impl AgentRuntime {
                 session_id.clone(),
                 mount_paths,
                 restore_state,
+                tool_profile,
             )
             .await?
         };
@@ -765,6 +766,7 @@ async fn run_agent(
     session_id: Option<String>,
     mount_paths: &[std::path::PathBuf],
     restore_state: Option<&serde_json::Value>,
+    tool_profile: ToolProfile,
 ) -> Result<(
     String,
     usize,
@@ -1015,6 +1017,7 @@ async fn run_agent(
         Some(approval_event_bus),
         Some(approval_pending),
         Some(path_access_pending),
+        tool_profile != ToolProfile::Control,
     );
 
     tracing::info!(

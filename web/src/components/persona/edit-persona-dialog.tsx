@@ -36,7 +36,7 @@ export interface PersonaItem {
   system_prompt?: string
   default_mount_ids?: string[]
   /// Tool access profile: 'base' | 'code' | 'minimal'.
-  tool_profile?: 'base' | 'code' | 'minimal'
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
   /// Whether this persona is the global active one (list endpoint).
   active?: boolean
 }
@@ -49,7 +49,7 @@ export interface PersonaPatch {
   category?: string
   genre?: string | null
   default_mount_ids?: string[]
-  tool_profile?: 'base' | 'code' | 'minimal'
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
 }
 
 interface EditPersonaDialogProps {
@@ -71,7 +71,7 @@ interface PersonaDetail {
   category?: string
   genre?: string | null
   default_mount_ids?: string[]
-  tool_profile?: 'base' | 'code' | 'minimal'
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
 }
 
 /**
@@ -97,7 +97,7 @@ export function EditPersonaDialog({
   const { data: mountsData } = useMounts()
   const [category, setCategory] = useState('general')
   const [genre, setGenre] = useState<string>('')
-  const [toolProfile, setToolProfile] = useState<'base' | 'code' | 'minimal'>('code')
+  const [toolProfile, setToolProfile] = useState<'base' | 'code' | 'control' | 'minimal'>('code')
   const [defaultMountIds, setDefaultMountIds] = useState<string[]>([])
 
   const detail = useQuery({
@@ -252,7 +252,7 @@ export function EditPersonaDialog({
               <p className="text-xs text-muted-foreground">{t('personas.toolProfileHint')}</p>
               <Select
                 value={toolProfile}
-                onValueChange={(v) => setToolProfile(v as 'base' | 'code' | 'minimal')}
+                onValueChange={(v) => setToolProfile(v as 'base' | 'code' | 'control' | 'minimal')}
                 options={(['base', 'code', 'minimal'] as const).map((p) => ({
                   label: t(`personas.toolProfiles.${p}`),
                   value: p,

@@ -203,12 +203,12 @@ impl Kernel {
                     ),
                     oxios_kernel::A2aApi::new(self.a2a_protocol.clone()),
                     // EngineApi — LLM providers, models, config + routing stats + engine hot-swap
-                    oxios_kernel::EngineApi::new(
+                    Arc::new(oxios_kernel::EngineApi::new(
                         Arc::new(parking_lot::RwLock::new(self.config.clone())),
                         self.config_path.clone(),
                         Arc::new(oxios_kernel::RoutingStats::new()),
                         Arc::clone(&self.engine_handle),
-                    ),
+                    )),
                     knowledge,
                     knowledge_lens,
                     self.build_marketplace_api(),
@@ -1587,12 +1587,12 @@ impl KernelBuilder {
                 ),
                 oxios_kernel::A2aApi::new(a2a_protocol.clone()),
                 // EngineApi — routing stats shared between EngineApi and AgentRuntime + engine hot-swap
-                oxios_kernel::EngineApi::new(
+                Arc::new(oxios_kernel::EngineApi::new(
                     Arc::new(parking_lot::RwLock::new(config.clone())),
                     config_path.clone(),
                     Arc::clone(&routing_stats),
                     Arc::clone(&engine_handle),
-                ),
+                )),
                 // KnowledgeBase — single source of truth (RFC-003), shared
                 knowledge_base.clone(),
                 // KnowledgeLens — semantic overlay, shares same KnowledgeBase

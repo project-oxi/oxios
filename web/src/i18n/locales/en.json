@@ -1486,7 +1486,8 @@
     "profileBadge": {
       "base": "full tools",
       "code": "coding tools",
-      "minimal": "minimal tools"
+      "minimal": "minimal tools",
+      "control": "Control"
     },
     "sessionPersonaHint": "Pick a per-session persona from the chat composer"
   },
@@ -1564,16 +1565,23 @@
     "typeAnswer": "Type your answer…",
     "typeSomething": "Type something…"
   },
-  "quickAsk": {
-    "title": "Quick Ask",
-    "placeholder": "Ask anything — not saved",
+  "oxiosCopilot": {
+    "title": "Oxios Copilot",
+    "subtitle": "Ask about or manage this Oxios instance.",
+    "placeholder": "Ask Oxios — not saved",
+    "chips": {
+      "addMcp": "Add an MCP server",
+      "budget": "Show this month's budget",
+      "tasks": "List scheduled tasks",
+      "model": "Change the default model"
+    },
     "copy": "Copy",
-    "promote": "Promote to chat",
+    "copyFailed": "Copy failed",
+    "promote": "Save as session",
+    "promoted": "Saved as a session",
+    "promoteFailed": "Failed to save as a session",
     "notSaved": "Not saved",
-    "openAria": "Open quick ask",
-    "copyFailed": "Failed to copy",
-    "promoted": "Promoted to chat",
-    "promoteFailed": "Failed to promote to chat"
+    "openAria": "Ask Oxios"
   },
   "resources": {
     "title": "Resources",

@@ -93,6 +93,6 @@ export const handlers = [
   // ── Notifications ───────────────────────────────────────────────────────
   http.get('/api/notifications', () => HttpResponse.json({ items: [] })),
 
-  // ── Quick-ask (sidebar mini chat) ───────────────────────────────────────
+  // ── Oxios Copilot (one-shot dialog stub) ─────────────────────────────────
   http.get('/api/quick-ask', () => HttpResponse.json({ items: [] })),
 ]

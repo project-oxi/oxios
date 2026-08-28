@@ -66,6 +66,13 @@ interface ChatInputProps {
   isStreaming?: boolean
   connected?: boolean
   queuedCount?: number
+  /**
+   * `'chat'` (default) — full composer with persona picker, files, mentions,
+   * model params, and fan-out. `'copilot'` restricts the UI to match the
+   * locked-persona Copilot dialog boundary: no persona/files/mentions/params/
+   * fan-out; model picker and approval mode stay.
+   */
+  variant?: 'chat' | 'copilot'
   roles?: { name: string; model: string }[]
   activeRole?: string | null
   setActiveRole?: (role: string | null) => void
@@ -171,6 +178,7 @@ export function ChatInput({
   isStreaming,
   connected,
   queuedCount = 0,
+  variant = 'chat',
   roles = [],
   activeRole = null,
   setActiveRole = () => {},
@@ -183,12 +191,17 @@ export function ChatInput({
 }: ChatInputProps) {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
-
+  // Copilot dialog boundary: hide persona / files / mentions / params / fan-out.
+  const isCopilot = variant === 'copilot'
   // State
   const [contextAttachments, setContextAttachments] = useState<ContextAttachment[]>([])
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
+  // Mirror isCopilot so memoized file/drag handlers can early-return without
+  // re-creating their identity (they are passed as DOM props).
+  const isCopilotRef = useRef(false)
+  isCopilotRef.current = isCopilot
   const fileInputRef = useRef<HTMLInputElement>(null)
   const maxFileSize = 10 * 1024 * 1024
   const [showSlashMenu, setShowSlashMenu] = useState(false)
@@ -212,11 +225,20 @@ export function ChatInput({
   // as useCallback deps recreated searchMentions every render, re-running the
   // effect every render. Its `setMentionResults([])` (a new array ref) then
   // never bailed, producing a setState→render loop (React #185). Mirror the
-  // latest inputs in a ref and read them inside a stable callback.
-  const searchInputsRef = useRef({ knowledgeSearch, memorySearch, mountsData, roles })
-  searchInputsRef.current = { knowledgeSearch, memorySearch, mountsData, roles }
+  // latest inputs — and the copilot variant flag — in a ref and read them
+  // inside a stable callback (copilot early-returns [] so the @ popover
+  // never opens).
+  const searchInputsRef = useRef({
+    knowledgeSearch,
+    memorySearch,
+    mountsData,
+    roles,
+    isCopilot: false,
+  })
+  searchInputsRef.current = { knowledgeSearch, memorySearch, mountsData, roles, isCopilot }
 
   const searchMentions = useCallback(async (query: string): Promise<MentionResult[]> => {
+    if (searchInputsRef.current.isCopilot) return []
     const {
       knowledgeSearch: k,
       memorySearch: mem,
@@ -411,8 +433,12 @@ export function ChatInput({
       } else {
         setShowSlashMenu(false)
       }
-      // @mentions
-      const mentionMatch = textBefore.match(/@(\S*)$/)
+      // @mentions — suppressed in the copilot variant: searchMentions
+      // early-returns [] there, and letting mentionQuery go non-null would
+      // render a stray "no results" popover and block Enter-to-send. The
+      // editor config is captured once at mount, so gate via the ref (same
+      // pattern as the file/drag handlers).
+      const mentionMatch = isCopilotRef.current ? null : textBefore.match(/@(\S*)$/)
       if (mentionMatch) {
         setMentionQuery(mentionMatch[1] || '')
       } else {
@@ -518,6 +544,7 @@ export function ChatInput({
   )
   const handleFilePick = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
+      if (isCopilotRef.current) return
       if (e.target.files) addFiles(e.target.files)
       // Reset so the same file can be re-selected
       e.target.value = ''
@@ -525,14 +552,25 @@ export function ChatInput({
     [addFiles],
   )
 
-  // Drag-drop
+  // Drag-drop — Copilot dialog drops nothing; just swallow the event so the
+  // browser does not navigate to the file URL.
   const handleDragEnter = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     dragCounter.current++
     if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true)
   }, [])
   const handleDragLeave = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     dragCounter.current--
@@ -542,11 +580,21 @@ export function ChatInput({
     }
   }, [])
   const handleDragOver = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
   }, [])
   const handleDrop = useCallback(
     (e: DragEvent) => {
+      if (isCopilotRef.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
@@ -789,30 +837,34 @@ export function ChatInput({
             <ModelPickerContainer
               activeModelId={activeModelId}
               setActiveModelId={setActiveModelId}
-              roles={roles}
-              activeRole={activeRole}
+              roles={isCopilot ? [] : roles}
+              activeRole={isCopilot ? null : activeRole}
               setActiveRole={setActiveRole}
             />
-            <PersonaPickerContainer />
+            {!isCopilot && <PersonaPickerContainer />}
             <ApprovalModeSelector />
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={handleFilePick}
-              className="hidden"
-              aria-label={t('chat.attachFiles')}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              title={t('chat.attachFiles')}
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
-            <ModelParamsPopover />
-            {capabilities.has('worktree-fanout') && <FanOutButton />}
+            {!isCopilot && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFilePick}
+                  className="hidden"
+                  aria-label={t('chat.attachFiles')}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={t('chat.attachFiles')}
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+            {!isCopilot && <ModelParamsPopover />}
+            {!isCopilot && capabilities.has('worktree-fanout') && <FanOutButton />}
           </div>
           {/* Right: queue + send */}
           <div className="flex items-center shrink-0 gap-1.5">

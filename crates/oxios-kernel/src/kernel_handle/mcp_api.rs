@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// MCP system calls.
+#[derive(Clone)]
 pub struct McpApi {
     pub(crate) mcp_bridge: Arc<McpBridge>,
 }

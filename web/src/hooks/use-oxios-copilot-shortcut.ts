@@ -1,16 +1,16 @@
 import { useEffect } from 'react'
-import { useQuickAskStore } from '@/stores/quick-ask'
+import { useOxiosCopilotStore } from '@/stores/oxios-copilot'
 
 /**
- * Registers the global ⌘J shortcut that opens the QuickAsk dialog from any
+ * Registers the global ⌘J shortcut that opens the Oxios Copilot dialog from any
  * route. Mounted once in AppLayout alongside the other global hooks.
  */
-export function useQuickAskShortcut(): void {
+export function useOxiosCopilotShortcut(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
-        useQuickAskStore.getState().openQuickAsk()
+        useOxiosCopilotStore.getState().openCopilot()
       }
     }
     window.addEventListener('keydown', onKey)

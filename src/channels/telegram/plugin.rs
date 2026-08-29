@@ -101,8 +101,46 @@ mod tests {
     use crate::channels::telegram::fake_server::{self, FakeResponse};
     use oxios_kernel::OxiosConfig;
 
-    /// Unique env-var name so parallel tests never collide.
+    /// Unique env-var name; every test touching it holds [`ENV_LOCK`] — see
+    /// `project::paths::test_support` for the same pattern over
+    /// `OXIOS_DATA_HOME`.
     const TEST_ENV: &str = "OXIOS_TEST_TELEGRAM_TOKEN_X7Q";
+
+    /// Serializes all reads and writes of [`TEST_ENV`]. Env vars are
+    /// process-global and Rust runs unit tests in parallel threads of one
+    /// process, so per-test `set_var`/`remove_var` calls race the sibling
+    /// tests that read the same variable.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Scoped [`TEST_ENV`] override: holds [`ENV_LOCK`] for the whole test
+    /// body and restores the previous value on drop, so a panicking test can
+    /// neither leak the value into the next test nor poison the lock for the
+    /// rest of the binary.
+    struct EnvToken {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<String>,
+    }
+
+    impl EnvToken {
+        fn set(value: &str) -> Self {
+            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var(TEST_ENV).ok();
+            // SAFETY: guarded by ENV_LOCK; restored on drop.
+            unsafe { std::env::set_var(TEST_ENV, value) };
+            Self { _lock: lock, prev }
+        }
+    }
+
+    impl Drop for EnvToken {
+        fn drop(&mut self) {
+            // SAFETY: the lock is still held; no other test thread can be
+            // reading or writing this variable.
+            match self.prev.take() {
+                Some(v) => unsafe { std::env::set_var(TEST_ENV, v) },
+                None => unsafe { std::env::remove_var(TEST_ENV) },
+            }
+        }
+    }
 
     fn ctx_with_api_base(base: String) -> ChannelContext {
         let mut config = OxiosConfig::default();
@@ -116,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn setup_succeeds_with_valid_token_from_env() {
-        unsafe { std::env::set_var(TEST_ENV, "tok-1") };
+        let _env = EnvToken::set("tok-1");
         let server = fake_server::spawn(FakeResponse::Ok {
             username: "oxios_bot".into(),
         })
@@ -124,7 +162,6 @@ mod tests {
         let bundle = TelegramPlugin::new()
             .setup(ctx_with_api_base(server.base_url))
             .await;
-        unsafe { std::env::remove_var(TEST_ENV) };
         let bundle = bundle.expect("setup with valid env token + reachable API");
         assert_eq!(bundle.channel.name(), "telegram");
         assert!(bundle.tasks.is_empty());
@@ -132,14 +169,13 @@ mod tests {
 
     #[tokio::test]
     async fn setup_fails_fast_on_rejected_token() {
-        unsafe { std::env::set_var(TEST_ENV, "tok-bad") };
+        let _env = EnvToken::set("tok-bad");
         let server = fake_server::spawn(FakeResponse::Unauthorized).await;
         let err = TelegramPlugin::new()
             .setup(ctx_with_api_base(server.base_url))
             .await
             .err()
             .expect("setup must fail on 401");
-        unsafe { std::env::remove_var(TEST_ENV) };
         let msg = err.to_string();
         assert!(msg.contains("rejected"), "unexpected error: {msg}");
         assert!(msg.contains("Unauthorized"), "unexpected error: {msg}");
@@ -152,12 +188,11 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
-        unsafe { std::env::set_var(TEST_ENV, "tok-2") };
+        let _env = EnvToken::set("tok-2");
         let bundle = TelegramPlugin::new()
             .setup(ctx_with_api_base(base))
             .await
             .expect("setup must proceed when Telegram is unreachable");
-        unsafe { std::env::remove_var(TEST_ENV) };
         assert_eq!(bundle.channel.name(), "telegram");
         assert!(bundle.channel.status().is_null());
     }
@@ -189,9 +224,8 @@ mod tests {
 
     #[test]
     fn resolve_bot_token_env_wins() {
-        unsafe { std::env::set_var(TEST_ENV, "env-token") };
+        let _env = EnvToken::set("env-token");
         let token = resolve_bot_token(TEST_ENV).expect("env token must resolve");
-        unsafe { std::env::remove_var(TEST_ENV) };
         assert_eq!(token, "env-token");
     }
 }

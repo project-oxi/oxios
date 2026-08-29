@@ -166,6 +166,10 @@ pub struct KernelHandle {
     /// the kernel assembler so the web routes, the auto-run tick, and the
     /// `task` agent tool share ONE store. `None` on the preliminary handle.
     pub task_store: Option<Arc<tokio::sync::Mutex<crate::task::TaskStore>>>,
+    /// Structured web-search side channel: search tools insert payloads
+    /// keyed by `tool_call_id`; the agent-runtime completion callback takes
+    /// them when publishing `KernelEvent::ToolExecutionFinished`.
+    pub search_results: Arc<crate::tools::SearchResultBus>,
 }
 
 impl KernelHandle {
@@ -218,6 +222,10 @@ impl KernelHandle {
             compression: None,
             host_tools: HostToolsApi::new(),
             streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
+            // Structured web-search side channel (tools → runtime callback).
+            // Per-handle by default; the assembler may inject a shared
+            // instance across handles via `with_search_results`.
+            search_results: Arc::new(crate::tools::SearchResultBus::new()),
             turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
@@ -324,6 +332,16 @@ impl KernelHandle {
     /// primitive via [`Self::run_goal`].
     pub fn with_orchestrator(mut self, orchestrator: Arc<Orchestrator>) -> Self {
         self.orchestrator = Some(orchestrator);
+        self
+    }
+
+    /// Share one [`crate::tools::SearchResultBus`] across handles.
+    ///
+    /// Called by the kernel assembler so the preliminary handle (AgentRuntime)
+    /// and the cached control-plane handle observe the same structured
+    /// search payloads.
+    pub fn with_search_results(mut self, bus: Arc<crate::tools::SearchResultBus>) -> Self {
+        self.search_results = bus;
         self
     }
 

@@ -885,6 +885,13 @@ impl EngineApi {
         self.config.read().engine.role_routing.clone()
     }
 
+    /// Current web-search provider config (`[search]` section). Reads the
+    /// LIVE config under its shared RwLock so config updates take effect on
+    /// the next agent run.
+    pub fn search_config(&self) -> crate::config::SearchConfig {
+        self.config.read().search.clone()
+    }
+
     /// RFC-032: Resolve the model ID for a given role, if configured.
     /// Reads the LIVE config under its shared RwLock so updates take
     /// effect immediately. Returns `None` when the role is not in

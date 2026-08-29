@@ -256,6 +256,20 @@ space = "personal"
 # system_calendar = true
 # archive_after_days = 365
 
+# Web search provider for the `web_search` tool ([search]).
+# provider = "scrape"  → zero-config multi-engine scraping (DuckDuckGo /
+#                        Wikipedia / Bing). Best-effort quality.
+# provider = "tavily"  → Tavily Search API (LLM-oriented, structured results).
+# provider = "brave"   → Brave Search API (independent index, region control).
+# When a managed provider is configured but the call fails (bad key, network,
+# quota), the tool automatically falls back to the scraping engines.
+# [search]
+# provider = "scrape"
+# tavily_api_key = ""
+# brave_api_key = ""
+# timeout_secs = 15
+# region = "kr-KR"     # Brave country/search_lang hint (e.g. "kr-KR", "en-US")
+
 # Agent history log (enabled by default).
 # Controls how past agent executions are retained for transparent observation.
 [agent_log]

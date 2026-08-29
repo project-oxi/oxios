@@ -1373,6 +1373,9 @@ pub struct OxiosConfig {
     /// Image generation configuration (OpenAI-compatible providers).
     #[serde(default)]
     pub image_gen: ImageGenConfig,
+    /// Web search provider configuration (`[search]`).
+    #[serde(default)]
+    pub search: SearchConfig,
     /// oximemo integration (opt-in first-party app module; requires the `memo`
     /// cargo feature). oxios acts as a co-client of the oximemo vault.
     #[serde(default)]
@@ -1432,6 +1435,65 @@ fn default_image_gen_base_url() -> String {
 fn default_image_gen_num() -> u8 {
     1
 }
+
+/// Active web-search provider for the `web_search` tool.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchProvider {
+    /// Zero-config scraping engines (DuckDuckGo / Wikipedia / Bing).
+    /// No API key required; result quality is best-effort.
+    #[default]
+    Scrape,
+    /// Tavily Search API (https://tavily.com) — LLM-oriented, structured
+    /// results with content snippets. Requires `tavily_api_key`.
+    Tavily,
+    /// Brave Search API (https://brave.com/search/api/) — independent
+    /// index, freshness and region control. Requires `brave_api_key`.
+    Brave,
+}
+
+/// Web search provider configuration (`[search]`).
+///
+/// The always-on `web_search` tool prefers the configured managed provider
+/// (structured results, snippets, freshness) and falls back to the
+/// zero-config scraping engines when no provider is set or the provider
+/// call fails.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchConfig {
+    /// Active provider. Default: `scrape`.
+    #[serde(default)]
+    pub provider: SearchProvider,
+    /// Tavily API key. Required when `provider = "tavily"`.
+    #[serde(default)]
+    pub tavily_api_key: String,
+    /// Brave Search subscription token. Required when `provider = "brave"`.
+    #[serde(default)]
+    pub brave_api_key: String,
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_search_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Region/locale hint for providers that support it (e.g. "kr-KR").
+    /// Empty = provider default.
+    #[serde(default)]
+    pub region: String,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            provider: SearchProvider::Scrape,
+            tavily_api_key: String::new(),
+            brave_api_key: String::new(),
+            timeout_secs: default_search_timeout_secs(),
+            region: String::new(),
+        }
+    }
+}
+
+fn default_search_timeout_secs() -> u64 {
+    15
+}
+
 
 /// Kernel configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]

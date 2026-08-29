@@ -631,6 +631,7 @@ impl Kernel {
                 None,
                 None, // model_params
                 None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await
@@ -656,6 +657,7 @@ impl Kernel {
                 None, // model_override
                 None, // model_params
                 None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await

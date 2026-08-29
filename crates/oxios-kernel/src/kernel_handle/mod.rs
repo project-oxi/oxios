@@ -392,6 +392,7 @@ impl KernelHandle {
             None,
             None,
             None,
+            None, // brain_space
             &request_id,
         )
         .await

@@ -15,7 +15,7 @@
 // illegal, so the gates live inside the effects.
 
 import { useEffect, useRef } from 'react'
-import { TERMINAL_TOOL_ALIASES } from '@/components/workbench/terminal-aliases'
+import { isTerminalToolName } from '@/components/workbench/terminal-aliases'
 import { useSessionChanges } from '@/hooks/use-session-changes'
 import { isCodingFamily } from '@/lib/affordances'
 import { findLatestSessionArtifact } from '@/lib/session-artifacts'
@@ -27,12 +27,6 @@ import type { ChatBlock, ChatMessage, EffectiveProfile } from '@/types'
 const TERMINAL_EMERGE_MS = 5_000
 /** Poll cadence for the running-terminal check. */
 const TERMINAL_POLL_MS = 1_000
-
-function isTerminalTool(name: string | undefined): boolean {
-  if (!name) return false
-  const lower = name.toLowerCase()
-  return TERMINAL_TOOL_ALIASES.some((alias) => lower.includes(alias))
-}
 
 /** Running terminal tool-call ids with their start times. Pure. */
 function runningTerminalCalls(messages: ChatMessage[]) {
@@ -48,7 +42,7 @@ function runningTerminalCalls(messages: ChatMessage[]) {
         status?: string
         startedAt?: number
       }
-      if (!isTerminalTool(tool.apiName)) continue
+      if (!isTerminalToolName(tool.apiName)) continue
       if (tool.status !== 'loading') continue
       if (typeof tool.startedAt !== 'number') continue
       out.push({ id: tool.id, startedAt: tool.startedAt })
@@ -100,8 +94,10 @@ export function useStageEmergence(profile: EffectiveProfile | null): void {
     const latest = findLatestSessionArtifact(messages)
     if (!latest) return
     if (seenArtifactKeys.current.has(latest.key)) return
-    // First observed artifact establishes the baseline without firing when
-    // it predates mount in THIS session view and the stage already shows it.
+    // First sighting in THIS session view opens the preview stage — even
+    // for a pre-existing artifact surfaced on session rehydrate. Identity
+    // is per session: the seen-key set resets on session switch (above),
+    // so each session's first artifact re-emerges exactly once.
     const firstSighting = seenArtifactKeys.current.size === 0
     seenArtifactKeys.current.add(latest.key)
     const s = useWorkbenchStore.getState()

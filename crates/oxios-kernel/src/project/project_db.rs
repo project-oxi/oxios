@@ -33,7 +33,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 ///
 /// Clean break: when an existing `projects` table lacks the `root_paths`
 /// column (legacy schema), it is dropped and recreated from the current
-/// DDL. Legacy project records are discarded by design.
+/// DDL. Legacy project records are discarded by design, and the retired
+/// Mount-era companion tables (`mounts`, `mount_dismissals`,
+/// `project_memory`) are dropped in the same one-time guarded pass so
+/// none of the old concept survives in the persistent schema.
 pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
     let has_table: bool = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='projects'",
@@ -52,7 +55,14 @@ pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
             tracing::info!(
                 "legacy projects table detected (no root_paths column) — dropping (clean break)"
             );
-            conn.execute_batch("DROP TABLE projects;")?;
+            // One-time guarded drop: the Mount-era companions shipped with
+            // the legacy layout and must not outlive it.
+            conn.execute_batch(
+                "DROP TABLE projects;
+                 DROP TABLE IF EXISTS mounts;
+                 DROP TABLE IF EXISTS mount_dismissals;
+                 DROP TABLE IF EXISTS project_memory;",
+            )?;
         }
     }
 
@@ -157,7 +167,8 @@ mod tests {
     fn schema_roundtrips_a_project_and_replaces_legacy_table() {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
 
-        // Seed a legacy (pre-root_paths) table — must be dropped on ensure.
+        // Seed a legacy (pre-root_paths) layout — the projects table and
+        // its Mount-era companions must all be dropped on ensure.
         conn.execute_batch(
             "CREATE TABLE projects (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT,
@@ -165,7 +176,17 @@ mod tests {
                 source TEXT NOT NULL DEFAULT 'manual', memory_visible INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_active_at TEXT NOT NULL
              );
-             INSERT INTO projects VALUES ('p1','stale',NULL,NULL,NULL,'📦','manual',1,'a','a','a');",
+             INSERT INTO projects VALUES ('p1','stale',NULL,NULL,NULL,'📦','manual',1,'a','a','a');
+             CREATE TABLE mounts (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, path TEXT NOT NULL
+             );
+             CREATE TABLE mount_dismissals (
+                mount_id TEXT PRIMARY KEY, dismissed_at TEXT NOT NULL
+             );
+             CREATE TABLE project_memory (
+                project_id TEXT NOT NULL, memory_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );",
         )
         .expect("seed legacy schema");
 
@@ -175,6 +196,19 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
             .expect("count after drop");
         assert_eq!(stale, 0, "legacy rows must not survive the clean break");
+
+        // No Mount concept survives the clean break: all three companion
+        // tables are gone, not just the legacy projects table.
+        for orphan in ["mounts", "mount_dismissals", "project_memory"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    rusqlite::params![orphan],
+                    |r| r.get(0),
+                )
+                .expect("query sqlite_master");
+            assert_eq!(n, 0, "{orphan} must not survive the clean break");
+        }
 
         let project = Project::new("oxios", vec![PathBuf::from("/tmp")], "instructions");
         save_project(&conn, &project).expect("save");

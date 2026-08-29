@@ -68,7 +68,7 @@ export function QuickOpen() {
             ))}
           </CommandGroup>
         )}
-        {data?.path && data.path !== data.roots[0] && (
+        {data?.path && !roots.includes(data.path) && (
           <CommandGroup heading="..">
             <CommandItem
               value=".."

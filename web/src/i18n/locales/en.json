@@ -2709,7 +2709,6 @@
     },
     "preview": {
       "empty": "No preview yet",
-      "recentCount": "{{count}} recent changes",
       "openInPanel": "Open in panel"
     }
   }

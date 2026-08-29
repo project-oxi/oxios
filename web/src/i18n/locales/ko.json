@@ -2709,7 +2709,6 @@
     },
     "preview": {
       "empty": "미리보기가 없습니다",
-      "recentCount": "최근 변경 {{count}}건",
       "openInPanel": "패널에서 열기"
     }
   }

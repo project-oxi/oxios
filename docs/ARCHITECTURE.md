@@ -646,49 +646,65 @@ Per-agent budget tracking for LLM API calls.
 
 ---
 
-### 3.14 Brain — Daemonless `oxibrain` Integration (oxibrain 0.8)
+### 3.14 Brain — One-Process-Per-Operation `oxibrain` Integration (oxibrain 0.10)
 
-Agent memory lives in the standalone `oxibrain` store (separate repo, daemonless
-since oxibrain 0.8). There is no resident daemon, no socket, and no supervisor:
-the kernel consumes the binary through **three lanes** —
+Agent memory lives in the standalone `oxibrain` store (separate repo). Nothing
+is resident: every brain interaction spawns a short-lived process. The kernel
+consumes the binary through **three lanes** —
 
 ```
   oxios process
   ┌────────────────────────────────────────────────────────────┐
-  │  ┌────────────┐  lazy spawn (capped backoff)               │
-  │  │BrainSession│──▶ oxibrain serve --stdio --dir ~/.oxi/brain
-  │  │ (1 client) │    JSON-RPC over stdin/stdout, kill_on_drop │
-  │  └─────┬──────┘                                            │
-  │        │ recall · remember · search (two-plane) ·          │
-  │        │ entity/timeline/why · document_history · …        │
-  │                                                            │
+  │  ┌────────────┐ agent ops: one-shot CLI op dispatch        │
+  │  │BrainSession│──▶ oxibrain --dir ~/.oxi/brain <op> --json -
+  │  │ (0 clients)│   stdin payload · response envelope on stdout
+  │  └─────┬──────┘   recall · ingest · search (two-plane) ·
+  │        │          brief · traverse · why · contradictions
+  │        │
+  │        │ console reads (native RPC / resources):
+  │        │   per-call `serve --stdio` child, spawned and
+  │        │   reaped within the call (oxibrain-client 0.10)
+  │        └──▶ stats · pending_stats · document_history ·
+  │             spaces/list · entity:// · timeline:// · space://
+  │
   │  ┌──────────────┐  one-shot tokio::process::Command        │
-  │  │BrainInstaller│──▶ oxibrain index --documents --embed    │
-  │  │ (GitHub DL)  │──▶ oxibrain extract --pending            │
+  │  │BrainInstaller│──▶ oxibrain admin index --documents [--embed]
+  │  │ (GitHub DL)  │──▶ oxibrain admin extract --pending      │
+  │  │              │──▶ oxibrain describe  (probe)            │
   │  └──────────────┘──▶ oxibrain --version  (probes)          │
   └────────────────────────────────────────────────────────────┘
      agents: `brain` skill + pre-allowed `oxibrain` CLI (exec structured)
 ```
 
-1. **Session child** (`crates/oxios-kernel/src/brain/session.rs`) — one
-   lazily-spawned, kernel-owned `serve --stdio` child for interactive surfaces
-   (per-turn recall, web Brain tab, foundation handshake). The only long-lived
-   brain process: born on first use via `BrainClient::spawn_local`
-   (`oxibrain-client` 0.8, crates.io), dies with the oxios process
-   (`kill_on_drop`). A failed spawn *is* the install trigger when
-   `auto_install` (the spawn path asks `BrainInstaller::ensure_binary()` once
-   per process, rate-limited). Spawn backoff is capped — 1 s / 5 s / 30 s,
-   then stay degraded until a spawn succeeds.
+1. **CLI op dispatch** (`crates/oxios-kernel/src/brain/session.rs`) — the
+   agent-facing ops run as one-shot `oxibrain --dir <dir> <op> --json -`
+   subprocesses per the upstream agent-first CLI contract (spec
+   `agent-first-cli-v1`): payload on stdin, stable envelope
+   `{api, ok, op, space?, data, meta}` on stdout, machine-meaningful exit
+   codes. A well-formed envelope proves the transport alive even when the
+   op failed, so availability tracks the transport, not op success. Every
+   op is bounded by a 90 s timeout (`kill_on_drop`). Console-only reads the
+   14-op CLI surface does not expose (`stats`, `pending_stats`,
+   `document_history`, `spaces/list`, `entity://` / `timeline://` /
+   `space://` resources) speak JSON-RPC over a `serve --stdio` child
+   spawned per call and reaped within the call (`StdioChild`,
+   `oxibrain-client` 0.10, crates.io). No respawn bookkeeping: a failed
+   call degrades; the next call starts fresh.
 2. **One-shot CLI** (`crates/oxios-kernel/src/brain/{installer,oneshot}.rs`) —
-   admin verbs run as short-lived `oxibrain` invocations that exit:
-   `index --documents [--embed]`, `extract --pending`, `--version` probes.
-   The installer resolves the binary as `[brain].binary_path` → managed
-   `~/.oxi/bin/oxibrain` → `which("oxibrain")`, and downloads the GitHub
-   Releases tarball (sha256-verified, atomic rename) when `auto_install`.
+   the `admin` namespace runs as short-lived `oxibrain` invocations that
+   exit: `admin index --documents [--embed]`, `admin extract --pending`,
+   `describe` probes, `--version` probes. The installer resolves the binary
+   as `[brain].binary_path` → managed `~/.oxi/bin/oxibrain` →
+   `which("oxibrain")`, and downloads the GitHub Releases tarball
+   (sha256-verified, atomic rename) when `auto_install` (one attempt per
+   30 s). Foundation bootstrap probes via one-shot `describe` (exit 0 +
+   envelope → `Compatible`); there is no handshake child.
 3. **Skill + CLI for agents** — the `memory_{write,read,search}` kernel tools
    are gone. Agents get the first-party `brain` skill
-   (`share/default-skills/brain/SKILL.md`) and call the `oxibrain` CLI through
-   the exec tool (structured mode, binary pre-allowed at boot).
+   (`share/default-skills/brain/SKILL.md`) and call the `oxibrain <op>`
+   contract through the exec tool (structured mode, binary pre-allowed at
+   boot): scratch-file JSON payloads (`--json @file`), required `space`,
+   `--dir` before the op name.
 
 **Document plane:** vault ingestion is a declaration, not an RPC. At boot the
 kernel idempotently seeds `~/.oxi/brain/documents.toml` with a
@@ -696,10 +712,11 @@ kernel idempotently seeds `~/.oxi/brain/documents.toml` with a
 user-authored rows are preserved. `search`/`recall` auto-materialize
 unmaterialized roots, so a failed boot-time warm index never blocks.
 
-**Extraction drain:** `remember` always parks episodes in the extraction
-backlog (the MCP surface cannot extract inline). A kernel timer (every 10 min
-while a session child is alive) checks `pending_stats()` and, when non-empty,
-spawns a one-shot `oxibrain extract --pending`. A backlog waiting while oxios
+**Extraction drain:** `remember` (op `ingest`) parks episodes in the
+extraction backlog — a CLI one-shot has no sampling client, so
+`extraction: pending` is success, not completion (spec §8). A kernel timer
+(every 10 min) checks `pending_stats()` and, when non-empty, spawns a
+one-shot `oxibrain admin extract --pending`. A backlog waiting while oxios
 is not running is the daemonless contract, not a bug.
 
 **Boot gating:** brain boot work (daemon-era legacy cleanup — launchd plist
@@ -708,9 +725,11 @@ runs only on the long-lived daemon surface (`KernelBuilder.daemon`), exactly
 like the RFC-050 vault watcher. One-shot CLI commands never spawn overlapping
 index children.
 
-**Degradation contract:** missing binary or failed spawn → every method
-returns `None`/empty, logged once at `warn` then `debug`; turns always
+**Degradation contract:** missing binary, failed spawn, timeout, or op error
+→ every method returns `None`/empty, logged once at `warn`; turns always
 complete; boot never blocks (brain is additive, never load-bearing).
+`review_merges` degrades unconditionally until upstream ships `admin review`
+(spec §10; the tool was removed in v2.13).
 
 **In-kernel survivors:** SONA (trajectory pattern engine, `memory_agent::sona`)
 and the embedding traits (`embedding` — `TextVector`, `cosine_similarity_f32`)
@@ -722,18 +741,19 @@ WAL) owns the mount/project tables in `~/.oxios/workspace/kernel.db`.
 `auto_manage`). `socket_path` and `auto_manage` are removed; old configs
 warn-and-ignore them.
 
-**Metrics:** `oxibrain_available` (gauge — session child up), `oxibrain_recall_total`
-(counter, incremented on successful recall).
+**Metrics:** `oxibrain_available` (gauge — last transport interaction
+succeeded), `oxibrain_recall_total` (counter, incremented on successful
+recall).
 
 **CLI:** `oxios brain status|install|uninstall|reindex|extract`;
-`/api/brain/status` reports session/binary state + space + episode count +
-pending backlog. Query/ingest for interactive use: `oxibrain ask` /
-`oxibrain ingest`.
+`/api/brain/status` reports transport/binary state + space + episode count +
+pending backlog.
 
 **Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,documents,config}.rs`
 
-Design: `docs/designs/2026-08-27-daemonless-brain-design.md` (supersedes the
-transport/lifecycle half of RFC-047 and all of RFC-049).
+Design: `docs/designs/2026-08-29-brain-cli-op-cutover-design.md` (supersedes
+the transport half of `2026-08-27-daemonless-brain-design.md`, which
+superseded the transport/lifecycle half of RFC-047 and all of RFC-049).
 
 
 ### 3.14.1 Oxi Foundation — Versioned Profile/Package Contract (RFC-048)
@@ -1332,7 +1352,7 @@ Complete path of a user message through the system:
   │   │       ├── agent_runtime.rs     engine.rs              event_bus.rs
   │   │       ├── state_store.rs       config.rs              types.rs
   │   │       ├── access_manager/      # RBAC + path sandbox + audit trail
-  │   │       ├── brain/              # daemonless BrainSession + BrainInstaller (§3.14)
+  │   │       ├── brain/              # one-process-per-op BrainSession + BrainInstaller (§3.14)
   │   │       ├── kernel_handle/       # Facade — 22 typed APIs (see §4)
   │   │       ├── tools/               # builtin/, kernel_bridge.rs, exec_tool.rs
   │   │       ├── skill/               # Unified skill system (RFC-009): clawhub, skills_sh
@@ -1426,7 +1446,6 @@ Complete path of a user message through the system:
   All three must pass for access to be granted
 ```
 
-### 7.4 ExecTool Security
 
 ```
   ┌──────────────────────────────────────────────────┐
@@ -1565,7 +1584,7 @@ The kernel uses directory-level modules with `pub(crate)` encapsulation:
 
 | Directory | Lines | External deps from kernel | Self-contained? |
 |-----------|-------|---------------------------|----------------|
-| `brain/` | ~1,560 | `oxibrain-client` 0.8 (stdio child) | ✅ Thin client — store is external (§3.14) |
+| `brain/` | ~1,560 | `oxibrain-client` 0.10 (per-op CLI + per-call child) | ✅ Thin client — store is external (§3.14) |
 | `tools/` | 7,047 | `KernelHandle` (facade pattern) | ✅ Goes through facade |
 | `access_manager/` | 3,681 | `types`, `capability`, `config` (3) | ✅ Nearly isolated |
 | `kernel_handle/` | 3,063 | All subsystems (by design) | — This IS the facade |

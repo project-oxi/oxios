@@ -237,11 +237,8 @@ pub use mount::{
     PromotionConfig, detect_mounts,
 };
 pub use mount::{MountManager, MountManagerError};
-pub use project::{
-    ConversationBuffer, ConversationTurn, DetectionResult, Project, ProjectId, ProjectSource,
-    detect_project, extract_path, find_by_id, find_by_name,
-};
-pub use project::{ProjectManager, ProjectManagerError};
+pub use project::{ConversationBuffer, ConversationTurn, Project, ProjectId};
+pub use project::{ProjectManager, ProjectManagerError, validate_root_paths};
 pub use resource_monitor::{OverloadThreshold, ResourceMonitor, ResourceSnapshot};
 pub use state_store::{
     AgentResponse, PruneConfig, PruneThrottle, Session, SessionId, SessionSummary, StateStore,

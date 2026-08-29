@@ -1,192 +1,83 @@
-//! Project module: work context management.
+//! Project module: project-owned filesystem roots.
 //!
-//! Replaces the Space system with a project-centric model:
-//! - Projects are registered aliases for filesystem paths
-//! - Sessions reference projects (1 primary + N secondary)
-//! - Memories link to projects via a junction table (N:M)
+//! A Project is the persisted unit of workspace context: a unique name, an
+//! ordered list of canonical filesystem roots, and project-specific
+//! instructions. Sessions reference a project by id; the orchestrator
+//! resolves the whole workspace from the project alone.
 //!
 //! ## Structure
 //!
-//! - `mod.rs` — Project struct and ProjectSource enum (this file)
-//! - `manager.rs` — ProjectManager (CRUD, lookup, detection)
-//! - `detection.rs` — Detection logic (name/path/tag matching)
+//! - `mod.rs` — `Project` record (this file)
+//! - `manager.rs` — `ProjectManager` (CRUD, root validation, lookup)
+//! - `project_db.rs` — SQLite persistence
+//! - `conversation_buffer.rs` — topic-shift detection buffer
 
 pub mod conversation_buffer;
-pub mod detection;
 pub mod manager;
 pub mod project_db;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 // ── Re-exports ──────────────────────────────────────────────
 pub use conversation_buffer::{ConversationBuffer, ConversationTurn};
-pub use detection::{DetectionResult, detect_project, extract_path, find_by_id, find_by_name};
-
-pub use manager::{ProjectManager, ProjectManagerError};
+pub use manager::{ProjectManager, ProjectManagerError, validate_root_paths};
 
 /// Unique identifier for a Project.
 pub type ProjectId = Uuid;
 
-/// How a Project was registered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectSource {
-    /// User explicitly created via UI/CLI.
-    Manual,
-    /// OS auto-detected from a path in the conversation.
-    AutoDetected,
-}
-
-impl std::fmt::Display for ProjectSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProjectSource::Manual => write!(f, "manual"),
-            ProjectSource::AutoDetected => write!(f, "auto_detected"),
-        }
-    }
-}
-
 /// A registered work context (code project, writing project, etc).
 ///
-/// Projects are the primary unit of workspace context in Oxios.
-/// Sessions reference a primary project (for CWD) and optional secondary projects.
+/// The persisted record carries only fields with durable product meaning;
+/// presentation (icon, emoji, tags) is derived by the UI when needed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     /// Unique identifier.
     pub id: ProjectId,
-    /// Human-readable name (unique, e.g. "oxios", "pi", "my-blog").
+    /// Human-readable name (unique).
     pub name: String,
-    /// Optional description for UI display.
-    pub description: String,
-    /// LEGACY RFC-025 migration read-source.
+    /// Canonical, de-duplicated, existing directories. May be empty.
     ///
-    /// Paths now live on Mounts (`mount_ids`); this field is retained solely
-    /// so the one-time `migrate_projects_to_mounts` boot step can read
-    /// pre-RFC-025 data. New code MUST NOT read it — resolve paths via
-    /// `mount_ids`. Removed from the struct + DB in a follow-up release.
-    pub paths: Vec<PathBuf>,
-    /// Tags for keyword matching (detection layer 3).
-    #[serde(default)]
-    pub tags: Vec<String>,
-    /// Display emoji for UI.
-    #[serde(default = "default_emoji")]
-    pub emoji: String,
-    /// How this project was registered.
-    pub source: ProjectSource,
-    /// Whether this project allows cross-project memory access.
-    #[serde(default = "default_true")]
-    pub memory_visible: bool,
+    /// Order is intentional: `root_paths[0]` is the working directory; all
+    /// roots are available to filesystem tools and shown in the workspace
+    /// context.
+    pub root_paths: Vec<PathBuf>,
+    /// Project-specific instructions injected only while this project is
+    /// active.
+    pub instructions: String,
     /// When this project was created.
     pub created_at: DateTime<Utc>,
     /// When this project was last modified.
     pub updated_at: DateTime<Utc>,
     /// When this project was last active (used in a session).
     pub last_active_at: DateTime<Utc>,
-
-    // ── RFC-025: Project as instruction/memory bundle ──
-    /// Mounts this Project references. Empty for non-code Projects or
-    /// Projects created before RFC-025 migration.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mount_ids: Vec<crate::mount::MountId>,
-    /// Custom system-prompt instructions. Injected into `## Workspace Context`
-    /// when this Project is active.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub instructions: String,
-}
-
-fn default_emoji() -> String {
-    "📦".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Project {
-    /// Create a new Project with the given name.
-    pub fn new(name: impl Into<String>, source: ProjectSource) -> Self {
+    /// Create a new Project. All three timestamps are stamped `Utc::now()`.
+    pub fn new(
+        name: impl Into<String>,
+        root_paths: Vec<PathBuf>,
+        instructions: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: ProjectId::new_v4(),
             name: name.into(),
-            description: String::new(),
-            paths: Vec::new(),
-            tags: Vec::new(),
-            emoji: default_emoji(),
-            source,
-            memory_visible: true,
+            root_paths,
+            instructions: instructions.into(),
             created_at: now,
             updated_at: now,
             last_active_at: now,
-            mount_ids: Vec::new(),
-            instructions: String::new(),
         }
-    }
-
-    /// Create a Project from a filesystem path.
-    ///
-    /// Derives the name from the directory name.
-    pub fn from_path(path: &Path) -> Self {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let mut project = Self::new(&name, ProjectSource::AutoDetected);
-        project.paths.push(path.to_path_buf());
-        project
     }
 
     /// Record that this project was used in a session.
     pub fn touch(&mut self) {
         self.last_active_at = Utc::now();
         self.updated_at = Utc::now();
-    }
-
-    /// Add a filesystem path.
-    pub fn add_path(&mut self, path: PathBuf) {
-        if !self.paths.contains(&path) {
-            self.paths.push(path.clone());
-            self.updated_at = Utc::now();
-        }
-    }
-
-    /// Remove a filesystem path.
-    pub fn remove_path(&mut self, path: &PathBuf) -> bool {
-        if let Some(pos) = self.paths.iter().position(|p| p == path) {
-            self.paths.remove(pos);
-            self.updated_at = Utc::now();
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Add a tag for keyword matching.
-    pub fn add_tag(&mut self, tag: impl Into<String>) {
-        let tag = tag.into();
-        if !self.tags.contains(&tag) {
-            self.tags.push(tag);
-            self.updated_at = Utc::now();
-        }
-    }
-
-    /// Whether this project has any filesystem paths.
-    pub fn has_paths(&self) -> bool {
-        !self.paths.is_empty()
-    }
-
-    /// Get the primary path (CWD source).
-    pub fn primary_path(&self) -> Option<&PathBuf> {
-        self.paths.first()
-    }
-
-    /// Get the display tag (e.g. "[🔧 oxios]").
-    pub fn tag(&self) -> String {
-        format!("[{} {}]", self.emoji, self.name)
     }
 }
 
@@ -195,44 +86,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_project_new() {
-        let p = Project::new("oxios", ProjectSource::Manual);
+    fn test_project_new_stamps_all_timestamps() {
+        let before = Utc::now();
+        let p = Project::new("oxios", vec![PathBuf::from("/tmp")], "be careful");
         assert_eq!(p.name, "oxios");
-        assert_eq!(p.source, ProjectSource::Manual);
-        assert!(p.paths.is_empty());
-        assert_eq!(p.emoji, "📦");
+        assert_eq!(p.root_paths, vec![PathBuf::from("/tmp")]);
+        assert_eq!(p.instructions, "be careful");
+        assert!(p.created_at >= before);
+        assert_eq!(p.created_at, p.updated_at);
+        assert_eq!(p.created_at, p.last_active_at);
     }
 
     #[test]
-    fn test_project_from_path() {
-        let path = PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios");
-        let p = Project::from_path(&path);
-        assert_eq!(p.name, "oxios");
-        assert_eq!(p.source, ProjectSource::AutoDetected);
-        assert_eq!(p.paths, vec![path]);
-    }
-
-    #[test]
-    fn test_project_add_path() {
-        let mut p = Project::new("oxios", ProjectSource::Manual);
-        assert!(!p.has_paths());
-
-        p.add_path(PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"));
-        assert!(p.has_paths());
-        assert_eq!(
-            p.primary_path(),
-            Some(&PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"))
-        );
-
-        // Duplicate path should not be added
-        p.add_path(PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"));
-        assert_eq!(p.paths.len(), 1);
-    }
-
-    #[test]
-    fn test_project_tag() {
-        let mut p = Project::new("oxios", ProjectSource::Manual);
-        p.emoji = "🔧".to_string();
-        assert_eq!(p.tag(), "[🔧 oxios]");
+    fn test_project_touch_bumps_activity() {
+        let mut p = Project::new("oxios", vec![], "");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        p.touch();
+        assert!(p.last_active_at > p.created_at);
+        assert!(p.updated_at > p.created_at);
     }
 }

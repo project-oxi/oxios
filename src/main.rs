@@ -2543,18 +2543,18 @@ async fn run(cli: Cli) -> Result<()> {
                         );
                         println!("{}", "─".repeat(50));
                         for p in &projects {
-                            let paths_str = if p.paths.is_empty() {
-                                "(no paths)".to_string()
+                            let roots_str = if p.root_paths.is_empty() {
+                                "(no roots)".to_string()
                             } else {
-                                p.paths
+                                p.root_paths
                                     .iter()
                                     .map(|x| x.to_string_lossy().to_string())
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             };
-                            println!("  {} {} — {}", p.emoji, style(&p.name).bold(), &paths_str);
-                            if !p.tags.is_empty() {
-                                println!("     tags: {}", p.tags.join(", "));
+                            println!("  {} — {}", style(&p.name).bold(), &roots_str);
+                            if !p.instructions.is_empty() {
+                                println!("     instructions: {}", p.instructions);
                             }
                         }
                     }
@@ -2567,27 +2567,23 @@ async fn run(cli: Cli) -> Result<()> {
                     };
                     match project {
                         Some(p) => {
-                            println!("{}", style(format!("{} {}", p.emoji, p.name)).bold());
+                            println!("{}", style(&p.name).bold());
                             println!("{}", "─".repeat(30));
                             println!("  ID:          {}", p.id);
-                            if !p.description.is_empty() {
-                                println!("  Description: {}", p.description);
-                            }
-                            println!("  Source:       {}", p.source);
                             println!(
-                                "  Paths:       {}",
-                                if p.paths.is_empty() {
+                                "  Roots:       {}",
+                                if p.root_paths.is_empty() {
                                     "(none)".to_string()
                                 } else {
-                                    p.paths
+                                    p.root_paths
                                         .iter()
                                         .map(|x| x.to_string_lossy().to_string())
                                         .collect::<Vec<_>>()
                                         .join(", ")
                                 }
                             );
-                            if !p.tags.is_empty() {
-                                println!("  Tags:        {}", p.tags.join(", "));
+                            if !p.instructions.is_empty() {
+                                println!("  Instructions: {}", p.instructions);
                             }
                             println!("  Created:     {}", p.created_at.to_rfc3339());
                             println!("  Last active: {}", p.last_active_at.to_rfc3339());
@@ -2600,67 +2596,18 @@ async fn run(cli: Cli) -> Result<()> {
                 ProjectAction::Add {
                     name,
                     paths,
-                    tags,
-                    emoji,
-                    description,
+                    instructions,
                 } => {
-                    // RFC-025: paths live on Mounts. Create the Project, then
-                    // promote any provided paths into Mounts and link them via
-                    // `mount_ids` so the project is a usable code context in one
-                    // step. When the mount system is unavailable, paths are
-                    // ignored with a warning.
-                    match pm.create_project(
-                        name.clone(),
-                        tags.clone(),
-                        Some(emoji.clone()),
-                        description.clone(),
-                        oxios_kernel::ProjectSource::Manual,
+                    // The project record owns its roots directly; each path is
+                    // validated (absolute, existing directory) before creation.
+                    let root_paths: Vec<std::path::PathBuf> =
+                        paths.iter().map(std::path::PathBuf::from).collect();
+                    match pm.create(
+                        name,
+                        root_paths,
+                        instructions.as_deref().unwrap_or(""),
                     ) {
                         Ok(p) => {
-                            if !paths.is_empty() {
-                                if let Some(mm) = kernel.mount_manager() {
-                                    let mut mount_ids: Vec<oxios_kernel::MountId> = Vec::new();
-                                    for raw in paths {
-                                        let root = std::path::PathBuf::from(raw);
-                                        match mm.covering_mount_id(&root) {
-                                            Some(mid) => {
-                                                if !mount_ids.contains(&mid) {
-                                                    mount_ids.push(mid);
-                                                }
-                                            }
-                                            None => match mm.create_mount(
-                                                p.name.clone(),
-                                                vec![root],
-                                                oxios_kernel::MountSource::Manual,
-                                            ) {
-                                                Ok(m) => mount_ids.push(m.id),
-                                                Err(e) => eprintln!(
-                                                    "{} Could not create mount for '{}': {}",
-                                                    style("✗").red().bold(),
-                                                    raw,
-                                                    e
-                                                ),
-                                            },
-                                        }
-                                    }
-                                    if !mount_ids.is_empty()
-                                        && let Err(e) =
-                                            pm.update_project_bundle(p.id, Some(mount_ids), None)
-                                    {
-                                        eprintln!(
-                                            "{} Project created but mount link failed: {}",
-                                            style("✗").red().bold(),
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    eprintln!(
-                                        "{} Mount system unavailable — paths ignored. \
-                                         Use `oxios mount add` and link separately.",
-                                        style("⚠").yellow().bold()
-                                    );
-                                }
-                            }
                             println!(
                                 "{} Project '{}' created ({})",
                                 style("✓").green().bold(),

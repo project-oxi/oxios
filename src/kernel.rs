@@ -308,12 +308,6 @@ impl Kernel {
             .expect("ProjectManager not available — SQLite must be enabled")
     }
 
-    /// Get the MountManager reference, if SQLite-backed mounts are enabled.
-    /// Returns `None` when the mount system is unavailable (SQLite off).
-    pub fn mount_manager(&self) -> Option<Arc<oxios_kernel::MountManager>> {
-        self.mount_manager.clone()
-    }
-
     /// Build a MarketplaceApi (ClawHub + Skills.sh) from config.
     fn build_marketplace_api(&self) -> MarketplaceApi {
         let workspace = PathBuf::from(&self.config.kernel.workspace);
@@ -628,7 +622,6 @@ impl Kernel {
                 None,
                 None,
                 None,
-                None,
                 None, // model_params
                 None, // persona_id — CLI inherits the global active persona
                 "cli-direct",
@@ -650,7 +643,6 @@ impl Kernel {
                 "cli",
                 prompt,
                 session_id,
-                None,
                 None,
                 None,
                 None, // model_override
@@ -1417,15 +1409,6 @@ impl KernelBuilder {
         let kernel_db = Arc::new(KernelDatabase::open(
             PathBuf::from(&config.kernel.workspace).join("kernel.db"),
         )?);
-        {
-            let legacy = PathBuf::from(&config.kernel.workspace).join("memory.db");
-            if let Err(e) = kernel_db.migrate_legacy_mount_project(&legacy) {
-                tracing::warn!(
-                    error = %e,
-                    "mount/project migration from memory.db failed (non-fatal)"
-                );
-            }
-        }
 
         // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
         let project_manager =
@@ -1444,12 +1427,6 @@ impl KernelBuilder {
         let mount_manager =
             match oxios_kernel::MountManager::new(kernel_db.clone(), Some(event_bus.clone())) {
                 Ok(mm) => {
-                    // RFC-025: one-time migration — promote legacy
-                    // Project paths into Mounts. Idempotent: Projects
-                    // that already reference Mounts are skipped.
-                    if let Some(ref pm) = project_manager {
-                        migrate_projects_to_mounts(&mm, pm);
-                    }
                     tracing::info!("MountManager initialized");
                     Some(Arc::new(mm))
                 }
@@ -1920,7 +1897,6 @@ impl KernelBuilder {
         let planner = oxios_kernel::WorkPlanner::new(
             Arc::clone(&skill_manager),
             project_manager.clone(),
-            mount_manager.clone(),
         );
         let token_maxer = Arc::new(oxios_kernel::TokenMaxer::new(
             maxer_lifecycle,
@@ -2275,114 +2251,6 @@ fn build_marketplace_api_value(config: &OxiosConfig) -> MarketplaceApi {
     )
 }
 
-/// RFC-025 one-time migration: promote legacy Project paths into Mounts.
-///
-/// For each Project that has `paths` but no `mount_ids`, resolve a Mount for
-/// every legacy path — reusing an existing Mount that already covers the path
-/// (path-prefix match) when one exists, otherwise creating one named after the
-/// Project — link them via `mount_ids`, then clear the legacy `paths` field.
-///
-/// Idempotent: Projects already referencing Mounts are skipped, and the
-/// path-coverage check prevents duplicate Mounts for paths a user registered
-/// under a different name.
-fn migrate_projects_to_mounts(
-    mount_manager: &oxios_kernel::MountManager,
-    project_manager: &ProjectManager,
-) {
-    let projects = project_manager.list_projects();
-    let mut migrated = 0usize;
-
-    for project in projects {
-        // Skip Projects that already reference Mounts (idempotent).
-        if !project.mount_ids.is_empty() {
-            continue;
-        }
-        // Skip Projects without paths — nothing to lift into a Mount.
-        if project.paths.is_empty() {
-            continue;
-        }
-
-        // Partition legacy paths: reuse any existing Mount that already covers
-        // a path (path-prefix match), collecting only the uncovered ones for a
-        // new Mount. This avoids duplicating a Mount the user registered for
-        // the same path under a different name.
-        let mut mount_ids: Vec<oxios_kernel::MountId> = Vec::new();
-        let mut uncovered: Vec<PathBuf> = Vec::new();
-        for path in &project.paths {
-            match mount_manager.covering_mount_id(path) {
-                Some(mid) => {
-                    if !mount_ids.contains(&mid) {
-                        mount_ids.push(mid);
-                    }
-                }
-                None => uncovered.push(path.clone()),
-            }
-        }
-
-        // Create one Mount for any uncovered paths, named after the Project
-        // (suffixed to avoid colliding with a manually-created Mount).
-        if !uncovered.is_empty() {
-            let name = unique_mount_name(mount_manager, &project.name);
-            match mount_manager.create_mount(
-                name,
-                uncovered,
-                oxios_kernel::MountSource::AutoDetected,
-            ) {
-                Ok(mount) => mount_ids.push(mount.id),
-                Err(e) => {
-                    tracing::warn!(
-                        project = %project.name,
-                        error = %e,
-                        "failed to create Mount during migration; leaving Project paths in place"
-                    );
-                    continue;
-                }
-            }
-        }
-
-        // Link the resolved Mounts and clear the legacy `paths` field so the
-        // runtime legacy fallbacks never re-activate for this Project.
-        if let Err(e) = project_manager.update_project_bundle(project.id, Some(mount_ids), None) {
-            tracing::warn!(
-                project = %project.name,
-                error = %e,
-                "link failed; orphan Mounts may remain"
-            );
-            continue;
-        }
-        if let Err(e) = project_manager.clear_legacy_paths(project.id) {
-            tracing::warn!(
-                project = %project.name,
-                error = %e,
-                "Mounts linked but failed to clear legacy paths"
-            );
-        }
-        migrated += 1;
-    }
-
-    if migrated > 0 {
-        tracing::info!(
-            migrated = migrated,
-            "RFC-025: migrated legacy Project paths into Mounts"
-        );
-    }
-}
-
-/// Pick a Mount name based on `base` that is not already taken, suffixing
-/// `-2`, `-3`, … as needed so the migration never fails on a name collision.
-fn unique_mount_name(mount_manager: &oxios_kernel::MountManager, base: &str) -> String {
-    if mount_manager.get_mount_by_name(base).is_none() {
-        return base.to_string();
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("{base}-{n}");
-        if mount_manager.get_mount_by_name(&candidate).is_none() {
-            return candidate;
-        }
-        n += 1;
-    }
-}
 
 /// Register the knowledge git auto-commit pipeline (bounded channel
 /// + async commit consumer + S-4 post-crash reconcile) on the shared

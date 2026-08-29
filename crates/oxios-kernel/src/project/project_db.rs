@@ -1,105 +1,90 @@
-//! Project-related SQLite operations.
+//! Project SQLite persistence.
 //!
-//! Extracted from `memory/database.rs` — project tables (`projects`,
-//! `project_memory`) are a kernel concern, not a memory concern.
-//! Uses `KernelDatabase::conn()` for SQL execution.
+//! The `projects` table stores the reduced project record (design §4.1):
+//! `root_paths` as a JSON array of canonical paths, project instructions,
+//! and RFC 3339 timestamps. A legacy table from the mount era (no
+//! `root_paths` column) is dropped on boot — a clean, user-approved break.
 
 use anyhow::Result;
+use chrono::{DateTime, SecondsFormat, Utc};
+use std::path::PathBuf;
 
-use super::{Project, ProjectSource};
+use super::Project;
 
-/// Schema DDL for project tables.
+/// Schema DDL for the projects table.
 pub const PROJECT_SCHEMA: &str = r#"
 -- ─────────────────────────────────────────────
--- Projects (RFC-011 / RFC-025)
+-- Projects (reduced record: root_paths + instructions)
 -- ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS projects (
     id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL UNIQUE,
-    description     TEXT,
-    paths           TEXT,            -- JSON array of PathBuf strings
-    tags            TEXT,            -- JSON array of strings
-    emoji           TEXT NOT NULL DEFAULT '📦',
-    source          TEXT NOT NULL DEFAULT 'manual',
-    memory_visible  INTEGER NOT NULL DEFAULT 1,
+    name            TEXT NOT NULL,
+    root_paths      TEXT NOT NULL DEFAULT '[]',
+    instructions    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
     last_active_at  TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
-
--- ─────────────────────────────────────────────
--- Project-Memory junction (RFC-011)
--- ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS project_memory (
-    project_id  TEXT NOT NULL,
-    memory_id   TEXT NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (project_id, memory_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_pm_project ON project_memory(project_id);
-CREATE INDEX IF NOT EXISTS idx_pm_memory ON project_memory(memory_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 "#;
 
-/// Migration: add RFC-025 columns (`mount_ids`, `instructions`) to `projects`.
-/// Idempotent — checks `PRAGMA table_info` first.
-pub fn migrate_rfc025(conn: &rusqlite::Connection) -> Result<()> {
-    // Check existing columns.
-    let mut stmt = conn.prepare("PRAGMA table_info(projects)")?;
-    let cols: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    if !cols.iter().any(|c| c == "mount_ids") {
-        conn.execute_batch(
-            "ALTER TABLE projects ADD COLUMN mount_ids TEXT NOT NULL DEFAULT '[]';",
-        )?;
-    }
-    if !cols.iter().any(|c| c == "instructions") {
-        conn.execute_batch(
-            "ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT '';",
-        )?;
-    }
-    Ok(())
-}
-
-/// Ensure project tables exist in the database.
+/// Ensure the project table exists in the database.
+///
+/// Clean break: when an existing `projects` table lacks the `root_paths`
+/// column (mount-era schema), it is dropped and recreated from the current
+/// DDL. Legacy project records are discarded by design.
 pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
+    let has_table: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+
+    if has_table {
+        let mut stmt = conn.prepare("PRAGMA table_info(projects)")?;
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+        if !cols.iter().any(|c| c == "root_paths") {
+            tracing::info!(
+                "legacy projects table detected (no root_paths column) — dropping (clean break)"
+            );
+            conn.execute_batch("DROP TABLE projects;")?;
+        }
+    }
+
     conn.execute_batch(PROJECT_SCHEMA)?;
-    migrate_rfc025(conn)?;
     Ok(())
 }
 
-/// Save a project (insert or replace).
-pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> Result<()> {
+/// Save a project (insert or update).
+///
+/// Returns `rusqlite::Result` so callers can distinguish the unique-name
+/// constraint violation from other failures.
+pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> rusqlite::Result<()> {
+    let root_paths =
+        serde_json::to_string(&project.root_paths).map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+        })?;
     conn.execute(
-        "INSERT OR REPLACE INTO projects
-         (id, name, description, paths, tags, emoji, source, memory_visible,
-          mount_ids, instructions, created_at, updated_at, last_active_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        "INSERT INTO projects
+         (id, name, root_paths, instructions, created_at, updated_at, last_active_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name, description=excluded.description, paths=excluded.paths,
-            tags=excluded.tags, emoji=excluded.emoji, source=excluded.source,
-            memory_visible=excluded.memory_visible, mount_ids=excluded.mount_ids,
+            name=excluded.name, root_paths=excluded.root_paths,
             instructions=excluded.instructions, updated_at=excluded.updated_at,
             last_active_at=excluded.last_active_at",
         rusqlite::params![
             project.id.to_string(),
             project.name,
-            project.description,
-            serde_json::to_string(&project.paths)?,
-            serde_json::to_string(&project.tags)?,
-            project.emoji,
-            project.source.to_string(),
-            project.memory_visible as i32,
-            serde_json::to_string(&project.mount_ids)?,
+            root_paths,
             project.instructions,
-            project.created_at.to_rfc3339(),
-            project.updated_at.to_rfc3339(),
-            project.last_active_at.to_rfc3339(),
+            rfc3339(project.created_at),
+            rfc3339(project.updated_at),
+            rfc3339(project.last_active_at),
         ],
     )?;
     Ok(())
@@ -108,123 +93,114 @@ pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> Result<()
 /// List all projects.
 pub fn list_projects(conn: &rusqlite::Connection) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, description, paths, tags, emoji, source, memory_visible,
-                mount_ids, instructions, created_at, updated_at, last_active_at
+        "SELECT id, name, root_paths, instructions, created_at, updated_at, last_active_at
          FROM projects ORDER BY name",
     )?;
     let rows = stmt.query_map([], row_to_project)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
 /// Delete a project by ID.
 pub fn delete_project(conn: &rusqlite::Connection, id: &str) -> Result<()> {
-    // Delete junction entries first
-    conn.execute(
-        "DELETE FROM project_memory WHERE project_id = ?1",
-        rusqlite::params![id],
-    )?;
     conn.execute("DELETE FROM projects WHERE id = ?1", rusqlite::params![id])?;
     Ok(())
 }
 
-/// Link a memory to a project.
-pub fn link_project_memory(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-    memory_id: &str,
-) -> Result<()> {
-    conn.execute(
-        "INSERT OR IGNORE INTO project_memory (project_id, memory_id, created_at) VALUES (?1, ?2, datetime('now'))",
-        rusqlite::params![project_id, memory_id],
-    )?;
-    Ok(())
+/// Render a timestamp as RFC 3339 with second precision (UTC).
+fn rfc3339(t: DateTime<Utc>) -> String {
+    t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Unlink a memory from a project.
-pub fn unlink_project_memory(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-    memory_id: &str,
-) -> Result<()> {
-    conn.execute(
-        "DELETE FROM project_memory WHERE project_id = ?1 AND memory_id = ?2",
-        rusqlite::params![project_id, memory_id],
-    )?;
-    Ok(())
-}
-
-/// Get all memory IDs associated with a project.
-pub fn get_project_memory_ids(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT memory_id FROM project_memory WHERE project_id = ?1 ORDER BY created_at DESC",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![project_id], |row| row.get(0))?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+/// Parse an RFC 3339 timestamp, falling back to now on malformed input.
+fn parse_rfc3339(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 /// Convert a SQLite row into a Project struct.
 fn row_to_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
-    use chrono::{DateTime, Utc};
-    use std::path::PathBuf;
-
     let id_str: String = row.get(0)?;
     let name: String = row.get(1)?;
-    let description: String = row.get::<_, Option<String>>(2)?.unwrap_or_default();
-    let paths_str: String = row
-        .get::<_, Option<String>>(3)?
+    let root_paths_str: String = row
+        .get::<_, Option<String>>(2)?
         .unwrap_or_else(|| "[]".to_string());
-    let tags_str: String = row
-        .get::<_, Option<String>>(4)?
-        .unwrap_or_else(|| "[]".to_string());
-    let emoji: String = row
-        .get::<_, Option<String>>(5)?
-        .unwrap_or_else(|| "📦".to_string());
-    let source_str: String = row
-        .get::<_, Option<String>>(6)?
-        .unwrap_or_else(|| "manual".to_string());
-    let memory_visible: bool = row.get::<_, Option<i32>>(7)?.unwrap_or(1) != 0;
-    let mount_ids_str: String = row
-        .get::<_, Option<String>>(8)?
-        .unwrap_or_else(|| "[]".to_string());
-    let instructions: String = row.get::<_, Option<String>>(9)?.unwrap_or_default();
-    let created_at: String = row.get(10)?;
-    let updated_at: String = row.get(11)?;
-    let last_active_at: String = row.get(12)?;
+    let instructions: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
+    let created_at: String = row.get(4)?;
+    let updated_at: String = row.get(5)?;
+    let last_active_at: String = row.get(6)?;
 
     let id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
     })?;
-    let paths: Vec<PathBuf> = serde_json::from_str(&paths_str).unwrap_or_default();
-    let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-    let mount_ids: Vec<crate::mount::MountId> =
-        serde_json::from_str(&mount_ids_str).unwrap_or_default();
-    let source = match source_str.as_str() {
-        "auto_detected" => ProjectSource::AutoDetected,
-        _ => ProjectSource::Manual,
-    };
+    let root_paths: Vec<PathBuf> = serde_json::from_str(&root_paths_str).unwrap_or_default();
 
     Ok(Project {
         id,
         name,
-        description,
-        paths,
-        tags,
-        emoji,
-        source,
-        memory_visible,
-        mount_ids,
+        root_paths,
         instructions,
-        created_at: created_at
-            .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: updated_at
-            .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
-        last_active_at: last_active_at
-            .parse::<DateTime<Utc>>()
-            .unwrap_or_else(|_| Utc::now()),
+        created_at: parse_rfc3339(&created_at),
+        updated_at: parse_rfc3339(&updated_at),
+        last_active_at: parse_rfc3339(&last_active_at),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_roundtrips_a_project_and_replaces_legacy_table() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+
+        // Seed a legacy (mount-era) table — must be dropped on ensure.
+        conn.execute_batch(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT,
+                paths TEXT, tags TEXT, emoji TEXT NOT NULL DEFAULT '📦',
+                source TEXT NOT NULL DEFAULT 'manual', memory_visible INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_active_at TEXT NOT NULL
+             );
+             INSERT INTO projects VALUES ('p1','stale',NULL,NULL,NULL,'📦','manual',1,'a','a','a');",
+        )
+        .expect("seed legacy schema");
+
+        ensure_project_schema(&conn).expect("ensure schema");
+
+        let stale: i64 = conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .expect("count after drop");
+        assert_eq!(stale, 0, "legacy rows must not survive the clean break");
+
+        let project = Project::new("oxios", vec![PathBuf::from("/tmp")], "instructions");
+        save_project(&conn, &project).expect("save");
+        let loaded = list_projects(&conn).expect("list");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, project.id);
+        assert_eq!(loaded[0].root_paths, vec![PathBuf::from("/tmp")]);
+        assert_eq!(loaded[0].instructions, "instructions");
+
+        // Upsert by id: name change persists, row count stays 1.
+        let mut renamed = project.clone();
+        renamed.name = "oxios-2".to_string();
+        save_project(&conn, &renamed).expect("upsert");
+        let names: Vec<String> = list_projects(&conn)
+            .expect("list")
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, vec!["oxios-2".to_string()]);
+
+        // Unique name index is enforced.
+        let impostor = Project::new("oxios-2", vec![], "");
+        let err = save_project(&conn, &impostor).expect_err("duplicate name must violate index");
+        assert!(
+            matches!(
+                err.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            ),
+            "expected constraint violation, got {err:?}"
+        );
+    }
 }

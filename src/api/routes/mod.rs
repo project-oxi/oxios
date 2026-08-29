@@ -153,8 +153,7 @@ pub(crate) use mount_routes::{
     handle_mount_update, handle_mounts_list,
 };
 pub(crate) use project_routes::{
-    handle_project_create, handle_project_delete, handle_project_get, handle_project_link_memory,
-    handle_project_memories, handle_project_unlink_memory, handle_project_update,
+    handle_project_create, handle_project_delete, handle_project_get, handle_project_update,
     handle_projects_list,
 };
 pub(crate) use resource_routes::{
@@ -625,16 +624,6 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/projects/{id}", get(handle_project_get))
         .route("/api/projects/{id}", put(handle_project_update))
         .route("/api/projects/{id}", delete(handle_project_delete))
-        .route("/api/projects/{id}/memories", get(handle_project_memories))
-        .route(
-            "/api/projects/{id}/memories",
-            post(handle_project_link_memory),
-        )
-        .route(
-            "/api/projects/{id}/memories/{memoryId}",
-            delete(handle_project_unlink_memory),
-        )
-        // Mounts (RFC-025)
         .route("/api/mounts", get(handle_mounts_list))
         .route("/api/mounts", post(handle_mount_create))
         .route("/api/mounts/{id}", get(handle_mount_get))

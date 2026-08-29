@@ -1,6 +1,8 @@
-//! Project management API routes (RFC-011 Phase 4).
+//! Project management API routes.
 //!
-//! Provides CRUD endpoints for Projects and Project-Memory linking.
+//! CRUD over the reduced project record: `{ name, root_paths, instructions }`.
+//! Root-path validation failures and name conflicts return 422 with an
+//! English message (design §9).
 
 use axum::{
     Json,
@@ -10,11 +12,9 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 
-use oxios_kernel::ProjectInfo;
+use oxios_kernel::{ProjectInfo, ProjectManagerError};
 
 use crate::api::error::AppError;
-use crate::api::routes::PageParams;
-use crate::api::routes::paginate;
 use crate::api::server::AppState;
 
 // ─── Request / Query types ──────────────────────────────────
@@ -23,11 +23,10 @@ use crate::api::server::AppState;
 #[derive(Debug, Deserialize)]
 pub(crate) struct ProjectListParams {
     #[serde(default = "default_page")]
-    pub page: usize,
+    pub(crate) page: usize,
     #[serde(default = "default_limit")]
-    pub limit: usize,
-    /// 검색어 (name, description, tags에서 검색).
-    pub search: Option<String>,
+    pub(crate) limit: usize,
+    pub(crate) search: Option<String>,
 }
 
 fn default_page() -> usize {
@@ -41,32 +40,18 @@ fn default_limit() -> usize {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CreateProjectRequest {
     pub name: String,
+    /// Canonical, existing directories. Order matters — the first root is
+    /// the working directory. May be empty. Duplicates are deduped.
     #[serde(default)]
-    pub tags: Vec<String>,
-    pub emoji: Option<String>,
-    pub description: Option<String>,
-    /// RFC-025: referenced Mount IDs (applied via bundle update after create).
-    pub mount_ids: Option<Vec<String>>,
-    /// RFC-025: custom instructions (applied via bundle update after create).
+    pub root_paths: Vec<String>,
     pub instructions: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct UpdateProjectRequest {
     pub name: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub emoji: Option<String>,
-    pub description: Option<String>,
-    pub memory_visible: Option<bool>,
-    /// RFC-025: referenced Mount IDs.
-    pub mount_ids: Option<Vec<String>>,
-    /// RFC-025: custom instructions.
+    pub root_paths: Option<Vec<String>>,
     pub instructions: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct LinkMemoryRequest {
-    pub memory_id: String,
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -82,6 +67,19 @@ macro_rules! project_api {
     };
 }
 
+/// Map a typed project error onto its HTTP status (design §9).
+fn project_error(e: ProjectManagerError) -> AppError {
+    match e {
+        ProjectManagerError::NotFound(_) => AppError::NotFound(e.to_string()),
+        ProjectManagerError::InvalidRoot { .. } | ProjectManagerError::NameExists(_) => {
+            AppError::UnprocessableEntity(e.to_string())
+        }
+        ProjectManagerError::Invalid(_) | ProjectManagerError::Database(_) => {
+            AppError::BadRequest(e.to_string())
+        }
+    }
+}
+
 // ─── Handlers ───────────────────────────────────────────────
 
 /// GET /api/projects — List all projects with pagination and search.
@@ -92,15 +90,14 @@ pub(crate) async fn handle_projects_list(
     let api = project_api!(state);
     let all = api.list_projects();
 
-    // Filter by search
+    // Filter by search — name and instructions only (design §4.4).
     let filtered: Vec<ProjectInfo> = match &params.search {
         Some(search) => {
             let lower = search.to_lowercase();
             all.into_iter()
                 .filter(|p| {
                     p.name.to_lowercase().contains(&lower)
-                        || p.description.to_lowercase().contains(&lower)
-                        || p.tags.iter().any(|t| t.to_lowercase().contains(&lower))
+                        || p.instructions.to_lowercase().contains(&lower)
                 })
                 .collect()
         }
@@ -113,7 +110,7 @@ pub(crate) async fn handle_projects_list(
 
     let total = sorted.len();
     let limit = params.limit.min(500);
-    let offset = (params.page.saturating_sub(1)) * limit;
+    let offset = params.page.saturating_sub(1) * limit;
     let items: Vec<&ProjectInfo> = sorted.iter().skip(offset).take(limit).collect();
 
     Ok(Json(serde_json::json!({
@@ -147,23 +144,12 @@ pub(crate) async fn handle_project_create(
     }
 
     let project = api
-        .create_project(body.name, body.tags, body.emoji, body.description)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    // Apply the RFC-025 bundle fields (mounts, instructions) that used to be
-    // PUT-only. Previously the dialog sent `instructions` on POST and the
-    // field was silently dropped while a success toast still showed.
-    let wants_bundle = body.mount_ids.as_ref().is_some_and(|m| !m.is_empty())
-        || body
-            .instructions
-            .as_ref()
-            .is_some_and(|i| !i.trim().is_empty());
-    let project = if wants_bundle {
-        api.update_project_bundle(&project.id, body.mount_ids, body.instructions)
-            .map_err(|e| AppError::BadRequest(e.to_string()))?
-    } else {
-        project
-    };
+        .create_project(
+            &body.name,
+            body.root_paths,
+            body.instructions.as_deref().unwrap_or(""),
+        )
+        .map_err(project_error)?;
 
     Ok((StatusCode::CREATED, Json(project)))
 }
@@ -176,43 +162,9 @@ pub(crate) async fn handle_project_update(
 ) -> Result<Json<ProjectInfo>, AppError> {
     let api = project_api!(state);
 
-    // RFC-025: if mount_ids or instructions are provided, route to bundle update.
-    if body.mount_ids.is_some() || body.instructions.is_some() {
-        let project = api
-            .update_project_bundle(&id, body.mount_ids, body.instructions)
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
-        // Also apply traditional field updates if provided.
-        if body.name.is_some()
-            || body.tags.is_some()
-            || body.emoji.is_some()
-            || body.description.is_some()
-            || body.memory_visible.is_some()
-        {
-            let updated = api
-                .update_project(
-                    &id,
-                    body.name,
-                    body.tags,
-                    body.emoji,
-                    body.description,
-                    body.memory_visible,
-                )
-                .map_err(|e| AppError::BadRequest(e.to_string()))?;
-            return Ok(Json(updated));
-        }
-        return Ok(Json(project));
-    }
-
     let project = api
-        .update_project(
-            &id,
-            body.name,
-            body.tags,
-            body.emoji,
-            body.description,
-            body.memory_visible,
-        )
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        .update_project(&id, body.name, body.root_paths, body.instructions)
+        .map_err(project_error)?;
 
     Ok(Json(project))
 }
@@ -225,58 +177,6 @@ pub(crate) async fn handle_project_delete(
     let api = project_api!(state);
 
     api.remove_project(&id)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// GET /api/projects/:id/memories — Get memory links for a project.
-///
-/// Returns the stored memory/episode IDs. Content enrichment is gone with the
-/// retired in-process memory store (RFC-047) — the brain owns memory now; the
-/// web panel renders the IDs.
-pub(crate) async fn handle_project_memories(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Query(params): Query<PageParams>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let api = project_api!(state);
-
-    // Get memory IDs for this project
-    let memory_ids = api
-        .get_project_memory_ids(&id)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let memories: Vec<serde_json::Value> = memory_ids
-        .into_iter()
-        .map(|mid| serde_json::json!({ "id": mid }))
-        .collect();
-
-    Ok(Json(paginate(&memories, &params)))
-}
-
-/// POST /api/projects/:id/memories — Link a memory to a project.
-pub(crate) async fn handle_project_link_memory(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(body): Json<LinkMemoryRequest>,
-) -> Result<StatusCode, AppError> {
-    let api = project_api!(state);
-
-    api.link_memory(&id, &body.memory_id)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// DELETE /api/projects/:id/memories/:memoryId — Unlink a memory from a project.
-pub(crate) async fn handle_project_unlink_memory(
-    state: State<Arc<AppState>>,
-    Path((project_id, memory_id)): Path<(String, String)>,
-) -> Result<StatusCode, AppError> {
-    let api = project_api!(state);
-
-    api.unlink_memory(&project_id, &memory_id)
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)

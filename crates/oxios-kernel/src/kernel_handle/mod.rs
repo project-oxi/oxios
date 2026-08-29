@@ -373,7 +373,6 @@ impl KernelHandle {
             None,
             None,
             None,
-            None,
             &request_id,
         )
         .await

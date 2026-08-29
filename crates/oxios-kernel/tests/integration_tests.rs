@@ -318,7 +318,6 @@ async fn test_orchestrator_happy_path() {
             "Do something useful",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
@@ -355,7 +354,6 @@ async fn test_orchestrator_events_published() {
             .handle_unified(
                 "test-user",
                 "Check events",
-                None,
                 None,
                 None,
                 None, // RFC-032: role
@@ -536,7 +534,6 @@ async fn test_orchestrator_routes_to_supervisor() {
         .handle_unified(
             "test-user",
             "Build a simple thing",
-            None,
             None,
             None,
             None, // RFC-032: role

@@ -463,8 +463,8 @@ impl Gateway {
             let start = std::time::Instant::now();
 
             let session_id = msg.metadata.get(meta::SESSION_ID).cloned();
-            let project_ids = msg.metadata.get(meta::PROJECT_IDS).cloned();
-            let mount_ids = msg.metadata.get(meta::MOUNT_IDS).cloned();
+            // Single workspace binding: the request's project_id (design §4.3).
+            let project_id = msg.metadata.get(meta::PROJECT_IDS).cloned();
             let conn_id = msg.metadata.get("conn_id").cloned();
             let request_id = msg.id.to_string();
 
@@ -742,8 +742,7 @@ impl Gateway {
                     &msg.user_id,
                     &msg.content,
                     session_id.as_deref(),
-                    project_ids.as_deref(),
-                    mount_ids.as_deref(),
+                    project_id.as_deref(),
                     role,
                     model_override,
                     model_params,
@@ -830,15 +829,10 @@ impl Gateway {
                     if let Some(ref pid) = orchestration.primary_project_id {
                         channel_meta.insert(meta::PROJECT_IDS.to_owned(), pid.to_string());
                     }
-                    // RFC-025: surface active Mount IDs so the frontend can show
-                    // a detection badge and bind them on follow-up turns.
-                    if !orchestration.active_mount_ids.is_empty()
-                        && let Ok(json) = serde_json::to_string(&orchestration.active_mount_ids)
-                    {
-                        channel_meta.insert(meta::MOUNT_IDS.to_owned(), json);
-                    }
-                    if let Some(ref mtag) = orchestration.mount_tag {
-                        channel_meta.insert("mount_tag".to_owned(), mtag.clone());
+                    // Mirror the resolved project binding as singular
+                    // `project_id` metadata (design §4.3).
+                    if let Some(ref pid) = orchestration.project_id {
+                        channel_meta.insert("project_id".to_owned(), pid.clone());
                     }
                     // Session persona override echo: persist_session keys the
                     // session's active_persona_id off the terminal metadata.

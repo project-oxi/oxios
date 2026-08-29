@@ -28,6 +28,8 @@ pub enum AppError {
     GatewayTimeout(String),
     /// Precondition failed — ETag mismatch on optimistic concurrency check (S-2).
     Conflict(String),
+    /// Semantically invalid payload (e.g. project root path validation, design §9).
+    UnprocessableEntity(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -44,6 +46,7 @@ impl std::fmt::Display for AppError {
             ),
             AppError::GatewayTimeout(m) => write!(f, "Gateway Timeout: {m}"),
             AppError::Conflict(m) => write!(f, "Conflict: {m}"),
+            AppError::UnprocessableEntity(m) => write!(f, "Unprocessable Entity: {m}"),
         }
     }
 }
@@ -64,6 +67,7 @@ impl IntoResponse for AppError {
             ),
             AppError::GatewayTimeout(m) => (StatusCode::GATEWAY_TIMEOUT, m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            AppError::UnprocessableEntity(m) => (StatusCode::UNPROCESSABLE_ENTITY, m.clone()),
         };
         let body = json!({ "error": message });
         (status, axum::Json(body)).into_response()

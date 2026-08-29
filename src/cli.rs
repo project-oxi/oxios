@@ -437,21 +437,13 @@ pub(crate) enum ProjectAction {
         /// Project name (unique).
         name: String,
 
-        /// Filesystem path(s) for the project.
+        /// Filesystem root(s) for the project (absolute, existing directories).
         #[arg(short, long = "path", num_args = 1..)]
         paths: Vec<String>,
 
-        /// Tags for keyword matching.
-        #[arg(short, long = "tag", num_args = 1..)]
-        tags: Vec<String>,
-
-        /// Display emoji.
-        #[arg(short, long, default_value = "📦")]
-        emoji: String,
-
-        /// Description.
+        /// Project instructions shown to the agent while this project is active.
         #[arg(short, long)]
-        description: Option<String>,
+        instructions: Option<String>,
     },
 
     /// Remove a project.

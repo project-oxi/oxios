@@ -452,15 +452,22 @@ pub(crate) fn sanitize_event(event: &oxios_kernel::event_bus::KernelEvent) -> se
             duration_ms,
             is_error,
             output_summary,
-        } => serde_json::json!({
-            "type": "tool_finished",
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "duration_ms": duration_ms,
-            "is_error": is_error,
-            "output_summary": output_summary,
-        }),
+            results,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "tool_finished",
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "duration_ms": duration_ms,
+                "is_error": is_error,
+                "output_summary": output_summary,
+            });
+            if let Some(r) = results.clone() {
+                obj["results"] = r;
+            }
+            obj
+        }
         KernelEvent::ToolExecutionProgress {
             session_id,
             tool_call_id,

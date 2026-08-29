@@ -1917,15 +1917,24 @@ fn kernel_event_to_ws_chunk(
             duration_ms,
             is_error,
             output_summary,
+            results,
             ..
-        } => Some(serde_json::json!({
-            "type": "tool_end",
-            "tool_name": tool_name,
-            "tool_call_id": tool_call_id,
-            "duration_ms": duration_ms,
-            "is_error": is_error,
-            "output_summary": output_summary,
-        })),
+        } => {
+            let mut chunk = serde_json::json!({
+                "type": "tool_end",
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "duration_ms": duration_ms,
+                "is_error": is_error,
+                "output_summary": output_summary,
+            });
+            // Structured web-search results (title/url/snippet array) — the
+            // Web UI renders these as search cards. Absent for other tools.
+            if let Some(r) = results.clone() {
+                chunk["results"] = r;
+            }
+            Some(chunk)
+        }
         KernelEvent::ToolExecutionProgress {
             tool_call_id,
             tool_name,
@@ -2067,6 +2076,7 @@ fn grounding_from_event(
     let KernelEvent::ToolExecutionFinished {
         tool_name,
         output_summary,
+        results,
         ..
     } = event
     else {
@@ -2082,18 +2092,49 @@ fn grounding_from_event(
         return None;
     }
 
-    let citations = extract_citations(summary);
+    // Structured-first: the kernel search tools deliver title/url/snippet
+    // arrays via the `results` field (tool_end sibling). Fall back to
+    // scanning the text summary for URLs (older tools / web_fetch).
+    let citations = if let Some(results) = results
+        .as_ref()
+        .and_then(|r| r.get("results"))
+        .and_then(|v| v.as_array())
+    {
+        results_to_citations(results)
+    } else {
+        extract_citations(summary)
+    };
 
     if citations.is_empty() {
         return None;
     }
-
     Some(serde_json::json!({
         "type": "grounding",
         "message_id": active_message_id,
         "citations": citations,
         "tool_name": tool_name,
     }))
+}
+
+/// Map structured result items (title/url/snippet objects) to citations.
+fn results_to_citations(items: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let url = item.get("url")?.as_str()?.to_string();
+            if !url.starts_with("http") {
+                return None;
+            }
+            let mut c = serde_json::json!({ "url": &url, "favicon": favicon_url(&url) });
+            if let Some(t) = item.get("title").and_then(|v| v.as_str()) {
+                c["title"] = t.into();
+            }
+            if let Some(s) = item.get("snippet").and_then(|v| v.as_str()) {
+                c["snippet"] = s.into();
+            }
+            Some(c)
+        })
+        .collect()
 }
 
 /// Extract citations from search output. JSON-first, URL-scan fallback.
@@ -2106,23 +2147,7 @@ fn extract_citations(text: &str) -> Vec<serde_json::Value> {
             parsed.get("results").and_then(|v| v.as_array()).cloned()
         };
         if let Some(items) = arr {
-            let citations: Vec<serde_json::Value> = items
-                .iter()
-                .filter_map(|item| {
-                    let url = item.get("url")?.as_str()?.to_string();
-                    if !url.starts_with("http") {
-                        return None;
-                    }
-                    let mut c = serde_json::json!({ "url": &url, "favicon": favicon_url(&url) });
-                    if let Some(t) = item.get("title").and_then(|v| v.as_str()) {
-                        c["title"] = t.into();
-                    }
-                    if let Some(s) = item.get("snippet").and_then(|v| v.as_str()) {
-                        c["snippet"] = s.into();
-                    }
-                    Some(c)
-                })
-                .collect();
+            let citations = results_to_citations(&items);
             if !citations.is_empty() {
                 return citations;
             }
@@ -2405,11 +2430,58 @@ mod rfc015_tests {
             duration_ms: 123,
             is_error: false,
             output_summary: "ok".into(),
+            results: None,
         };
         let chunk = kernel_event_to_ws_chunk(&event, &Some("s1".into()), &None).unwrap();
         assert_eq!(chunk["type"], "tool_end");
         assert_eq!(chunk["duration_ms"], 123);
         assert_eq!(chunk["is_error"], false);
+    }
+
+    #[test]
+    fn tool_finished_carries_structured_results() {
+        let event = KernelEvent::ToolExecutionFinished {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            tool_name: "web_search".into(),
+            duration_ms: 100,
+            is_error: false,
+            output_summary: "1. **Title**".into(),
+            results: Some(serde_json::json!({
+                "query": "q",
+                "resultCount": 1,
+                "results": [
+                    {"title": "Title", "url": "https://example.com", "snippet": "s", "source": "Tavily"}
+                ]
+            })),
+        };
+        let chunk = kernel_event_to_ws_chunk(&event, &Some("s1".into()), &None).unwrap();
+        assert_eq!(chunk["results"]["resultCount"], 1);
+        assert_eq!(chunk["results"]["results"][0]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn grounding_prefers_structured_results_over_summary() {
+        // The output summary (first 200 chars) has no URL; the structured
+        // results do. Grounding must use the structured payload.
+        let event = KernelEvent::ToolExecutionFinished {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            tool_name: "web_search".into(),
+            duration_ms: 100,
+            is_error: false,
+            output_summary: "1. **A title without any url**".into(),
+            results: Some(serde_json::json!({
+                "query": "q",
+                "resultCount": 1,
+                "results": [
+                    {"title": "Title", "url": "https://example.com", "snippet": "s", "source": "Brave"}
+                ]
+            })),
+        };
+        let grounding = grounding_from_event(&event, &Some(uuid::Uuid::nil())).unwrap();
+        assert_eq!(grounding["citations"][0]["url"], "https://example.com");
+        assert_eq!(grounding["citations"][0]["title"], "Title");
     }
 
     /// Real-time tool progress (RFC-015 v0.12) must be forwarded as a

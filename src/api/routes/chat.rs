@@ -97,6 +97,9 @@ pub(crate) struct ChatResponse {
     /// RFC-014: Duration in milliseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     duration_ms: Option<u64>,
+    /// Server-derived persona snapshot (design §6.1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_profile: Option<oxios_kernel::persona::EffectiveProfile>,
 }
 
 /// POST /api/chat — Send a message to the kernel via gateway and get response.
@@ -136,7 +139,7 @@ pub(crate) async fn handle_chat(
         None
     };
     if let Some(ref pid) = request_project_id {
-        msg.metadata.insert("project_ids".to_owned(), pid.clone());
+        msg.metadata.insert("project_id".to_owned(), pid.clone());
     }
     // RFC-025: include mount_ids from request (multi-path injection).
     if !body.mount_ids.is_empty() {
@@ -200,7 +203,7 @@ pub(crate) async fn handle_chat(
                 .or_else(|| response.metadata.get("session_id").cloned());
             let project_id = meta
                 .and_then(|m| m.project_id.clone())
-                .or_else(|| response.metadata.get("project_ids").cloned());
+                .or_else(|| response.metadata.get("project_id").cloned());
             let phase = meta
                 .map(|m| m.phase.clone())
                 .or_else(|| response.metadata.get("phase").cloned());
@@ -374,6 +377,15 @@ pub(crate) async fn handle_chat(
                 });
             }
 
+            // Server-derived effective profile for this turn (request
+            // persona + request project binding).
+            let effective_profile = oxios_kernel::persona::resolve_effective_profile(
+                Some(state.kernel.persona.manager().as_ref()),
+                state.kernel.projects.as_ref().map(|p| p.manager()),
+                request_persona_id.as_deref(),
+                request_project_id.as_deref(),
+            );
+
             Ok(Json(ChatResponse {
                 id: msg_id,
                 echo: content_echo,
@@ -386,6 +398,7 @@ pub(crate) async fn handle_chat(
                 mount_tag,
                 evaluation_passed,
                 duration_ms,
+                effective_profile,
             }))
         }
         Err(e) => {
@@ -789,7 +802,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             .meta
                             .as_ref()
                             .and_then(|m| m.project_id.clone())
-                            .or_else(|| msg.metadata.get("project_ids").cloned());
+                            .or_else(|| msg.metadata.get("project_id").cloned());
                         let phase = msg
                             .meta
                             .as_ref()
@@ -1085,6 +1098,15 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             }
                         }
                         if !is_partial && !has_error {
+                            // Server-derived effective profile for the turn
+                            // (session persona override + project binding).
+                            let effective_profile = oxios_kernel::persona::resolve_effective_profile(
+                                Some(state.kernel.persona.manager().as_ref()),
+                                state.kernel.projects.as_ref().map(|p| p.manager()),
+                                msg.metadata.get("persona_id").map(String::as_str),
+                                msg.meta.as_ref().and_then(|m| m.project_id.clone()).as_deref()
+                                    .or_else(|| msg.metadata.get("project_id").map(String::as_str)),
+                            );
                             let done_chunk = serde_json::json!({
                                 "type": "done",
                                 "seq": msg.seq,
@@ -1093,6 +1115,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 "project_id": project_id,
                                 "phase": phase,
                                 "evaluation_passed": evaluation_passed,
+                                "effective_profile": effective_profile,
                                 "project_tag": project_tag,
                                 "duration_ms": duration_ms,
                                 // RFC-025: surface detected mount info to the frontend.
@@ -1360,7 +1383,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     incoming.metadata.insert("session_id".into(), sid.clone());
                                 }
                                 if let Some(ref vid) = incoming_project_id {
-                                    incoming.metadata.insert("project_ids".into(), vid.clone());
+                                    incoming.metadata.insert("project_id".into(), vid.clone());
                                 }
                                 if let Some(ref mids) = incoming_mount_ids {
                                     incoming.metadata.insert("mount_ids".into(), mids.clone());
@@ -1460,7 +1483,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     incoming.metadata.insert("session_id".into(), sid.clone());
                                 }
                                 if let Some(ref vid) = incoming_project_id {
-                                    incoming.metadata.insert("project_ids".into(), vid.clone());
+                                    incoming.metadata.insert("project_id".into(), vid.clone());
                                 }
                                 if let Some(ref mids) = incoming_mount_ids {
                                     incoming.metadata.insert("mount_ids".into(), mids.clone());

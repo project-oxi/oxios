@@ -665,7 +665,7 @@ impl StateStore {
                             .or_else(|| {
                                 session
                                     .metadata
-                                    .get("project_ids")
+                                    .get("project_id")
                                     .and_then(|v| v.as_str())
                                     .and_then(|s| s.split(',').next().map(String::from))
                             }),

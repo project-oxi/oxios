@@ -396,8 +396,7 @@ impl Orchestrator {
         let ctx = oxios_ouroboros::MsgCtx {
             session_id: sid.clone(),
             history,
-            project_ids: project_id.map(String::from),
-            mount_ids: None,
+            project_id: project_id.map(String::from),
             role: role.map(String::from),
             model_override: model_override.map(String::from),
             persona_id: persona_id.map(String::from),
@@ -494,7 +493,7 @@ impl Orchestrator {
     /// derived purely from the bound project (roots + context body).
     /// Independent of the directive — runs for every message.
     fn resolve_exec_env(&self, ctx: &oxios_ouroboros::MsgCtx) -> oxios_ouroboros::ExecEnv {
-        let workspace = self.resolve_project_workspace(ctx.project_ids.as_deref());
+        let workspace = self.resolve_project_workspace(ctx.project_id.as_deref());
 
         // Touch the project to record activity.
         if let Some(project) = &workspace.project
@@ -509,7 +508,7 @@ impl Orchestrator {
             } else {
                 Some(workspace.context_body)
             },
-            mount_paths: workspace.root_paths,
+            root_paths: workspace.root_paths,
             project_id: workspace.project.map(|p| p.id),
             cspace_hint: None,
             model_override: ctx.model_override.clone(),
@@ -747,6 +746,21 @@ fn failure_class_to_user_message(class: Option<&oxios_ouroboros::FailureClass>) 
 /// Context` header. Roots and instructions are rendered only when present,
 /// so a folderless project contributes instructions alone.
 fn render_project_context(p: &Project) -> String {
+    /// Char-boundary-safe truncation with an ellipsis marker.
+    fn cap(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            return s.to_string();
+        }
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
+    }
+
+    const MAX_INSTRUCTIONS_CHARS: usize = 2000;
+    const MAX_CONTEXT_CHARS: usize = 6000;
+
     let mut s = format!("### Project: {}\n", p.name);
     if !p.root_paths.is_empty() {
         s.push_str("Filesystem roots (the first root is the working directory):\n");
@@ -757,10 +771,12 @@ fn render_project_context(p: &Project) -> String {
     if !p.instructions.trim().is_empty() {
         s.push_str(&format!(
             "\nProject instructions:\n{}\n",
-            p.instructions.trim()
+            cap(p.instructions.trim(), MAX_INSTRUCTIONS_CHARS)
         ));
     }
-    s
+    // Whole-body cap (mount-era parity): the context block must stay a
+    // bounded slice of the system prompt.
+    cap(&s, MAX_CONTEXT_CHARS)
 }
 
 #[cfg(test)]
@@ -857,6 +873,22 @@ mod project_workspace_tests {
         assert!(ws.context_body.contains("### Project: writing"));
         assert!(ws.context_body.contains("write in English"));
         assert!(!ws.context_body.contains("Filesystem roots"));
+    }
+
+    #[test]
+    fn long_instructions_and_context_are_capped() {
+        let (orch, pm) = workspace_orchestrator();
+        let big = "x".repeat(5000);
+        let project = pm.create("big", vec![], &big).expect("create");
+        let ws = orch.resolve_project_workspace(Some(&project.id.to_string()));
+        assert!(ws.context_body.chars().count() <= 6000);
+
+        // Instructions themselves cap at 2000 chars, with an ellipsis marker.
+        let ctx = super::render_project_context(&project);
+        let instructions = ctx.split("Project instructions:\n").nth(1).unwrap_or("");
+        let trimmed = instructions.trim_end_matches('\n');
+        assert!(trimmed.chars().count() <= 2001, "instructions capped");
+        assert!(trimmed.ends_with('…'), "ellipsis marker present");
     }
 
     #[test]

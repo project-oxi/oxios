@@ -464,7 +464,7 @@ impl Gateway {
 
             let session_id = msg.metadata.get(meta::SESSION_ID).cloned();
             // Single workspace binding: the request's project_id (design §4.3).
-            let project_id = msg.metadata.get(meta::PROJECT_IDS).cloned();
+            let project_id = msg.metadata.get(meta::PROJECT_ID).cloned();
             let conn_id = msg.metadata.get("conn_id").cloned();
             let request_id = msg.id.to_string();
 
@@ -826,13 +826,10 @@ impl Gateway {
                     if let Some(ref sid) = orchestration.session_id {
                         channel_meta.insert(meta::SESSION_ID.to_owned(), sid.clone());
                     }
-                    if let Some(ref pid) = orchestration.primary_project_id {
-                        channel_meta.insert(meta::PROJECT_IDS.to_owned(), pid.to_string());
-                    }
                     // Mirror the resolved project binding as singular
                     // `project_id` metadata (design §4.3).
                     if let Some(ref pid) = orchestration.project_id {
-                        channel_meta.insert("project_id".to_owned(), pid.clone());
+                        channel_meta.insert(meta::PROJECT_ID.to_owned(), pid.clone());
                     }
                     // Session persona override echo: persist_session keys the
                     // session's active_persona_id off the terminal metadata.

@@ -8,6 +8,8 @@ pub mod manager;
 pub mod persistence;
 pub mod store;
 pub use manager::PersonaManager;
+
+use crate::project::ProjectManager;
 pub use store::PersonaStore;
 
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,79 @@ impl std::fmt::Display for ToolProfile {
         write!(f, "{s}")
     }
 }
+/// Server-derived affordance: file tools are in scope.
+pub const AFFORDANCE_FILES: &str = "files";
+/// Server-derived affordance: terminal/exec is in scope.
+pub const AFFORDANCE_TERMINAL: &str = "terminal";
+/// Server-derived affordance: diff view is relevant.
+pub const AFFORDANCE_DIFF: &str = "diff";
+/// Server-derived affordance: multi-worktree fanout is available.
+pub const AFFORDANCE_WORKTREE_FANOUT: &str = "worktree-fanout";
+
+/// Derive the UI affordances for a turn (design §6.1): purely
+/// `ToolProfile` × has_roots. Base/Code personas always get the diff view;
+/// files/terminal/worktree-fanout appear only when the project has
+/// filesystem roots. Minimal/Control personas expose no affordances.
+pub fn derive_affordances(tool_profile: &ToolProfile, has_roots: bool) -> Vec<&'static str> {
+    match tool_profile {
+        ToolProfile::Base | ToolProfile::Code => {
+            let mut a = vec![AFFORDANCE_DIFF];
+            if has_roots {
+                a.extend([
+                    AFFORDANCE_FILES,
+                    AFFORDANCE_TERMINAL,
+                    AFFORDANCE_WORKTREE_FANOUT,
+                ]);
+            }
+            a
+        }
+        ToolProfile::Minimal | ToolProfile::Control => vec![],
+    }
+}
+
+/// Server-derived snapshot of what this turn's persona can do (design
+/// §6.1). The web renders affordances from this — never from persona
+/// capability strings.
+#[derive(Debug, Clone, Serialize)]
+pub struct EffectiveProfile {
+    pub persona_id: String,
+    pub tool_profile: String,
+    pub affordances: Vec<String>,
+}
+
+/// Resolve the effective profile for a turn (design §6.1).
+///
+/// Persona resolution: `turn_persona_id` (when it exists and is enabled) →
+/// the PersonaManager's global active persona → `None`. `has_roots` is true
+/// only when `project_id` resolves to a project with non-empty root_paths;
+/// unresolvable/unknown projects ⇒ false.
+pub fn resolve_effective_profile(
+    persona_manager: Option<&PersonaManager>,
+    project_manager: Option<&ProjectManager>,
+    turn_persona_id: Option<&str>,
+    project_id: Option<&str>,
+) -> Option<EffectiveProfile> {
+    let persona = turn_persona_id
+        .and_then(|id| {
+            persona_manager
+                .and_then(|pm| pm.store().get(id))
+                .filter(|p| p.enabled)
+        })
+        .or_else(|| persona_manager.and_then(|pm| pm.get_active_persona()))?;
+    let has_roots = project_id
+        .and_then(|pid| uuid::Uuid::parse_str(pid).ok())
+        .and_then(|uuid| project_manager.and_then(|pm| pm.get_project(uuid)))
+        .is_some_and(|p| !p.root_paths.is_empty());
+    Some(EffectiveProfile {
+        persona_id: persona.id,
+        tool_profile: persona.tool_profile.to_string(),
+        affordances: derive_affordances(&persona.tool_profile, has_roots)
+            .into_iter()
+            .map(String::from)
+            .collect(),
+    })
+}
+
 /// Exactly one persona is active at a time (single slot). RFC-039.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Persona {

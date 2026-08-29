@@ -9,10 +9,8 @@
 pub mod meta {
     /// Session ID for multi-turn conversations.
     pub const SESSION_ID: &str = "session_id";
-    /// Project IDs (comma-separated) for project-scoped operations.
-    pub const PROJECT_IDS: &str = "project_ids";
-    /// Mount IDs (comma-separated) for workspace-context resolution (RFC-025).
-    pub const MOUNT_IDS: &str = "mount_ids";
+    /// Project ID for the turn (singular workspace binding, design §4.3).
+    pub const PROJECT_ID: &str = "project_id";
     /// Chat ID (used by Telegram and similar chat channels).
     pub const CHAT_ID: &str = "chat_id";
     /// Message ID for reply correlation.

@@ -254,7 +254,7 @@ impl TokenMaxer {
             // gate; ask_user is not registered on this path either.
             cspace_hint: Some("standard".into()),
             model_override: Some(model.clone()),
-            mount_paths: task.mount_paths.clone(),
+            root_paths: task.root_paths.clone(),
             ..Default::default()
         };
         let directive = Directive {

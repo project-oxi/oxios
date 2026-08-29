@@ -26,8 +26,8 @@ pub struct PlannedTask {
     pub source_name: String,
     /// The synthesized goal prompt handed to the agent.
     pub goal: String,
-    /// Workspace paths to sandbox the agent to (project tasks only).
-    pub mount_paths: Vec<PathBuf>,
+    /// Workspace roots to sandbox the agent to (project tasks only).
+    pub root_paths: Vec<PathBuf>,
 }
 
 /// Selects the next task for a maxing run.
@@ -71,7 +71,7 @@ impl WorkPlanner {
                 source: TaskSource::Skill,
                 source_name: entry.skill.name.clone(),
                 goal,
-                mount_paths: Vec::new(),
+                root_paths: Vec::new(),
             });
         }
 
@@ -95,7 +95,7 @@ impl WorkPlanner {
                     source: TaskSource::Project,
                     source_name: proj.name.clone(),
                     goal,
-                    mount_paths: proj.root_paths.clone(),
+                    root_paths: proj.root_paths.clone(),
                 });
             }
         }

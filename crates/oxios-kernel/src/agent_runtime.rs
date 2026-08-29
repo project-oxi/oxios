@@ -43,7 +43,7 @@ use crate::access_manager::{
 };
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
-use crate::persona::{PersonaManager, ToolProfile};
+use crate::persona::{Persona, PersonaManager, ToolProfile};
 use crate::tools::registration::register_tools_from_cspace_gated;
 
 use crate::KernelHandle;
@@ -330,7 +330,7 @@ impl AgentRuntime {
             &directive.constraints,
             &directive.acceptance_criteria,
             env.cspace_hint.as_deref(),
-            &env.mount_paths,
+            &env.root_paths,
             env.workspace_context.as_deref(),
             session_ctx,
             session_id,
@@ -358,7 +358,7 @@ impl AgentRuntime {
         constraints: &[String],
         acceptance_criteria: &[String],
         cspace_hint: Option<&str>,
-        mount_paths: &[std::path::PathBuf],
+        root_paths: &[std::path::PathBuf],
         workspace_context: Option<&str>,
         // Retained for API compatibility; recall timing moved to the brain.
         _session_ctx: &mut SessionContext,
@@ -376,18 +376,7 @@ impl AgentRuntime {
         // otherwise fall back to the global active persona (RFC-039).
         // Invalid/disabled overrides degrade to the global default rather
         // than failing the turn — ingress layers validate up front.
-        let persona = persona_id
-            .and_then(|id| {
-                self.persona_manager
-                    .as_ref()
-                    .and_then(|pm| pm.store().get(id))
-                    .filter(|p| p.enabled)
-            })
-            .or_else(|| {
-                self.persona_manager
-                    .as_ref()
-                    .and_then(|pm| pm.get_active_persona())
-            });
+        let persona = resolve_turn_persona(self.persona_manager.as_deref(), persona_id);
 
         // Get persona system prompt.
         let persona_prompt = persona
@@ -583,7 +572,7 @@ impl AgentRuntime {
                 audit_trail,
                 self.routing_stats.clone(),
                 session_id.clone(),
-                mount_paths,
+                root_paths,
                 restore_state,
                 tool_profile,
             )
@@ -745,6 +734,42 @@ impl AgentRuntime {
     }
 }
 
+/// Derive the execution CWD and the project-derived path grants from an
+/// [`ExecEnv`] (design §6.1). Pure and unit-testable.
+///
+/// Contract: `root_paths[0]` is the CWD and EVERY root is a grant. With
+/// empty roots the CWD falls back to `config.workspace_dir` (or the temp
+/// dir) but the grants list is EMPTY — the fallback is a working directory,
+/// never an authority grant.
+pub fn derive_execution_paths(
+    env: &ExecEnv,
+    config: &AgentRuntimeConfig,
+) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+    let cwd = env.root_paths.first().cloned().unwrap_or_else(|| {
+        config
+            .workspace_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("oxios-agent-workspace"))
+    });
+    (cwd, env.root_paths.clone())
+}
+
+/// Resolve the persona for this turn: an enabled explicit override wins;
+/// otherwise the global active persona. Invalid/disabled overrides degrade
+/// to the global default rather than failing the turn (RFC-039).
+fn resolve_turn_persona(
+    persona_manager: Option<&PersonaManager>,
+    turn_override: Option<&str>,
+) -> Option<Persona> {
+    turn_override
+        .and_then(|id| {
+            persona_manager
+                .and_then(|pm| pm.store().get(id))
+                .filter(|p| p.enabled)
+        })
+        .or_else(|| persona_manager.and_then(|pm| pm.get_active_persona()))
+}
+
 /// Create and run an oxicode-sdk `Agent` with CSpace-based tool registration.
 ///
 /// Uses `engine.oxi().agent()` (AgentBuilder) for full middleware,
@@ -764,7 +789,7 @@ async fn run_agent(
     audit_trail: Option<Arc<AuditTrail>>,
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
-    mount_paths: &[std::path::PathBuf],
+    root_paths: &[std::path::PathBuf],
     restore_state: Option<&serde_json::Value>,
     tool_profile: ToolProfile,
 ) -> Result<(
@@ -782,20 +807,21 @@ async fn run_agent(
     String,
     Vec<oxios_ouroboros::ReasoningSegment>,
 )> {
-    // Extract workspace.
-    // RFC-025: the primary Mount's first path is the CWD; otherwise the
-    // configured workspace_dir, otherwise a per-agent temp dir. Paths now
-    // come only from Mounts — the legacy config.project_paths fallback was
-    // removed when the RFC-025 migration completed.
-    let workspace = if !mount_paths.is_empty() {
-        mount_paths[0].clone()
-    } else if let Some(ws) = &config.workspace_dir {
-        ws.clone()
-    } else {
-        std::env::temp_dir()
+    // Extract workspace + grants (design §6.1): the first project root is
+    // the CWD; grants come ONLY from project roots. With no roots the CWD
+    // falls back to workspace_dir / a per-agent temp dir — a working
+    // directory, never an authority grant.
+    let (mut workspace, root_grants) =
+        derive_execution_paths(
+            &ExecEnv { root_paths: root_paths.to_vec(), ..Default::default() },
+            config,
+        );
+    if root_paths.is_empty() && config.workspace_dir.is_none() {
+        // Refine the generic temp fallback to a per-agent directory.
+        workspace = std::env::temp_dir()
             .join("oxios-agent-workspace")
-            .join(agent_id.to_string())
-    };
+            .join(agent_id.to_string());
+    }
 
     // Ensure workspace exists.
     let _ = std::fs::create_dir_all(&workspace);
@@ -813,7 +839,7 @@ async fn run_agent(
     //      (kernel-bridge tools wrapped in GatedTool) and bash/exec
     //      subprocesses may still resolve against the process CWD. We grant
     //      it as a safety net so those tools aren't denied by GatedTool.
-    //   2. The designated workspace — computed from mount_paths / workspace_dir / temp.
+    //   2. The project roots — the only project-derived grants.
     //   3. Kernel workspace — state store path for sessions, etc.
     //   4. /tmp -- general temp file access.
     //
@@ -837,24 +863,17 @@ async fn run_agent(
             }
         }
 
-        // 2. Designated workspace
-        let ws_pattern = format!("{}/**", workspace.to_string_lossy().trim_end_matches('/'));
-        if !perms.allowed_paths.iter().any(|p| p == &ws_pattern) {
-            perms.allow_path(&ws_pattern);
-        }
-
-        // 2b. RFC-025: every bound Mount grants path access.
-        //     This fixes the latent gap where only project_paths[0] was
-        //     accessible — now all Mount paths (multi-path work) are allowed.
-        //     Parent patterns already covering a path are skipped.
-        for mount_path in mount_paths {
-            let pattern = format!("{}/**", mount_path.to_string_lossy().trim_end_matches('/'));
+        // 2. Project roots — the ONLY project-derived grants. With empty
+        //    roots nothing is granted here (no ambient fallback): the
+        //    workspace_dir / temp CWD is a working directory, not authority.
+        for root in root_grants {
+            let pattern = format!("{}/**", root.to_string_lossy().trim_end_matches('/'));
             if !perms.allowed_paths.iter().any(|p| p == &pattern) {
                 perms.allow_path(&pattern);
                 tracing::debug!(
                     agent = %agent_name,
                     path = %pattern,
-                    "Added Mount path to agent allowed paths (RFC-025)"
+                    "Added project root to agent allowed paths"
                 );
             }
         }
@@ -866,8 +885,7 @@ async fn run_agent(
             .to_string_lossy()
             .to_string();
         let kernel_ws_pattern = format!("{}/**", kernel_ws.trim_end_matches('/'));
-        if kernel_ws_pattern != ws_pattern
-            && !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern)
+        if !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern)
         {
             perms.allow_path(&kernel_ws_pattern);
         }
@@ -1974,6 +1992,42 @@ impl std::fmt::Debug for AgentRuntime {
         f.debug_struct("AgentRuntime")
             .field("model_id", &self.engine_handle.get().default_model_id())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod persona_resolution_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn turn_override_wins_when_enabled() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        let persona = resolve_turn_persona(Some(&pm), Some("dev")).expect("override resolves");
+        assert_eq!(persona.id, "dev");
+    }
+
+    #[tokio::test]
+    async fn disabled_override_falls_through_to_global() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        pm.store().set_enabled("review", false).unwrap();
+        let persona = resolve_turn_persona(Some(&pm), Some("review")).expect("global resolves");
+        assert_eq!(persona.id, "research");
+    }
+
+    #[tokio::test]
+    async fn none_uses_global_active() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        let persona = resolve_turn_persona(Some(&pm), None).expect("global resolves");
+        assert_eq!(persona.id, "research");
+    }
+
+    #[test]
+    fn no_manager_no_persona() {
+        assert!(resolve_turn_persona(None, Some("dev")).is_none());
+        assert!(resolve_turn_persona(None, None).is_none());
     }
 }
 

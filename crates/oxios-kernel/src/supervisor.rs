@@ -343,15 +343,14 @@ impl Supervisor for BasicSupervisor {
                     reasoning_segments: Vec::new(),
                 })
             } else {
-                // Execute with a lightweight SessionContext copy: project IDs
-                // are read-only during execution (recall timing moved to the
-                // oxibrain daemon — RFC-047), so no write-back is needed.
+                // Execute with a lightweight SessionContext copy: the project
+                // binding is read-only during execution (recall timing moved
+                // to the oxibrain daemon — RFC-047), so no write-back is needed.
                 let mut temp_ctx = {
                     let ctx = session_ctx.read().await;
-                    let mut c = crate::session_context::SessionContext::new();
-                    c.primary_project_id = ctx.primary_project_id;
-                    c.secondary_project_ids = ctx.secondary_project_ids.clone();
-                    c
+                    crate::session_context::SessionContext {
+                        project_id: ctx.project_id.clone(),
+                    }
                 };
                 runtime
                     .execute_directive(id, &directive, &env, &mut temp_ctx)

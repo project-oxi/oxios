@@ -59,13 +59,14 @@ impl Directive {
 /// of the task directive.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExecEnv {
-    /// Rendered workspace context (active Mounts, project instructions, relevant memories).
+    /// Rendered workspace context (project instructions, relevant memories).
     pub workspace_context: Option<String>,
 
-    /// Resolved filesystem paths from active Mounts. paths[0] of the primary
-    /// Mount is the CWD; every path is added to the agent's allowed_paths.
+    /// Ordered project roots. Empty = no project filesystem scope (no
+    /// ambient fallback): paths[0] is the CWD; every path is added to the
+    /// agent's allowed_paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mount_paths: Vec<PathBuf>,
+    pub root_paths: Vec<PathBuf>,
 
     /// Project ID detected by the orchestrator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,10 +165,8 @@ pub struct MsgCtx {
     /// Previous exchanges in this session (from the state store).
     /// Provides clarify context and topic-shift detection.
     pub history: Vec<Exchange>,
-    /// Comma-separated project IDs.
-    pub project_ids: Option<String>,
-    /// Comma-separated Mount IDs.
-    pub mount_ids: Option<String>,
+    /// Project ID for the turn (singular workspace binding, design §4.3).
+    pub project_id: Option<String>,
     /// RFC-032: Role hint (optional). When set, the orchestrator
     /// resolves the model via `engine.role_routing[role]`. Populated
     /// by the gateway from the WS `role` field.
@@ -388,7 +387,7 @@ mod tests {
     fn exec_env_round_trip_preserves_non_transient_fields() {
         let env = ExecEnv {
             workspace_context: Some("ctx".to_string()),
-            mount_paths: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+            root_paths: vec![PathBuf::from("/a"), PathBuf::from("/b")],
             cspace_hint: Some("tmpl".to_string()),
             model_override: Some("anthropic/claude-sonnet-4".to_string()),
             role: Some("researcher".to_string()),
@@ -398,7 +397,7 @@ mod tests {
         let back: ExecEnv = serde_json::from_value(json).unwrap();
         assert_eq!(back.workspace_context, Some("ctx".to_string()));
         assert_eq!(
-            back.mount_paths,
+            back.root_paths,
             vec![PathBuf::from("/a"), PathBuf::from("/b")]
         );
         assert_eq!(back.cspace_hint, Some("tmpl".to_string()));

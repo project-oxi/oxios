@@ -85,6 +85,14 @@ pub(crate) async fn handle_session_get(
            "user_messages": session.user_messages,
            "agent_responses": session.agent_responses,
            "active_persona_id": session.active_persona_id,
+           // Server-derived effective profile for the session's bound
+           // persona + project (design §6.1); null when no persona binds.
+           "effective_profile": oxios_kernel::persona::resolve_effective_profile(
+               Some(state.kernel.persona.manager().as_ref()),
+               state.kernel.projects.as_ref().map(|p| p.manager()),
+               session.active_persona_id.as_deref(),
+               session.project_id.as_deref(),
+           ),
            "created_at": session.created_at.to_rfc3339(),
            "updated_at": session.updated_at.to_rfc3339(),
            "metadata": session.metadata,

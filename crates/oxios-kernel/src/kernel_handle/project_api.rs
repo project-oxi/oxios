@@ -60,6 +60,11 @@ impl ProjectApi {
         Self { project_manager }
     }
 
+    /// Underlying `ProjectManager` for profile resolution.
+    pub fn manager(&self) -> &ProjectManager {
+        &self.project_manager
+    }
+
     /// List all Projects.
     pub fn list_projects(&self) -> Vec<ProjectInfo> {
         self.project_manager

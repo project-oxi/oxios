@@ -36,9 +36,6 @@ pub(crate) struct ChatRequest {
     /// Optional space ID for context partitioning.
     #[serde(default)]
     project_id: String,
-    /// RFC-025: comma-separated Mount IDs to bind (primary first).
-    #[serde(default)]
-    mount_ids: String,
     /// Optional model override. Populates the gateway `model_override`
     /// metadata so the orchestrator forwards it as `ExecEnv::model_override`.
     #[serde(default)]
@@ -85,12 +82,6 @@ pub(crate) struct ChatResponse {
     /// RFC-014: Space tag decoration.
     #[serde(skip_serializing_if = "Option::is_none")]
     project_tag: Option<String>,
-    /// RFC-025: active Mount IDs (comma-separated), primary first.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mount_ids: Option<String>,
-    /// RFC-025: Mount decoration tag (e.g. "[🔧 oxios + oxicode-sdk]").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mount_tag: Option<String>,
     /// RFC-014: Evaluation passed.
     #[serde(skip_serializing_if = "Option::is_none")]
     evaluation_passed: Option<bool>,
@@ -140,11 +131,6 @@ pub(crate) async fn handle_chat(
     };
     if let Some(ref pid) = request_project_id {
         msg.metadata.insert("project_id".to_owned(), pid.clone());
-    }
-    // RFC-025: include mount_ids from request (multi-path injection).
-    if !body.mount_ids.is_empty() {
-        msg.metadata
-            .insert("mount_ids".to_owned(), body.mount_ids.clone());
     }
 
     // Per-message model override. Carried via gateway metadata to the
@@ -208,9 +194,6 @@ pub(crate) async fn handle_chat(
                 .map(|m| m.phase.clone())
                 .or_else(|| response.metadata.get("phase").cloned());
             let project_tag = meta.and_then(|m| m.project_tag.clone());
-            // RFC-025: active Mount IDs + tag (from channel metadata set by the gateway).
-            let mount_ids = response.metadata.get("mount_ids").cloned();
-            let mount_tag = response.metadata.get("mount_tag").cloned();
             let evaluation_passed = meta.and_then(|m| m.evaluation_passed);
             let duration_ms = meta.and_then(|m| m.duration_ms);
 
@@ -394,8 +377,6 @@ pub(crate) async fn handle_chat(
                 project_id: project_id.clone(),
                 phase,
                 project_tag,
-                mount_ids,
-                mount_tag,
                 evaluation_passed,
                 duration_ms,
                 effective_profile,
@@ -1118,9 +1099,6 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 "effective_profile": effective_profile,
                                 "project_tag": project_tag,
                                 "duration_ms": duration_ms,
-                                // RFC-025: surface detected mount info to the frontend.
-                                "mount_tag": msg.metadata.get("mount_tag"),
-                                "mount_ids": msg.metadata.get("mount_ids"),
                                 // Source: gateway.rs serializes the terminal
                                 // orchestration's tool_calls into channel
                                 // metadata (same key the non-streaming path
@@ -1232,12 +1210,6 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
 
                         let incoming_project_id = parsed
                             .get("project_id")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                            .map(String::from);
-                        // RFC-025: mount_ids (comma-separated, primary first).
-                        let incoming_mount_ids = parsed
-                            .get("mount_ids")
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.is_empty())
                             .map(String::from);
@@ -1385,9 +1357,6 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 if let Some(ref vid) = incoming_project_id {
                                     incoming.metadata.insert("project_id".into(), vid.clone());
                                 }
-                                if let Some(ref mids) = incoming_mount_ids {
-                                    incoming.metadata.insert("mount_ids".into(), mids.clone());
-                                }
                                 if let Some(ref role) = incoming_role {
                                     incoming.metadata.insert("role".into(), role.clone());
                                 }
@@ -1484,9 +1453,6 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 }
                                 if let Some(ref vid) = incoming_project_id {
                                     incoming.metadata.insert("project_id".into(), vid.clone());
-                                }
-                                if let Some(ref mids) = incoming_mount_ids {
-                                    incoming.metadata.insert("mount_ids".into(), mids.clone());
                                 }
                                 if let Some(ref role) = incoming_role {
                                     incoming.metadata.insert("role".into(), role.clone());
@@ -2263,12 +2229,12 @@ pub(crate) struct ToolApprovalResponseBody {
 }
 
 // ---------------------------------------------------------------------------
-// path-access (interactive Mount / temp-allow / deny)
+// path-access (interactive temp-allow / deny)
 // ---------------------------------------------------------------------------
 
 /// POST /api/chat/path-access/{id}/respond — Resolve a pending path-access
-/// request. The user chooses: create a Mount ("mount"), temporarily allow
-/// the path for this session ("temp"), or deny ("deny").
+/// request. The user chooses: temporarily allow the path for this session
+/// ("temp"), or deny ("deny").
 pub(crate) async fn handle_path_access_respond(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -2289,7 +2255,7 @@ pub(crate) async fn handle_path_access_respond(
         })?;
 
     let result = match body.action.as_str() {
-        "temp" | "mount" => {
+        "temp" => {
             let dir = std::path::Path::new(&path);
             let parent = dir.parent().unwrap_or(dir);
             let pattern = format!("{}/**", parent.to_string_lossy().trim_end_matches('/'));
@@ -2305,24 +2271,6 @@ pub(crate) async fn handle_path_access_respond(
                 }
             }
 
-            if body.action == "mount"
-                && let Some(mounts) = &state.kernel.mounts
-            {
-                let name = parent
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "mounted-path".to_string());
-                if let Err(e) =
-                    mounts.create_mount(name, vec![parent.to_string_lossy().to_string()])
-                {
-                    tracing::warn!(
-                        error = %e,
-                        path = %path,
-                        "mount creation failed; temp-allow still active"
-                    );
-                }
-            }
-
             tracing::info!(
                 agent = %agent_name,
                 path = %path,
@@ -2331,6 +2279,11 @@ pub(crate) async fn handle_path_access_respond(
                 "path-access granted"
             );
             oxios_kernel::tools::PathAccessResult::Allowed
+        }
+        "mount" => {
+            return Err(AppError::BadRequest(
+                "the 'mount' action was removed; choose 'temp' or 'deny'".into(),
+            ));
         }
         _ => {
             tracing::info!(agent = %agent_name, path = %path, "path-access denied");
@@ -2354,7 +2307,7 @@ pub(crate) async fn handle_path_access_respond(
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct PathAccessResponseBody {
-    /// "temp" | "mount" | "deny"
+    /// "temp" | "deny"
     pub action: String,
 }
 

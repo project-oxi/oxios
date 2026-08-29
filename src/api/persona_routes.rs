@@ -41,8 +41,6 @@ pub struct PersonaSummary {
     /// Writing sub-category (novel | scenario | essay | blog).
     #[serde(skip_serializing_if = "Option::is_none")]
     genre: Option<String>,
-    /// Mount IDs auto-attached by the chat composer when selected.
-    default_mount_ids: Vec<String>,
 }
 
 /// GET /api/personas — List all personas.
@@ -64,7 +62,6 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
                 capabilities: p.capabilities,
                 category: p.category,
                 genre: p.genre,
-                default_mount_ids: p.default_mount_ids,
             })
             .collect(),
     )
@@ -88,7 +85,6 @@ pub async fn handle_persona_get(
             "capabilities": p.capabilities,
             "category": p.category,
             "genre": p.genre,
-            "default_mount_ids": p.default_mount_ids,
             "active": state.kernel.persona.active_id().as_deref() == Some(p.id.as_str()),
             "tool_profile": p.tool_profile.to_string(),
         }))),
@@ -116,9 +112,6 @@ pub struct PersonaCreateRequest {
     /// Writing sub-category (novel | scenario | essay | blog).
     #[serde(default)]
     genre: Option<String>,
-    /// Mount IDs auto-attached by the chat composer when selected.
-    #[serde(default)]
-    default_mount_ids: Option<Vec<String>>,
     /// Tool access profile: `base` | `code` | `minimal`. Defaults to `code`.
     #[serde(default)]
     tool_profile: Option<String>,
@@ -154,7 +147,6 @@ pub async fn handle_persona_create(
         capabilities: body.capabilities.unwrap_or_default(),
         category: body.category.unwrap_or_else(default_category),
         genre: body.genre,
-        default_mount_ids: body.default_mount_ids.unwrap_or_default(),
         tool_profile: body
             .tool_profile
             .as_deref()
@@ -192,7 +184,6 @@ pub struct PersonaUpdateRequest {
     capabilities: Option<Vec<String>>,
     category: Option<String>,
     genre: Option<String>,
-    default_mount_ids: Option<Vec<String>>,
     tool_profile: Option<String>,
 }
 
@@ -223,7 +214,6 @@ pub async fn handle_persona_update(
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
         category: body.category.unwrap_or(existing.category),
         genre: body.genre.or(existing.genre),
-        default_mount_ids: body.default_mount_ids.unwrap_or(existing.default_mount_ids),
         tool_profile: body
             .tool_profile
             .as_deref()
@@ -371,7 +361,6 @@ mod tests {
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
             category: "general".into(),
             genre: None,
-            default_mount_ids: vec![],
             active: true,
             tool_profile: "base".into(),
         };

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum ToolProfile {
     /// Full access: every tool including Oxios control (persona, cron,
-    /// security, budget, resource, agent, a2a, project, mount, …).
+    /// security, budget, resource, agent, a2a, project, …).
     Base,
     /// Coding/working tools: exec, browser, memory, knowledge, ask_user.
     /// No Oxios control tools.
@@ -31,7 +31,7 @@ pub enum ToolProfile {
     Code,
     /// Always-on tier only (read, write, edit, grep, find, ls, web_search).
     Minimal,
-    /// Oxios self-control only: project/mount, persona, task, security,
+    /// Oxios self-control only: project, persona, task, security,
     /// budget, resource, agent, marketplace, MCP management, engine/model
     /// settings. No exec, browser, file, memory, knowledge, or A2A tools.
     Control,
@@ -168,11 +168,6 @@ pub struct Persona {
     /// `None` for non-writing personas.
     #[serde(default)]
     pub genre: Option<String>,
-    /// Mount IDs the chat composer auto-attaches when this persona is
-    /// selected (RFC-025 integration). UI-level preset only — the request
-    /// still carries explicit `mount_ids`; this never forces a grant.
-    #[serde(default)]
-    pub default_mount_ids: Vec<String>,
     /// Tool access profile: `base` (every tool incl. Oxios control) |
     /// `code` (coding/working tools, no Oxios control) | `minimal`
     /// (file + web-search only). Drives CSpace resolution in the agent
@@ -200,7 +195,6 @@ impl Default for Persona {
             capabilities: vec![],
             category: default_category(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::default(),
         }
     }
@@ -221,7 +215,6 @@ impl Persona {
             capabilities: vec![],
             category: default_category(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::default(),
         }
     }
@@ -246,7 +239,6 @@ impl Persona {
             capabilities: vec![],
             category: default_category(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::default(),
         }
     }
@@ -299,7 +291,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec!["terminal".to_string(), "diff-viewer".to_string(), "worktree-fanout".to_string()],
             category: "coding".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -335,7 +326,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec!["diff-viewer".to_string()],
             category: "coding".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -371,7 +361,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "research".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -411,7 +400,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "general".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -451,7 +439,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "general".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -489,7 +476,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "operations".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -528,7 +514,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec!["diff-viewer".to_string()],
             category: "operations".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -568,7 +553,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "writing".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -607,7 +591,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "general".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -631,7 +614,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "normal".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Base,
         },
         Persona {
@@ -639,7 +621,7 @@ pub fn default_personas() -> Vec<Persona> {
             name: "Oxios".to_string(),
             role: "copilot".to_string(),
             description: "Internal copilot for managing Oxios itself — projects, \
-                mounts, tasks, personas, security, budget, marketplace skills, \
+                tasks, personas, security, budget, marketplace skills, \
                 MCP servers, and model settings.".to_string(),
             system_prompt: "You are the Oxios Copilot: an internal assistant for \
                 managing this Oxios instance's own configuration. You have no \
@@ -657,7 +639,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "normal".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Control,
         },
         Persona {
@@ -700,7 +681,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "writing".to_string(),
             genre: Some("novel".to_string()),
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -742,7 +722,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "writing".to_string(),
             genre: Some("scenario".to_string()),
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -783,7 +762,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "writing".to_string(),
             genre: Some("essay".to_string()),
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -822,7 +800,6 @@ pub fn default_personas() -> Vec<Persona> {
             capabilities: vec![],
             category: "writing".to_string(),
             genre: Some("blog".to_string()),
-            default_mount_ids: vec![],
             tool_profile: ToolProfile::Minimal,
         },
     ]
@@ -866,7 +843,6 @@ mod tests {
         p.personality_traits = vec!["curious".to_string(), "thorough".to_string()];
         p.category = "writing".to_string();
         p.genre = Some("novel".to_string());
-        p.default_mount_ids = vec!["mount-1".to_string()];
 
         let json = serde_json::to_string(&p).unwrap();
         let restored: Persona = serde_json::from_str(&json).unwrap();
@@ -876,13 +852,12 @@ mod tests {
         assert_eq!(restored.personality_traits.len(), 2);
         assert_eq!(restored.category, "writing");
         assert_eq!(restored.genre.as_deref(), Some("novel"));
-        assert_eq!(restored.default_mount_ids, vec!["mount-1".to_string()]);
     }
 
     #[test]
     fn test_persona_v2_json_without_new_fields_loads_with_defaults() {
         // Pre-category persistence files must load with the general
-        // category, no genre, and no default mounts.
+        // category and no genre.
         let legacy = serde_json::json!({
             "id": "legacy",
             "name": "Legacy",
@@ -896,7 +871,6 @@ mod tests {
         let p: Persona = serde_json::from_value(legacy).unwrap();
         assert_eq!(p.category, "general");
         assert!(p.genre.is_none());
-        assert!(p.default_mount_ids.is_empty());
     }
 
     #[test]
@@ -961,10 +935,6 @@ mod tests {
             assert_eq!(by_id(id).category, "writing");
         }
 
-        // No default persona pre-binds mounts; users opt in per persona.
-        for p in &personas {
-            assert!(p.default_mount_ids.is_empty());
-        }
     }
 
     #[test]

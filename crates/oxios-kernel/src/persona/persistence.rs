@@ -87,7 +87,6 @@ mod tests {
             capabilities: vec![],
             category: "general".to_string(),
             genre: None,
-            default_mount_ids: vec![],
             tool_profile: crate::persona::ToolProfile::Code,
         }
     }

@@ -55,7 +55,6 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
             "exec",
             "subagent",
             "project",
-            "mount",
             "kernel_agent",
             "persona",
             "cron",
@@ -208,14 +207,14 @@ mod tests {
 
         let names = bridge.tool_names();
         // 8 always-on (file ops + web_search/get_search_results)
-        // + 19 kernel domain (exec, subagent, project, mount,
+        // + 18 kernel domain (exec, subagent, project,
         //   kernel_agent, persona, cron, security, budget, resource, a2a×3,
         //   knowledge, ask_user, marketplace, skill_forge, calendar, send_email)
-        // = 27. MCP tools are dynamic (per-server) and excluded.
+        // = 26. MCP tools are dynamic (per-server) and excluded.
         // +5 tools when browser feature is enabled (browse, browse_extract,
         // browse_session, browse_script, browse_screenshot).
         #[allow(unused_mut)]
-        let mut expected = 27_usize;
+        let mut expected = 26_usize;
         #[cfg(feature = "browser")]
         {
             expected += 5;

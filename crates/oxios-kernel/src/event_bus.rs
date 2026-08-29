@@ -122,9 +122,9 @@ pub enum KernelEvent {
         approved: bool,
     },
     /// An agent tried to access a file path outside its allowed_paths.
-    /// The frontend renders a path-access card offering: create a Mount,
-    /// temporarily allow, or deny. Mirrors `ApprovalRequested` but carries
-    /// path-specific context so the card and resolve endpoint know what to do.
+    /// The frontend renders a path-access card offering: temporarily allow,
+    /// or deny. Mirrors `ApprovalRequested` but carries path-specific context
+    /// so the card and resolve endpoint know what to do.
     PathAccessRequested {
         /// The request ID (matches the PendingPathApprovals entry).
         id: uuid::Uuid,

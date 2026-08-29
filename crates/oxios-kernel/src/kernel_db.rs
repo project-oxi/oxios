@@ -1,9 +1,9 @@
-//! Kernel SQLite connection — the shared backend for mount/project tables.
+//! Kernel SQLite connection — the shared backend for kernel-managed tables.
 //!
 //! Extracted from `oxios-memory::memory::sqlite::MemoryDatabase` (RFC-047):
 //! that type mixed the generic connection with the memory schema, sqlite-vec
 //! registration, and an embedding dimension. The kernel only needs the
-//! connection: `MountManager` and `ProjectManager` create their own tables
+//! connection: kernel managers (`ProjectManager`, …) create their own tables
 //! through `conn()`.
 
 use anyhow::{Context, Result};

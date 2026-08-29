@@ -251,7 +251,6 @@ impl AgentTool for PersonaTool {
                     capabilities: str_array(&params, "capabilities"),
                     category: str_or(&params, "category").unwrap_or_else(|| "general".to_string()),
                     genre: str_or(&params, "genre"),
-                    default_mount_ids: str_array(&params, "default_mount_ids"),
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or_default(),
@@ -342,11 +341,6 @@ impl AgentTool for PersonaTool {
                     },
                     category: str_or(&params, "category").unwrap_or(existing.category),
                     genre: str_or(&params, "genre").or(existing.genre),
-                    default_mount_ids: if params.get("default_mount_ids").is_some() {
-                        str_array(&params, "default_mount_ids")
-                    } else {
-                        existing.default_mount_ids
-                    },
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or(existing.tool_profile),

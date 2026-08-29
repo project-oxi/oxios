@@ -2,8 +2,8 @@
 //!
 //! The `projects` table stores the reduced project record (design §4.1):
 //! `root_paths` as a JSON array of canonical paths, project instructions,
-//! and RFC 3339 timestamps. A legacy table from the mount era (no
-//! `root_paths` column) is dropped on boot — a clean, user-approved break.
+//! and RFC 3339 timestamps. A legacy table from the pre-`root_paths`
+//! era is dropped on boot — a clean, user-approved break.
 
 use anyhow::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -32,7 +32,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 /// Ensure the project table exists in the database.
 ///
 /// Clean break: when an existing `projects` table lacks the `root_paths`
-/// column (mount-era schema), it is dropped and recreated from the current
+/// column (legacy schema), it is dropped and recreated from the current
 /// DDL. Legacy project records are discarded by design.
 pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
     let has_table: bool = conn.query_row(
@@ -154,7 +154,7 @@ mod tests {
     fn schema_roundtrips_a_project_and_replaces_legacy_table() {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
 
-        // Seed a legacy (mount-era) table — must be dropped on ensure.
+        // Seed a legacy (pre-root_paths) table — must be dropped on ensure.
         conn.execute_batch(
             "CREATE TABLE projects (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT,

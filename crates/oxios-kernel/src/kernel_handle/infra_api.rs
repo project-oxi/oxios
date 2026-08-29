@@ -29,7 +29,7 @@ pub struct InfraApi {
     pub(crate) pending_tool_approvals: Arc<PendingToolApprovals>,
     /// Pending `ask_user` requests (RFC-027 agent-driven clarification).
     pub(crate) pending_ask_user: Arc<PendingAskUser>,
-    /// Pending path-access requests (interactive Mount / temp-allow / deny cards).
+    /// Pending path-access requests (interactive temp-allow / deny cards).
     pub(crate) pending_path_access: Arc<PendingPathAccess>,
 }
 

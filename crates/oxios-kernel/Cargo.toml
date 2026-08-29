@@ -102,7 +102,7 @@ console = { workspace = true }
 indicatif = "0.17"
 keyring = { workspace = true, optional = true }
 
-# SQLite — kernel mount/project tables + agent history log (RFC-012, RFC-025).
+# SQLite — kernel-managed tables + agent history log (RFC-012).
 # Non-optional since the sqlite-memory feature was removed (RFC-047).
 rusqlite = { version = "0.40", features = ["bundled"] }
 

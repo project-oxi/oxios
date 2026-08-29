@@ -79,11 +79,6 @@ pub struct Kernel {
     /// endpoint resolves from the same map.
     pending_path_access: Arc<oxios_kernel::tools::PendingPathAccess>,
     project_manager: Option<Arc<ProjectManager>>,
-    /// Mount manager (RFC-025 path aliases). `None` when SQLite memory is off.
-    /// Wired into the lazily-cached handle so `/api/mounts` and the mount tool
-    /// see live data — without this the API's handle has `mounts = None` even
-    /// though the orchestrator holds a separate `Arc<MountManager>`.
-    mount_manager: Option<Arc<oxios_kernel::MountManager>>,
     start_time: std::time::Instant,
     /// Path to config.toml (for persistence).
     config_path: PathBuf,
@@ -112,14 +107,6 @@ pub struct Kernel {
     knowledge_base: Arc<KnowledgeBase>,
     /// SQLite-backed agent history query index.
     agent_log_db: Option<Arc<oxios_kernel::agent_log_db::AgentLogDb>>,
-    /// RFC-025 Phase 5: cancellation sender for the Mount auto-promotion
-    /// scanner (Promo-6). Sending `true` breaks the scan loop's `select!`.
-    /// `None` when the scanner is disabled. Kept on the `Kernel` so the
-    /// sender stays alive (otherwise `watch::Receiver::changed()` resolves
-    /// immediately on sender-drop and would abort the loop) and so a future
-    /// graceful shutdown can trigger it.
-    #[allow(dead_code)] // wired via `shutdown_promotion_scanner` on graceful shutdown
-    promo_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     /// RFC-050 §3: vault watcher guard — re-indexes external edits
     /// (Obsidian, oximemo, vim) into the shared KnowledgeBase.
     /// Spawned in `build()` via `spawn_vault_watcher`; held here so
@@ -226,14 +213,6 @@ impl Kernel {
                 // the shared one → Stop never stops the stream.
                 let kh = kh.with_streaming_sinks(self.streaming_sinks.clone());
                 let kh = kh.with_turns(self.turns.clone());
-                // RFC-025: attach MountApi to the handle the HTTP API and CLI
-                // actually use. The orchestrator gets its own Arc directly; this
-                // facade is what `/api/mounts` reads (`state.kernel.mounts`).
-                let kh = if let Some(mm) = &self.mount_manager {
-                    kh.with_mounts(oxios_kernel::MountApi::new(mm.clone()))
-                } else {
-                    kh
-                };
                 let kh = kh.with_token_maxing(oxios_kernel::TokenMaxingApi::new(
                     self.quota_tracker.clone(),
                     self.token_maxer.clone(),
@@ -543,9 +522,6 @@ impl Kernel {
     /// for the outer timeout to function (same rationale as Guardian's
     /// spawn_blocking — RFC-040 A2).
     pub async fn cleanup(&self, timeout: std::time::Duration) {
-        // Promo-6: stop the Mount auto-promotion scanner first so it does
-        // not race the state teardown below.
-        self.shutdown_promotion_scanner();
         let handle = self.handle();
 
         let _ = tokio::time::timeout(timeout, async {
@@ -581,16 +557,6 @@ impl Kernel {
             let _ = tokio::task::spawn_blocking(move || kh.flush_audit()).await;
         })
         .await;
-    }
-
-    /// RFC-025 Phase 5: signal the Mount auto-promotion scanner to stop
-    /// (Promo-6). No-op when the scanner is disabled. Safe to call during
-    /// graceful shutdown; the spawned task breaks its `select!` loop on the
-    /// next iteration.
-    pub fn shutdown_promotion_scanner(&self) {
-        if let Some(tx) = &self.promo_shutdown_tx {
-            let _ = tx.send(true);
-        }
     }
 
     /// RFC-050: stop the vault watcher — sends the debounce-thread
@@ -1402,15 +1368,14 @@ impl KernelBuilder {
                 }
             });
         }
-        // KernelDatabase — shared SQLite connection for mount/project tables.
-        // Forward-only migration: the legacy `memory.db` is preserved untouched
-        // (spec §9); the kernel's own tables move to `kernel.db`. One-time copy
-        // of existing mount/project rows from the old shared `memory.db`.
+        // KernelDatabase — the kernel's own SQLite store (`kernel.db`).
+        // Clean break: no legacy migration from the old shared `memory.db`;
+        // kernel-managed tables live here from the start (spec §9).
         let kernel_db = Arc::new(KernelDatabase::open(
             PathBuf::from(&config.kernel.workspace).join("kernel.db"),
         )?);
 
-        // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
+        // ProjectManager (RFC-011) uses this db.
         let project_manager =
             match oxios_kernel::ProjectManager::new(kernel_db.clone(), Some(event_bus.clone())) {
                 Ok(pm) => {
@@ -1422,111 +1387,6 @@ impl KernelBuilder {
                     None
                 }
             };
-
-        // MountManager (RFC-025) using the same SQLite database.
-        let mount_manager =
-            match oxios_kernel::MountManager::new(kernel_db.clone(), Some(event_bus.clone())) {
-                Ok(mm) => {
-                    tracing::info!("MountManager initialized");
-                    Some(Arc::new(mm))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
-                    None
-                }
-            };
-
-        // ── RFC-025 Phase 5: Mount auto-promotion background scanner ──
-        // Scans session history on a cadence and promotes paths that cross
-        // the frequency threshold into Mounts. Cheap (one filesystem walk
-        // per scan) and debounced by the threshold.
-        //
-        // Promo-6: a `watch` channel provides a cancellation point so a
-        // future graceful shutdown can break the loop. The `Sender` is
-        // stored on the returned `Kernel` to keep it alive.
-        let promo_shutdown_tx = {
-            let mounts_cfg = &config.mounts;
-            if !mounts_cfg.auto_promote_enabled {
-                None
-            } else if let Some(ref mm) = mount_manager {
-                let mm = mm.clone();
-                let ss = state_store.clone();
-                // Promo-11: respect the configured toggle instead of a
-                // hardcoded `true`.
-                let promo_config = oxios_kernel::PromotionConfig {
-                    enabled: mounts_cfg.auto_promote_enabled,
-                    threshold: mounts_cfg.auto_promote_threshold,
-                    window_days: mounts_cfg.auto_promote_window_days,
-                };
-                let interval_secs = mounts_cfg.auto_promote_interval_secs;
-                // Promo-6: cancellation channel.
-                let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-                let window_days = mounts_cfg.auto_promote_window_days;
-                tokio::spawn(async move {
-                    let mut ticker =
-                        tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-                    // The first tick completes immediately — run a scan right
-                    // after startup, then wait the full interval thereafter.
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    loop {
-                        // Promo-6: break out on shutdown.
-                        tokio::select! {
-                            _ = ticker.tick() => {}
-                            res = shutdown_rx.changed() => {
-                                if res.is_err() || *shutdown_rx.borrow() {
-                                    tracing::info!(
-                                        "Mount auto-promotion scanner shutting down"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Promo-1: only load sessions updated within the
-                        // promotion window, bounding memory to the ones that
-                        // can actually contribute a touch.
-                        let cutoff = chrono::Utc::now() - chrono::Duration::days(window_days);
-                        let sessions = match ss.load_sessions_for_promotion(cutoff).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!(error = %e, "Mount promotion scan failed");
-                                continue;
-                            }
-                        };
-
-                        // Promo-5: `promote_frequent_paths` does blocking
-                        // filesystem I/O (canonicalize + marker walks). Run it
-                        // on a blocking thread so it never stalls the async
-                        // runtime.
-                        let mm = mm.clone();
-                        let promo_config = promo_config.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            mm.promote_frequent_paths(&sessions, &promo_config)
-                        })
-                        .await
-                        {
-                            Ok(created) if !created.is_empty() => {
-                                tracing::info!(
-                                    promoted = created.len(),
-                                    "RFC-025: auto-promoted frequent paths to Mounts"
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "Mount promotion scan task panicked"
-                                );
-                            }
-                        }
-                    }
-                });
-                tracing::info!("Mount auto-promotion scanner spawned");
-                Some(shutdown_tx)
-            } else {
-                None
-            }
-        };
 
         let budget_manager = Arc::new(BudgetManager::new());
         // RFC-031 v2: the shared QuotaTracker. One live instance per
@@ -1704,13 +1564,6 @@ impl KernelBuilder {
             // the consuming builder.
             let kh = kh.with_streaming_sinks(streaming_sinks.clone());
             let kh = kh.with_turns(turns.clone());
-            // Attach the Mount facade (RFC-025). Set before Arc so the handle
-            // carries it from construction.
-            let kh = if let Some(mm) = mount_manager.clone() {
-                kh.with_mounts(oxios_kernel::MountApi::new(mm))
-            } else {
-                kh
-            };
             let kh = kh.with_browser(oxios_kernel::BrowserApi::from_config(&config));
             let compression_svc = Arc::new(oxios_kernel::CompressionService::new(
                 state_store.clone(),
@@ -1918,9 +1771,6 @@ impl KernelBuilder {
         if let Some(pm) = project_manager.clone() {
             orchestrator.set_project_manager(pm);
         }
-        if let Some(mm) = mount_manager.clone() {
-            orchestrator.set_mount_manager(mm);
-        }
         // RFC-029: wire the recovery coordinator (L1 backoff / L2 model
         // swap). Shares RoutingStats with EngineApi/AgentRuntime so
         // fallback events surface in the Web UI. Reads the configured
@@ -1975,7 +1825,6 @@ impl KernelBuilder {
             approval_config,
             pending_path_access,
             project_manager,
-            mount_manager,
             start_time: std::time::Instant::now(),
             config_path,
             // Do NOT pre-seed with the cycle-breaking preliminary handle
@@ -1991,7 +1840,6 @@ impl KernelBuilder {
             a2a_protocol,
             engine_handle,
             agent_log_db,
-            promo_shutdown_tx,
             knowledge_base: knowledge_base.clone(),
             vault_watch,
         };

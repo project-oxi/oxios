@@ -915,12 +915,10 @@ async fn run_agent(
     // policies — whole-root for `~/.oxi` (a surface where NO sub-path
     // is safe — vault, brain index, settings, sessions) and
     // sub-path for `~/.oxios` (a surface whose workspace subtree is
-    // the agent's documented operating context and whose RFC-025
-    // mount paths land). Whole-root denial on `~/.oxios` would kill
-    // legitimate grants (`~/.oxios/workspace/**` at
-    // agent_runtime.rs:824-826 + agent_lifecycle.rs:305-307, plus
-    // RFC-025 mount paths) while the mount manager still reported
-    // mounts accessible — see R2 review feedback.
+    // the agent's documented operating context). Whole-root denial on
+    // `~/.oxios` would kill legitimate grants (`~/.oxios/workspace/**`
+    // at agent_runtime.rs:824-826 + agent_lifecycle.rs:305-307) —
+    // see R2 review feedback.
     //
     // Each deny rule canonicalizes its root at construction, so a
     // `~/.oxi` or `~/.oxios` symlink pointing elsewhere cannot escape
@@ -944,8 +942,8 @@ async fn run_agent(
         }
 
         // Sub-path deny for `~/.oxios/<sensitive>`. Each entry is
-        // the sensitive subtree; agents retain access to `workspace/`
-        // and any RFC-025 mount path. See [`OXIOS_HOME_DENY_SUBPATHS`]
+        // the sensitive subtree; agents retain access to `workspace/`.
+        // See [`OXIOS_HOME_DENY_SUBPATHS`]
         // doc for the per-entry rationale. T18 R4 adds `backups/` —
         // the output dir for `POST /api/system/backup` tarballs,
         // which carry credential-bearing entries.
@@ -1876,9 +1874,9 @@ fn build_system_prompt_inner(
         }
     }
 
-    // ── Workspace Context (RFC-025) ──
-    // Inject active Mounts + project instructions AFTER the goal/constraints
-    // and BEFORE the persona, so the agent sees its workspace before it acts.
+    // ── Workspace Context ──
+    // Inject project instructions AFTER the goal/constraints and BEFORE the
+    // persona, so the agent sees its workspace before it acts.
     if let Some(ctx) = workspace_context.filter(|s| !s.trim().is_empty()) {
         prompt.push_str("\n## Workspace Context\n");
         prompt.push_str(ctx);

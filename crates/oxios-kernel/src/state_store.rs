@@ -576,54 +576,6 @@ impl StateStore {
         self.load_json("sessions", &session_id.0).await
     }
 
-    /// RFC-025 Phase 5: Load all sessions in full (messages + trajectories).
-    ///
-    /// Used by the Mount auto-promotion scanner, which needs trajectory
-    /// tool_args to identify paths the agent actually worked on. Cheaper to
-    /// call once per scan than `load_session` per id.
-    ///
-    /// **Warning:** loads every session on disk. Prefer
-    /// [`load_sessions_for_promotion`](Self::load_sessions_for_promotion)
-    /// for the promotion scanner to bound memory usage.
-    pub async fn load_all_sessions(&self) -> Result<Vec<Session>> {
-        let mut sessions = Vec::new();
-        if let Ok(names) = self.list_category("sessions").await {
-            for name in names {
-                if let Ok(Some(session)) = self.load_json::<Session>("sessions", &name).await {
-                    sessions.push(session);
-                }
-            }
-        }
-        Ok(sessions)
-    }
-
-    /// RFC-025 Phase 5: Load only sessions updated at or after `since`.
-    ///
-    /// Bounds memory usage for the Mount auto-promotion scanner: instead of
-    /// deserializing every session into a single `Vec`, we deserialize each
-    /// one and skip it immediately if its `updated_at` predates the cutoff.
-    /// The promotion window is bounded by `PromotionConfig::window_days`, so
-    /// loading older sessions is pure waste.
-    ///
-    /// Sessions that fail to deserialize are skipped (best effort), mirroring
-    /// [`load_all_sessions`](Self::load_all_sessions).
-    pub async fn load_sessions_for_promotion(&self, since: DateTime<Utc>) -> Result<Vec<Session>> {
-        let mut sessions = Vec::new();
-        if let Ok(names) = self.list_category("sessions").await {
-            for name in names {
-                if let Ok(Some(session)) = self.load_json::<Session>("sessions", &name).await {
-                    // Skip sessions outside the promotion window *before*
-                    // collecting — this is the whole point of the cutoff.
-                    if session.updated_at < since {
-                        continue;
-                    }
-                    sessions.push(session);
-                }
-            }
-        }
-        Ok(sessions)
-    }
-
     /// Lists all sessions (sorted by updated_at descending).
     pub async fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
         let mut sessions = Vec::new();
@@ -1142,31 +1094,4 @@ mod tests {
         assert_eq!(remaining[0].user_id, "recent-user");
     }
 
-    #[tokio::test]
-    async fn test_load_sessions_for_promotion_filters_by_cutoff() {
-        // Promo-1: sessions older than the cutoff must be skipped before
-        // being collected, bounding memory for the promotion scanner.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let store = StateStore::new(temp_dir.path().to_path_buf()).unwrap();
-
-        // Old session — updated 48h ago.
-        let mut old_session = Session::new("old-user");
-        old_session.updated_at = Utc::now() - chrono::Duration::hours(48);
-        store.save_session(&old_session).await.unwrap();
-
-        // Recent session — updated now.
-        let recent_session = Session::new("recent-user");
-        store.save_session(&recent_session).await.unwrap();
-
-        // Cutoff 24h ago: only the recent session should be loaded.
-        let cutoff = Utc::now() - chrono::Duration::hours(24);
-        let sessions = store.load_sessions_for_promotion(cutoff).await.unwrap();
-        assert_eq!(sessions.len(), 1, "old session must be filtered out");
-        assert_eq!(sessions[0].user_id, "recent-user");
-
-        // A cutoff far in the future returns everything (boundary check).
-        let far_cutoff = Utc::now() - chrono::Duration::days(365);
-        let all = store.load_sessions_for_promotion(far_cutoff).await.unwrap();
-        assert_eq!(all.len(), 2);
-    }
 }

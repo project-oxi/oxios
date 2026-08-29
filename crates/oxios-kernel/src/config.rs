@@ -1095,48 +1095,6 @@ impl Default for SessionConfig {
     }
 }
 
-/// RFC-025 Phase 5: Mount auto-promotion configuration.
-/// Controls the background scanner that promotes frequently-used paths into
-/// Mounts. See `mount::path_promotion`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MountsConfig {
-    /// Enable the auto-promotion scanner.
-    #[serde(default = "default_true")]
-    pub auto_promote_enabled: bool,
-    /// Minimum distinct touches within the window to trigger promotion.
-    #[serde(default = "default_promote_threshold")]
-    pub auto_promote_threshold: usize,
-    /// How far back to look, in days.
-    #[serde(default = "default_promote_window_days")]
-    pub auto_promote_window_days: i64,
-    /// Seconds between promotion scans (background cadence).
-    #[serde(default = "default_promote_interval_secs")]
-    pub auto_promote_interval_secs: u64,
-}
-
-fn default_promote_threshold() -> usize {
-    3
-}
-
-fn default_promote_window_days() -> i64 {
-    14
-}
-
-fn default_promote_interval_secs() -> u64 {
-    3600 // hourly
-}
-
-impl Default for MountsConfig {
-    fn default() -> Self {
-        Self {
-            auto_promote_enabled: true,
-            auto_promote_threshold: default_promote_threshold(),
-            auto_promote_window_days: default_promote_window_days(),
-            auto_promote_interval_secs: default_promote_interval_secs(),
-        }
-    }
-}
-
 /// Telegram session management configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TelegramSessionConfig {
@@ -1350,9 +1308,6 @@ pub struct OxiosConfig {
     /// Session management configuration.
     #[serde(default)]
     pub session: SessionConfig,
-    /// RFC-025: Mount system configuration (auto-promotion scanner).
-    #[serde(default)]
-    pub mounts: MountsConfig,
     /// ClawHub marketplace configuration.
     #[serde(default)]
     pub marketplace: MarketplaceConfig,

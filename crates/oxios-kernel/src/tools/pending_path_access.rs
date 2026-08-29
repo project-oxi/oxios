@@ -2,8 +2,8 @@
 //! to read/write a path outside its `allowed_paths`.
 //!
 //! Mirrors [`PendingToolApprovals`] but carries path-specific context
-//! (path, agent_name, mode) so the resolve endpoint can create a Mount or
-//! add a temporary `allowed_paths` entry before unblocking the GatedTool.
+//! (path, agent_name, mode) so the resolve endpoint can add a temporary
+//! `allowed_paths` entry or record the denial before unblocking the GatedTool.
 //!
 //! Pattern: identical to `pending_tool_approvals.rs` (RFC-017 / RFC-035).
 
@@ -15,7 +15,7 @@ use uuid::Uuid;
 /// Result of a path-access request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathAccessResult {
-    /// Path was granted (Mount created or temp-allowed) — re-check and proceed.
+    /// Path was granted (temp-allowed) — re-check and proceed.
     Allowed,
     /// User declined — return the original denial error to the agent.
     Denied,

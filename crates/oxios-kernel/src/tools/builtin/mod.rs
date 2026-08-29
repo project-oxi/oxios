@@ -28,7 +28,6 @@ pub mod mcp_manage_tool;
 // First-party app module tools (opt-in, feature-gated).
 #[cfg(feature = "memo")]
 pub mod memo_tool;
-pub mod mount_tool;
 pub mod persona_tool;
 pub mod project_tool;
 pub mod resource_tool;
@@ -52,7 +51,6 @@ pub use marketplace_tool::MarketplaceTool;
 pub use mcp_manage_tool::McpManageTool;
 #[cfg(feature = "memo")]
 pub use memo_tool::MemoTool;
-pub use mount_tool::MountTool;
 pub use persona_tool::PersonaTool;
 pub use project_tool::ProjectTool;
 pub use resource_tool::ResourceTool;
@@ -97,7 +95,6 @@ pub fn register_all_kernel_tools(
 
     // Kernel domain tools (take &KernelHandle)
     registry.register(ProjectTool::from_kernel(kernel));
-    registry.register(MountTool::from_kernel(kernel));
     registry.register(KernelAgentTool::from_kernel(kernel));
     registry.register(PersonaTool::from_kernel(kernel));
 

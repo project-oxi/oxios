@@ -96,7 +96,6 @@ pub mod compression;
 pub mod config;
 pub use oxi_vault_git as git_layer;
 pub mod kernel_db;
-pub mod mount;
 pub mod project;
 pub mod resource_monitor;
 pub mod session_context;
@@ -225,18 +224,13 @@ pub use backup::{BackupManifest, BackupSection};
 pub use config::{
     BrowserConfig, ChannelsConfig, CronConfig, DaemonConfig, EmailConfig, EmbeddingConfig,
     EngineConfig, ExecConfig, ExecMode, GitConfig, InlineCronJob, LoggingConfig, MarketplaceConfig,
-    McpConfig, McpServerDef, MemoryConfig, MountsConfig, OrchestratorConfig, OxiosConfig,
+    McpConfig, McpServerDef, MemoryConfig, OrchestratorConfig, OxiosConfig,
     PersonaConfig, SkillsShConfig, SqliteMemoryConfig,
 };
 pub use git_layer::{
     CommitContext, CommitDiff, CommitInfo, DiffKind, DiffStats, FileDiff, GitLayer, LogEntry,
 };
 pub use kernel_db::KernelDatabase;
-pub use mount::{
-    DetectionResult as MountDetectionResult, Mount, MountId, MountMeta, MountSource,
-    PromotionConfig, detect_mounts,
-};
-pub use mount::{MountManager, MountManagerError};
 pub use project::{ConversationBuffer, ConversationTurn, Project, ProjectId};
 pub use project::{ProjectManager, ProjectManagerError, validate_root_paths};
 pub use resource_monitor::{OverloadThreshold, ResourceMonitor, ResourceSnapshot};
@@ -263,7 +257,7 @@ pub use kernel_handle::{
     A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
     InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
-    MemoApi, MemoryNote, ModelInfo, MountApi, MountInfo, PersonaApi, ProjectApi, ProjectInfo,
+    MemoApi, MemoryNote, ModelInfo, PersonaApi, ProjectApi, ProjectInfo,
     ProviderCategory, ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot,
     RoutingUpdate, SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
 };

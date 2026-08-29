@@ -161,15 +161,14 @@ impl AgentTool for ProjectTool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_schema_actions() {
-        let schema = serde_json::json!({
-            "properties": {
-                "action": {
-                    "enum": ["list", "get"]
-                }
-            }
-        });
+        let schema = ProjectTool {
+            project_manager: None,
+        }
+        .parameters_schema();
         let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
         assert_eq!(actions.len(), 2);
         assert!(actions.iter().any(|a| a == "list"));

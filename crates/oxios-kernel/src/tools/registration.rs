@@ -303,7 +303,7 @@ pub fn register_tools_from_cspace(
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` (gated) |
 /// | `Browser` | `EXECUTE` | SDK browse tools |
 /// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
-/// | `KernelDomain { "space" }` | any | `ProjectTool` + `MountTool` |
+/// | `KernelDomain { "space" }` | any | `ProjectTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
@@ -383,7 +383,6 @@ pub fn register_tools_from_cspace_gated(
                 }
                 "space" => {
                     registry.register(ProjectTool::from_kernel(kernel));
-                    registry.register(MountTool::from_kernel(kernel));
                 }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {

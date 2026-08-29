@@ -41,7 +41,6 @@ mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
 use search::{handle_browse, handle_search};
-mod mount_routes;
 mod project_routes;
 mod resource_routes;
 mod secrets_routes;
@@ -148,10 +147,6 @@ pub(crate) use marketplace::{
 };
 #[cfg(feature = "memo")]
 pub(crate) use memo_routes::{handle_memo_disable, handle_memo_enable, handle_memo_status};
-pub(crate) use mount_routes::{
-    handle_mount_create, handle_mount_delete, handle_mount_get, handle_mount_rescan,
-    handle_mount_update, handle_mounts_list,
-};
 pub(crate) use project_routes::{
     handle_project_create, handle_project_delete, handle_project_get, handle_project_update,
     handle_projects_list,
@@ -287,7 +282,7 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/chat/tool-approval/{id}/respond",
             post(handle_tool_approval_respond),
         )
-        // Interactive path-access cards (Mount / temp-allow / deny)
+        // Interactive path-access cards (temp-allow / deny)
         .route(
             "/api/chat/path-access/{id}/respond",
             post(handle_path_access_respond),
@@ -624,12 +619,6 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/projects/{id}", get(handle_project_get))
         .route("/api/projects/{id}", put(handle_project_update))
         .route("/api/projects/{id}", delete(handle_project_delete))
-        .route("/api/mounts", get(handle_mounts_list))
-        .route("/api/mounts", post(handle_mount_create))
-        .route("/api/mounts/{id}", get(handle_mount_get))
-        .route("/api/mounts/{id}", put(handle_mount_update))
-        .route("/api/mounts/{id}", delete(handle_mount_delete))
-        .route("/api/mounts/{id}/rescan", post(handle_mount_rescan))
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))
         // Budget

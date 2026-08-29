@@ -19,7 +19,6 @@ use crate::agent_lifecycle::AgentLifecycleManager;
 use crate::event_bus::EventBus;
 use crate::git_layer::GitLayer;
 use crate::metrics::get_metrics;
-use crate::mount::MountManager;
 use crate::project::{ConversationBuffer, Project, ProjectManager};
 use crate::state_store::StateStore;
 use crate::types::AgentId;
@@ -101,8 +100,6 @@ pub struct Orchestrator {
     a2a: Option<Arc<crate::a2a::A2AProtocol>>,
     /// Project manager for context partitioning.
     project_manager: RwLock<Option<Arc<ProjectManager>>>,
-    /// Mount manager for path-alias context (RFC-025).
-    mount_manager: RwLock<Option<Arc<MountManager>>>,
     /// Conversation buffer for topic shift detection.
     conversation_buffer: RwLock<ConversationBuffer>,
     /// Orchestrator configuration (Ouroboros protocol settings).
@@ -181,7 +178,6 @@ impl Orchestrator {
             lifecycle,
             a2a: None,
             project_manager: RwLock::new(None),
-            mount_manager: RwLock::new(None),
             conversation_buffer: RwLock::new(ConversationBuffer::default()),
             delegation_config: DelegationConfig::default(),
             intent_config: RwLock::new(crate::config::IntentConfig::default()),
@@ -219,17 +215,6 @@ impl Orchestrator {
     pub fn set_project_manager(&self, manager: Arc<ProjectManager>) {
         *self.project_manager.write() = Some(manager);
     }
-
-    /// Set the MountManager for path-alias context (RFC-025).
-    pub fn set_mount_manager(&self, manager: Arc<MountManager>) {
-        *self.mount_manager.write() = Some(manager);
-    }
-
-    /// Get a reference to the MountManager, if set (RFC-025).
-    pub fn mount_manager(&self) -> Option<Arc<MountManager>> {
-        self.mount_manager.read().as_ref().cloned()
-    }
-
     /// Get a reference to the ProjectManager, if set.
     pub fn project_manager(&self) -> Option<Arc<ProjectManager>> {
         self.project_manager.read().as_ref().cloned()
@@ -324,7 +309,7 @@ impl Orchestrator {
     /// # Parameters
     /// - `engine` — the LLM-backed intent engine (review only, RFC-033).
     /// - `msg` — the user's raw message text.
-    /// - `ctx` — per-message context (session, history, project/mount hints).
+    /// - `ctx` — per-message context (session, history, project hints).
     pub async fn handle(
         &self,
         engine: &dyn oxios_ouroboros::IntentEngineOps,
@@ -774,7 +759,7 @@ fn render_project_context(p: &Project) -> String {
             cap(p.instructions.trim(), MAX_INSTRUCTIONS_CHARS)
         ));
     }
-    // Whole-body cap (mount-era parity): the context block must stay a
+    // Whole-body cap: the context block must stay a
     // bounded slice of the system prompt.
     cap(&s, MAX_CONTEXT_CHARS)
 }

@@ -238,7 +238,7 @@ impl CapabilityTemplate {
     /// no user-content tools (email send, calendar events).
     ///
     /// Grants exactly the domains needed to inspect and mutate Oxios's own
-    /// configuration: projects/mounts, personas, tasks, security, budget,
+    /// configuration: projects, personas, tasks, security, budget,
     /// resource limits, running agents, marketplace skills, MCP server
     /// management, and model/engine settings.
     pub fn control_profile() -> Self {

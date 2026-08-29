@@ -6,7 +6,7 @@
 //!
 //! - **Source A — autonomous skills**: skills with frontmatter `autonomous:
 //!   true`. This is the "자주 실행되던 스킬" axis.
-//! - **Source B — registered projects/mounts**: a bounded, read-mostly review
+//! - **Source B — registered projects**: a bounded, read-mostly review
 //!   task synthesized from each project's paths.
 //! - **Source C — recurring patterns**: stubbed (lowest priority; avoids
 //!   inventing work).

@@ -15,7 +15,6 @@ pub mod knowledge_lens;
 pub mod marketplace_api;
 pub mod mcp_api;
 pub mod memo_api;
-pub mod mount_api;
 pub mod persona_api;
 pub mod project_api;
 #[cfg(feature = "browser")]
@@ -48,7 +47,6 @@ pub use knowledge_lens::{
 pub use marketplace_api::MarketplaceApi;
 pub use mcp_api::McpApi;
 pub use memo_api::MemoApi;
-pub use mount_api::{MountApi, MountInfo};
 pub use persona_api::PersonaApi;
 pub use project_api::{ProjectApi, ProjectInfo};
 #[cfg(feature = "browser")]
@@ -75,8 +73,7 @@ use std::sync::Arc;
 /// - [`PersonaApi`]   — multi-persona management
 /// - [`ExtensionApi`] — programs, skills, host tools
 /// - [`McpApi`]       — MCP server bridge
-/// - [`MountApi`]      — Mount (path alias) management (RFC-025)
-/// - [`ProjectApi`]    — Project management, memory linking
+/// - [`ProjectApi`]  — Project management, memory linking
 /// - [`ExecApi`]      — execution config, access management
 /// - [`A2aApi`]       — agent-to-agent communication
 /// - [`EngineApi`]    — LLM engine providers, models, config
@@ -98,8 +95,6 @@ pub struct KernelHandle {
     pub infra: InfraApi,
     /// Project management: work context (RFC-011).
     pub projects: Option<ProjectApi>,
-    /// Mount management: path aliases (RFC-025).
-    pub mounts: Option<MountApi>,
     /// Brain daemon (RFC-047): oxibrain connection facade. `None` only on the
     /// incomplete preliminary handle; the cached handle attaches it via
     /// [`KernelHandle::with_brain`](Self::with_brain).
@@ -201,7 +196,6 @@ impl KernelHandle {
             mcp,
             infra,
             projects,
-            mounts: None,
             brain: None,
             exec,
             browser: None,
@@ -225,16 +219,6 @@ impl KernelHandle {
             asset_store: None,
             task_store: None,
         }
-    }
-
-    /// Attach a MountManager-backed API (RFC-025).
-    ///
-    /// Called by the kernel assembler after SQLite initializes the
-    /// `MountManager`. Leaves the [`Self::projects`] facade untouched so
-    /// RFC-011 Projects continue to work during the migration.
-    pub fn with_mounts(mut self, mounts: MountApi) -> Self {
-        self.mounts = Some(mounts);
-        self
     }
 
     /// Attach the brain facade (RFC-047). Called by the kernel
@@ -267,11 +251,6 @@ impl KernelHandle {
     /// Set the AssetStore in place (post-construction wiring).
     pub fn set_asset_store(&mut self, store: Arc<crate::asset_store::AssetStore>) {
         self.asset_store = Some(store);
-    }
-
-    /// Set the Mounts facade in place (post-construction wiring).
-    pub fn set_mounts(&mut self, mounts: MountApi) {
-        self.mounts = Some(mounts);
     }
 
     /// Attach the TokenMaxing facade (RFC-031). Called by the kernel

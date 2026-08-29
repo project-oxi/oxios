@@ -1319,9 +1319,8 @@ mod tests {
     // `~/.oxi` ⇒ whole-root deny (no safe sub-path).
     // `~/.oxios` ⇒ sub-path deny only, scoped to the sensitive
     //   subtrees (config, auth, audit, daemon state, etc.) — leaves
-    //   `~/.oxios/workspace/**` and RFC-025 mount paths accessible,
-    //   preserving the legitimate grants wired at agent_runtime.rs
-    //   and agent_lifecycle.rs.
+    //   `~/.oxios/workspace/**` accessible, preserving the legitimate
+    //   grants wired at agent_runtime.rs and agent_lifecycle.rs.
     //
     // Helpers below wire these two policies so the gate tests can
     // exercise them through `CheckRequest::Path` with absolute
@@ -1477,9 +1476,8 @@ mod tests {
         // accessible. This is the regression that R2 fixed — the
         // agent-runtime workspace grant (`~/.oxios/workspace/**`,
         // wired at agent_runtime.rs:824-826 and agent_lifecycle.rs
-        // :305-307) and RFC-025 mount paths land here. Whole-root
-        // denial would silently break the agent's documented
-        // operating context.
+        // :305-307) lands here. Whole-root denial would silently
+        // break the agent's documented operating context.
         let tmp = tempfile::tempdir().unwrap();
         let canon_tmp_for_path = tmp
             .path()

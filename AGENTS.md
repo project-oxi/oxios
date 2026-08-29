@@ -91,7 +91,7 @@ oxios/
 See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, dependency graph).
 
 - **Kernel** (`oxios-kernel`) — intentionally monolithic single crate. Star topology around `AgentId`, `EventBus`, `StateStore`. No circular deps. Internal boundaries via `pub(crate)` + directory mod files. See ARCHITECTURE.md §10 for rationale.
-- **KernelHandle** — Facade with 22 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in ARCHITECTURE.md §4). `ProjectApi` replaces the former `SpaceApi`; there is no `KnowledgeBaseApi` (knowledge surface is `KnowledgeLens`).
+- **KernelHandle** — Facade with 21 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in ARCHITECTURE.md §4). `ProjectApi` replaces the former `SpaceApi`; there is no `KnowledgeBaseApi` (knowledge surface is `KnowledgeLens`).
 - **Supervisor** — Agent lifecycle: fork/exec/wait/kill.
 - **Orchestrator** — Ouroboros protocol end-to-end. The "brain".
 - **AgentRuntime** — Wraps oxicode-sdk tool-calling loop.

@@ -127,7 +127,7 @@ Oxios is built on two foundational metaphors:
         ▼
   Kernel ─── Orchestrator + Supervisor + all subsystems
         │
-        ├── KernelHandle ─── typed facade (22 APIs)
+        ├── KernelHandle ─── typed facade (21 APIs)
         │       │
         │       └── AgentRuntime ─── wraps oxicode-sdk AgentLoop
         │
@@ -1621,7 +1621,7 @@ Instead of crate splitting, the kernel manages complexity through:
 - **`pub(crate)` encapsulation**: Module internals stay internal
 - **Directory-level mod.rs**: Each subsystem controls its own visibility
 - **lib.rs section organization**: Clear logical grouping with labeled sections
-- **KernelHandle facade**: Single entry point for all 22 APIs, preventing direct subsystem coupling in consumers
+- **KernelHandle facade**: Single entry point for all 21 APIs, preventing direct subsystem coupling in consumers
 
 ---
 

@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Multipart, Path, Query, State};
-use serde::Deserialize;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use serde::{Deserialize, Serialize};
 
 use oxios_kernel::{SkillEntry, SkillSource, SkillStatus};
 
@@ -11,6 +13,298 @@ use crate::api::routes::PageParams;
 #[cfg(test)]
 use crate::api::routes::paginate;
 use crate::api::server::AppState;
+
+// ---------------------------------------------------------------------------
+// Workspace
+// ---------------------------------------------------------------------------
+
+/// Query parameters for workspace tree.
+#[derive(Debug, Deserialize)]
+pub(crate) struct TreeQuery {
+    /// Subdirectory to list (optional).
+    #[serde(default)]
+    pub dir: Option<String>,
+}
+
+/// File tree entry.
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct TreeEntry {
+    /// File or directory name.
+    name: String,
+    /// Whether this is a directory.
+    is_dir: bool,
+    /// File size in bytes (0 for directories).
+    size: u64,
+}
+
+/// GET /api/workspace/tree — File tree of workspace.
+pub(crate) async fn handle_workspace_tree(
+    state: State<Arc<AppState>>,
+    Query(query): Query<TreeQuery>,
+) -> Result<Json<Vec<TreeEntry>>, AppError> {
+    let base = state.kernel.state.workspace_path();
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let dir = match &query.dir {
+        Some(d) => {
+            let candidate = base.join(d);
+            let canonical = match candidate.canonicalize() {
+                Ok(c) => c,
+                Err(_) => return Err(AppError::NotFound("directory not found".into())),
+            };
+            if !canonical.starts_with(&canonical_base) {
+                return Err(AppError::Forbidden("path traversal denied".into()));
+            }
+            canonical
+        }
+        None => canonical_base,
+    };
+
+    let mut entries = Vec::new();
+    if let Ok(mut read_dir) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = read_dir.next_entry().await {
+            let metadata = match entry.metadata().await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            entries.push(TreeEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                is_dir: metadata.is_dir(),
+                size: metadata.len(),
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+
+    Ok(Json(entries))
+}
+
+/// GET /api/workspace/file/*path — Read a file.
+pub(crate) async fn handle_workspace_file_get(
+    state: State<Arc<AppState>>,
+    Path(path): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let base = state.kernel.state.workspace_path();
+    let full_path = base.join(&path);
+
+    // Security: ensure the path doesn't escape the workspace
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let canonical_file = match full_path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Err(AppError::NotFound("file not found".into())),
+    };
+
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err(AppError::Forbidden("path traversal denied".into()));
+    }
+
+    match tokio::fs::read_to_string(&canonical_file).await {
+        Ok(content) => {
+            let mime = guess_mime(&path);
+            Ok((
+                StatusCode::OK,
+                [(axum::http::header::CONTENT_TYPE, mime)],
+                content,
+            ))
+        }
+        Err(_) => Err(AppError::NotFound("file not found".into())),
+    }
+}
+
+/// PUT /api/workspace/file/*path — Write/update a file.
+pub(crate) async fn handle_workspace_file_put(
+    state: State<Arc<AppState>>,
+    Path(path): Path<String>,
+    body: String,
+) -> Result<(), AppError> {
+    // Validate file size (max 1MB)
+    const MAX_FILE_SIZE: usize = 1024 * 1024;
+    if body.len() > MAX_FILE_SIZE {
+        return Err(AppError::PayloadTooLarge {
+            size: body.len(),
+            limit: MAX_FILE_SIZE,
+        });
+    }
+
+    let base = state.kernel.state.workspace_path();
+    let full_path = base.join(&path);
+
+    // Security: ensure the path doesn't escape the workspace
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    if let Some(parent) = full_path.parent() {
+        if !parent.exists() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::Internal(format!("failed to create directory: {e}")))?;
+        }
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|e| AppError::Internal(format!("failed to resolve path: {e}")))?;
+        if !canonical_parent.starts_with(&canonical_base) {
+            return Err(AppError::Forbidden("path traversal denied".into()));
+        }
+    }
+
+    // F6: the parent-canonical check above does not catch a pre-existing
+    // symlink at `full_path` itself pointing outside the workspace —
+    // `tokio::fs::write` follows symlinks and would overwrite the target.
+    if let Ok(meta) = tokio::fs::symlink_metadata(&full_path).await
+        && meta.file_type().is_symlink()
+    {
+        let canonical_full = full_path
+            .canonicalize()
+            .map_err(|e| AppError::Internal(format!("failed to resolve path: {e}")))?;
+        if !canonical_full.starts_with(&canonical_base) {
+            return Err(AppError::Forbidden("path traversal denied".into()));
+        }
+    }
+
+    match tokio::fs::write(&full_path, &body).await {
+        Ok(_) => {
+            tracing::info!(path = %path, "File written");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(path = %path, error = %e, "Failed to write file");
+            Err(AppError::Internal("failed to write file".into()))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// File Create & Delete
+// ---------------------------------------------------------------------------
+
+/// Request body for creating a file.
+#[derive(Debug, Deserialize)]
+pub(crate) struct CreateFileRequest {
+    /// Whether to create a directory instead of a file.
+    #[serde(default)]
+    pub is_dir: bool,
+}
+
+/// POST /api/workspace/file/*path — Create an empty file or directory.
+pub(crate) async fn handle_workspace_file_create(
+    state: State<Arc<AppState>>,
+    Path(path): Path<String>,
+    Json(body): Json<CreateFileRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let base = state.kernel.state.workspace_path();
+    let full_path = base.join(&path);
+
+    // Security: path traversal check
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    // Ensure parent exists
+    if let Some(parent) = full_path.parent() {
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|_| AppError::NotFound("parent directory not found".into()))?;
+        if !canonical_parent.starts_with(&canonical_base) {
+            return Err(AppError::Forbidden("path traversal denied".into()));
+        }
+    }
+
+    // F6: `full_path.exists()` follows symlinks, so a dangling symlink at
+    // `full_path` pointing outside the workspace would bypass the check
+    // and `tokio::fs::write` would create/overwrite the symlink target.
+    // Reject any pre-existing symlink outright (create requires the path
+    // to be absent anyway).
+    if let Ok(meta) = tokio::fs::symlink_metadata(&full_path).await
+        && meta.file_type().is_symlink()
+    {
+        let canonical_full = full_path
+            .canonicalize()
+            .map_err(|_| AppError::NotFound("path not found".into()))?;
+        if !canonical_full.starts_with(&canonical_base) {
+            return Err(AppError::Forbidden("path traversal denied".into()));
+        }
+    }
+
+    if full_path.exists() {
+        return Err(AppError::BadRequest("file already exists".into()));
+    }
+
+    if body.is_dir {
+        tokio::fs::create_dir_all(&full_path)
+            .await
+            .map_err(|e| AppError::Internal(format!("failed to create directory: {e}")))?;
+    } else {
+        // Ensure parent dir exists
+        if let Some(parent) = full_path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+        tokio::fs::write(&full_path, "")
+            .await
+            .map_err(|e| AppError::Internal(format!("failed to create file: {e}")))?;
+    }
+
+    tracing::info!(path = %path, is_dir = body.is_dir, "File created");
+    Ok(Json(
+        serde_json::json!({ "status": "created", "path": path, "is_dir": body.is_dir }),
+    ))
+}
+
+/// DELETE /api/workspace/file/*path — Delete a file or empty directory.
+pub(crate) async fn handle_workspace_file_delete(
+    state: State<Arc<AppState>>,
+    Path(path): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let base = state.kernel.state.workspace_path();
+    let full_path = base.join(&path);
+
+    // Security: path traversal check
+    let canonical_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let canonical = match full_path.canonicalize() {
+        Ok(c) => c,
+        Err(_) => return Err(AppError::NotFound("file not found".into())),
+    };
+
+    if !canonical.starts_with(&canonical_base) {
+        return Err(AppError::Forbidden("path traversal denied".into()));
+    }
+
+    if canonical.is_dir() {
+        // Only delete empty directories
+        let mut entries = tokio::fs::read_dir(&canonical)
+            .await
+            .map_err(|e| AppError::Internal(format!("failed to read directory: {e}")))?;
+        if entries
+            .next_entry()
+            .await
+            .map(|e| e.is_some())
+            .unwrap_or(true)
+        {
+            return Err(AppError::BadRequest("directory is not empty".into()));
+        }
+        tokio::fs::remove_dir(&canonical)
+            .await
+            .map_err(|e| AppError::Internal(format!("failed to delete directory: {e}")))?;
+    } else {
+        tokio::fs::remove_file(&canonical)
+            .await
+            .map_err(|e| AppError::Internal(format!("failed to delete file: {e}")))?;
+    }
+
+    tracing::info!(path = %path, "File deleted");
+    Ok(Json(
+        serde_json::json!({ "status": "deleted", "path": path }),
+    ))
+}
+
+/// Guess MIME type from file extension.
+fn guess_mime(path: &str) -> String {
+    match path.rsplit('.').next() {
+        Some("md") => "text/markdown; charset=utf-8".into(),
+        Some("json") => "application/json".into(),
+        Some("toml") => "application/toml".into(),
+        Some("yaml" | "yml") => "application/yaml".into(),
+        Some("txt") => "text/plain; charset=utf-8".into(),
+        Some("html") => "text/html".into(),
+        Some("css") => "text/css".into(),
+        Some("js") => "application/javascript".into(),
+        _ => "text/plain; charset=utf-8".into(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Skills
@@ -911,6 +1205,30 @@ pub(crate) async fn handle_brain_space(
 mod tests {
     use super::*;
 
+    // TreeEntry serialization
+
+    #[test]
+    fn test_tree_entry_serialization() {
+        let entry = TreeEntry {
+            name: "hello.md".into(),
+            is_dir: false,
+            size: 1024,
+        };
+        let json = serde_json::to_value(&entry).expect("serializable value");
+        assert_eq!(json["name"], "hello.md");
+        assert_eq!(json["is_dir"], false);
+        assert_eq!(json["size"], 1024);
+
+        let dir_entry = TreeEntry {
+            name: "src".into(),
+            is_dir: true,
+            size: 0,
+        };
+        let json = serde_json::to_value(&dir_entry).expect("serializable value");
+        assert_eq!(json["is_dir"], true);
+        assert_eq!(json["size"], 0);
+    }
+
     // Pagination
 
     #[test]
@@ -945,6 +1263,52 @@ mod tests {
         };
         let result = paginate(&items, &big);
         assert_eq!(result["limit"], 500);
+    }
+
+    // MIME guessing
+
+    #[test]
+    fn test_guess_mime_common_types() {
+        assert_eq!(guess_mime("main.rs"), "text/plain; charset=utf-8");
+        assert_eq!(guess_mime("Cargo.toml"), "application/toml");
+        assert_eq!(guess_mime("README.md"), "text/markdown; charset=utf-8");
+        assert_eq!(guess_mime("data.json"), "application/json");
+        assert_eq!(guess_mime("app.js"), "application/javascript");
+        assert_eq!(guess_mime("index.html"), "text/html");
+        assert_eq!(guess_mime("unknown.bin"), "text/plain; charset=utf-8");
+    }
+
+    // Memory type validation (removed with the memory system — RFC-047)
+
+    // File size limit enforcement
+
+    #[test]
+    fn test_file_size_limit_enforcement() {
+        // MAX_FILE_SIZE in handle_workspace_file_put is 1MB.
+        const MAX_FILE_SIZE: usize = 1024 * 1024;
+
+        // A body exactly at the limit should be accepted by the size check.
+        let body_at_limit = "x".repeat(MAX_FILE_SIZE);
+        assert_eq!(body_at_limit.len(), MAX_FILE_SIZE);
+        assert!(body_at_limit.len() <= MAX_FILE_SIZE);
+
+        // A body one byte over the limit should be rejected.
+        let body_over_limit = "x".repeat(MAX_FILE_SIZE + 1);
+        assert!(body_over_limit.len() > MAX_FILE_SIZE);
+
+        // Simulate the check done in handle_workspace_file_put:
+        // if body.len() > MAX_FILE_SIZE { return PayloadTooLarge }
+        assert!(body_over_limit.len() > MAX_FILE_SIZE);
+
+        // Skill content limit (64KB)
+        const MAX_SKILL_CONTENT: usize = 64 * 1024;
+        let big_skill = "a".repeat(MAX_SKILL_CONTENT + 1);
+        assert!(big_skill.len() > MAX_SKILL_CONTENT);
+
+        // Memory entry limit (32KB)
+        const MAX_MEMORY_ENTRY: usize = 32 * 1024;
+        let big_memory = "m".repeat(MAX_MEMORY_ENTRY + 1);
+        assert!(big_memory.len() > MAX_MEMORY_ENTRY);
     }
 
     // ── Brain route contracts (daemonless, oxibrain 0.8) ──────────────

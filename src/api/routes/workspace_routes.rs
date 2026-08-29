@@ -1,5 +1,8 @@
 //! Session-scoped project workspace API (project-roots workbench, design §4.4).
 //!
+//! Routes live under `/api/project/workspace/*` so they cannot collide with
+//! the kernel state-workspace browser at `/api/workspace/*`.
+//!
 //! Every endpoint resolves the caller's session to the bound Project's
 //! `root_paths` and serves files strictly inside those roots. A session
 //! without a project (or with a project that has no roots) has no
@@ -8,10 +11,10 @@
 //! access.
 //!
 //! Surface:
-//! - `GET  /api/workspace/tree?session_id=&path=`   — directory listing
-//! - `GET  /api/workspace/file?session_id=&path=`   — file read (≤512 KiB)
-//! - `PUT  /api/workspace/file`                     — create/overwrite (≤2 MiB)
-//! - `GET  /api/workspace/status?session_id=&root=` — git branch + dirty count
+//! - `GET  /api/project/workspace/tree?session_id=&path=`   — directory listing
+//! - `GET  /api/project/workspace/file?session_id=&path=`   — file read (≤512 KiB)
+//! - `PUT  /api/project/workspace/file`                     — create/overwrite (≤2 MiB)
+//! - `GET  /api/project/workspace/status?session_id=&root=` — git branch + dirty count
 //!
 //! Path safety: requested paths are canonicalized and must resolve to a
 //! root itself or stay under a root (byte-boundary check), then pass the
@@ -37,9 +40,9 @@ use crate::api::server::AppState;
 const NO_SCOPE_MESSAGE: &str = "no project filesystem scope for this session";
 /// 403 message for any path that resolves outside the project roots.
 const OUT_OF_SCOPE_MESSAGE: &str = "path is outside the project filesystem scope";
-/// Maximum file size served by `GET /api/workspace/file` (512 KiB).
+/// Maximum file size served by `GET /api/project/workspace/file` (512 KiB).
 const MAX_READ_BYTES: u64 = 512 * 1024;
-/// Maximum body accepted by `PUT /api/workspace/file` (2 MiB).
+/// Maximum body accepted by `PUT /api/project/workspace/file` (2 MiB).
 const MAX_WRITE_BYTES: usize = 2 * 1024 * 1024;
 /// Entries never listed in tree output.
 const SKIPPED_ENTRIES: [&str; 5] = [".git", "node_modules", "target", "dist", "build"];
@@ -52,7 +55,7 @@ const WORKSPACE_AGENT: &str = "web-workspace";
 
 // ─── Request / response DTOs ────────────────────────────────────────────────
 
-/// Query parameters for `GET /api/workspace/tree`.
+/// Query parameters for `GET /api/project/workspace/tree`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct TreeQuery {
     pub session_id: Option<String>,
@@ -60,7 +63,7 @@ pub(crate) struct TreeQuery {
     pub path: Option<String>,
 }
 
-/// Query parameters for `GET /api/workspace/file`.
+/// Query parameters for `GET /api/project/workspace/file`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct FileQuery {
     pub session_id: Option<String>,
@@ -68,7 +71,7 @@ pub(crate) struct FileQuery {
     pub path: Option<String>,
 }
 
-/// Body for `PUT /api/workspace/file`.
+/// Body for `PUT /api/project/workspace/file`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct WriteFileBody {
     pub session_id: String,
@@ -77,7 +80,7 @@ pub(crate) struct WriteFileBody {
     pub content: String,
 }
 
-/// Query parameters for `GET /api/workspace/status`.
+/// Query parameters for `GET /api/project/workspace/status`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct StatusQuery {
     pub session_id: Option<String>,
@@ -240,7 +243,7 @@ async fn git_dirty_count(root: &Path) -> Option<u64> {
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
 
-/// `GET /api/workspace/tree` — list a directory inside the session scope.
+/// `GET /api/project/workspace/tree` — list a directory inside the session scope.
 pub(crate) async fn handle_workspace_tree(
     State(state): State<Arc<AppState>>,
     Query(query): Query<TreeQuery>,
@@ -297,7 +300,7 @@ pub(crate) async fn handle_workspace_tree(
     })))
 }
 
-/// `GET /api/workspace/file` — read a file inside the session scope.
+/// `GET /api/project/workspace/file` — read a file inside the session scope.
 pub(crate) async fn handle_workspace_file_get(
     State(state): State<Arc<AppState>>,
     Query(query): Query<FileQuery>,
@@ -351,7 +354,7 @@ pub(crate) async fn handle_workspace_file_get(
     })))
 }
 
-/// `PUT /api/workspace/file` — create/overwrite a file inside the scope.
+/// `PUT /api/project/workspace/file` — create/overwrite a file inside the scope.
 pub(crate) async fn handle_workspace_file_put(
     State(state): State<Arc<AppState>>,
     Json(body): Json<WriteFileBody>,
@@ -417,7 +420,7 @@ pub(crate) async fn handle_workspace_file_put(
     })))
 }
 
-/// `GET /api/workspace/status` — git branch + dirty count for one root.
+/// `GET /api/project/workspace/status` — git branch + dirty count for one root.
 pub(crate) async fn handle_workspace_status(
     State(state): State<Arc<AppState>>,
     Query(query): Query<StatusQuery>,
@@ -537,7 +540,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "GET",
-            &format!("/api/workspace/tree?session_id={sid}"),
+            &format!("/api/project/workspace/tree?session_id={sid}"),
             None,
         )
         .await;
@@ -579,7 +582,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/tree?session_id={sid}&path={}",
+                "/api/project/workspace/tree?session_id={sid}&path={}",
                 canon.join("sub").to_string_lossy()
             ),
             None,
@@ -616,7 +619,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/tree?session_id={sid}&path={}",
+                "/api/project/workspace/tree?session_id={sid}&path={}",
                 outside.canonicalize().unwrap().display()
             ),
             None,
@@ -647,7 +650,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/file?session_id={sid}&path={}",
+                "/api/project/workspace/file?session_id={sid}&path={}",
                 canon.join("a.txt").display()
             ),
             None,
@@ -681,7 +684,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/file?session_id={sid}&path={}",
+                "/api/project/workspace/file?session_id={sid}&path={}",
                 canon.join("big.bin").display()
             ),
             None,
@@ -716,7 +719,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/file?session_id={sid}&path={}",
+                "/api/project/workspace/file?session_id={sid}&path={}",
                 outside_file.canonicalize().unwrap().display()
             ),
             None,
@@ -732,7 +735,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/file?session_id={sid}&path={}",
+                "/api/project/workspace/file?session_id={sid}&path={}",
                 canon.join("missing.txt").display()
             ),
             None,
@@ -763,7 +766,7 @@ mod tests {
             &mut svc,
             "GET",
             &format!(
-                "/api/workspace/file?session_id={sid}&path={}",
+                "/api/project/workspace/file?session_id={sid}&path={}",
                 canon.join("escape.lnk").display()
             ),
             None,
@@ -798,7 +801,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "PUT",
-            "/api/workspace/file",
+            "/api/project/workspace/file",
             Some(payload.to_string()),
         )
         .await;
@@ -818,7 +821,7 @@ mod tests {
         let (status, _) = send(
             &mut svc,
             "PUT",
-            "/api/workspace/file",
+            "/api/project/workspace/file",
             Some(payload.to_string()),
         )
         .await;
@@ -845,7 +848,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "PUT",
-            "/api/workspace/file",
+            "/api/project/workspace/file",
             Some(payload.to_string()),
         )
         .await;
@@ -885,7 +888,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "PUT",
-            "/api/workspace/file",
+            "/api/project/workspace/file",
             Some(payload.to_string()),
         )
         .await;
@@ -911,18 +914,22 @@ mod tests {
         let mut svc = router(&app);
         let canon = root.canonicalize().unwrap();
         let cases: Vec<(&str, String, Option<String>)> = vec![
-            ("GET", format!("/api/workspace/tree?session_id={sid}"), None),
+            (
+                "GET",
+                format!("/api/project/workspace/tree?session_id={sid}"),
+                None,
+            ),
             (
                 "GET",
                 format!(
-                    "/api/workspace/file?session_id={sid}&path={}",
+                    "/api/project/workspace/file?session_id={sid}&path={}",
                     canon.join("a.txt").display()
                 ),
                 None,
             ),
             (
                 "PUT",
-                "/api/workspace/file".to_string(),
+                "/api/project/workspace/file".to_string(),
                 Some(
                     serde_json::json!({
                         "session_id": sid,
@@ -934,7 +941,7 @@ mod tests {
             ),
             (
                 "GET",
-                format!("/api/workspace/status?session_id={sid}"),
+                format!("/api/project/workspace/status?session_id={sid}"),
                 None,
             ),
         ];
@@ -953,7 +960,10 @@ mod tests {
         let (status, json) = send(
             &mut svc,
             "GET",
-            &format!("/api/workspace/tree?session_id={}", uuid::Uuid::new_v4()),
+            &format!(
+                "/api/project/workspace/tree?session_id={}",
+                uuid::Uuid::new_v4()
+            ),
             None,
         )
         .await;
@@ -978,7 +988,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "GET",
-            &format!("/api/workspace/status?session_id={sid}"),
+            &format!("/api/project/workspace/status?session_id={sid}"),
             None,
         )
         .await;
@@ -1001,7 +1011,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "GET",
-            &format!("/api/workspace/status?session_id={sid}"),
+            &format!("/api/project/workspace/status?session_id={sid}"),
             None,
         )
         .await;
@@ -1023,7 +1033,7 @@ mod tests {
         let (status, body) = send(
             &mut svc,
             "GET",
-            &format!("/api/workspace/status?session_id={sid}&root=5"),
+            &format!("/api/project/workspace/status?session_id={sid}&root=5"),
             None,
         )
         .await;

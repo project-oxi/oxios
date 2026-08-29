@@ -46,11 +46,16 @@ mod resource_routes;
 mod secrets_routes;
 mod security_routes;
 mod system;
+mod system_routes;
 mod task_routes;
 mod token_maxing_routes;
 mod tools;
 mod workspace;
+mod workspace_routes;
 mod worktree_routes;
+
+#[cfg(test)]
+mod test_support;
 
 use std::sync::Arc;
 
@@ -188,9 +193,7 @@ pub(crate) use workspace::{
     handle_brain_status, handle_brain_timeline, handle_brain_why, handle_skill_content,
     handle_skill_content_update, handle_skill_create, handle_skill_delete, handle_skill_disable,
     handle_skill_enable, handle_skill_get, handle_skill_import_file, handle_skill_import_text,
-    handle_skill_import_url, handle_skills_list, handle_workspace_file_create,
-    handle_workspace_file_delete, handle_workspace_file_get, handle_workspace_file_put,
-    handle_workspace_tree,
+    handle_skill_import_url, handle_skills_list,
 };
 
 // ---------------------------------------------------------------------------
@@ -385,23 +388,21 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/secrets/{key}/source",
             get(secrets_routes::handle_secret_source),
         )
-        // Workspace
-        .route("/api/workspace/tree", get(handle_workspace_tree))
+        // Workspace — session-scoped project filesystem API (design §4.4).
+        // A session without project roots gets 409 before any filesystem
+        // access; paths are canonicalized and boundary-checked per request.
         .route(
-            "/api/workspace/file/{*path}",
-            get(handle_workspace_file_get),
+            "/api/workspace/tree",
+            get(workspace_routes::handle_workspace_tree),
         )
         .route(
-            "/api/workspace/file/{*path}",
-            put(handle_workspace_file_put),
+            "/api/workspace/file",
+            get(workspace_routes::handle_workspace_file_get)
+                .put(workspace_routes::handle_workspace_file_put),
         )
         .route(
-            "/api/workspace/file/{*path}",
-            post(handle_workspace_file_create),
-        )
-        .route(
-            "/api/workspace/file/{*path}",
-            delete(handle_workspace_file_delete),
+            "/api/workspace/status",
+            get(workspace_routes::handle_workspace_status),
         )
         // Skills
         .route("/api/skills", get(handle_skills_list))
@@ -783,6 +784,11 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/system/audit-verify", post(handle_audit_verify_api))
         .route("/api/system/backup", post(handle_backup))
         .route("/api/system/log", get(handle_log))
+        // Native folder picker — local desktop host only (design §4.4)
+        .route(
+            "/api/system/pick-folders",
+            post(system_routes::handle_pick_folders),
+        )
         // Host Tools (RFC-041) — host-CLI discovery inventory
         .route("/api/host-tools", get(handle_host_tools))
         .route("/api/host-tools/detect", post(handle_host_tools_detect))

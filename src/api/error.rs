@@ -30,6 +30,11 @@ pub enum AppError {
     Conflict(String),
     /// Semantically invalid payload (e.g. project root path validation, design §9).
     UnprocessableEntity(String),
+    /// Not implemented on this platform/build (e.g. native folder picker
+    /// outside macOS). Only constructed on non-macos targets, hence the
+    /// targeted allow.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    NotImplemented(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -47,6 +52,7 @@ impl std::fmt::Display for AppError {
             AppError::GatewayTimeout(m) => write!(f, "Gateway Timeout: {m}"),
             AppError::Conflict(m) => write!(f, "Conflict: {m}"),
             AppError::UnprocessableEntity(m) => write!(f, "Unprocessable Entity: {m}"),
+            AppError::NotImplemented(m) => write!(f, "Not Implemented: {m}"),
         }
     }
 }
@@ -68,6 +74,7 @@ impl IntoResponse for AppError {
             AppError::GatewayTimeout(m) => (StatusCode::GATEWAY_TIMEOUT, m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             AppError::UnprocessableEntity(m) => (StatusCode::UNPROCESSABLE_ENTITY, m.clone()),
+            AppError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.clone()),
         };
         let body = json!({ "error": message });
         (status, axum::Json(body)).into_response()

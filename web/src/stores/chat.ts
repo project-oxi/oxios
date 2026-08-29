@@ -37,6 +37,9 @@ interface PersistedState {
   /** Session persona override id (null = inherit the global active persona).
    * Rehydrated from the session record on loadSession. */
   activePersonaId: string | null
+  /** Session brain-space binding id (null = unconnected turn). Rehydrated
+   *  from the session record on loadSession; persisted with the tab. */
+  activeBrainSpace: string | null
   /** Per-message sampling temperature. Persisted. `null` = use provider default. */
   temperature: number | null
   /** Per-message max output tokens. Persisted. `null` = use provider default. */
@@ -174,6 +177,8 @@ interface ChatActions {
   setActiveRole: (role: string | null) => void
   /** Session persona override (null = inherit global active persona). */
   setActivePersona: (personaId: string | null) => void
+  /** Session brain-space binding (null = unconnected turn). */
+  setActiveBrainSpace: (brainSpaceId: string | null) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
@@ -849,6 +854,7 @@ export const useChatStore = create<ChatStore>()(
       activeRole: null,
       activeModelId: null,
       activePersonaId: null,
+      activeBrainSpace: null,
       temperature: null,
       maxTokens: null,
       // ── Runtime ──
@@ -1135,6 +1141,7 @@ export const useChatStore = create<ChatStore>()(
           activeSessionId,
           activeProjectId,
           activePersonaId,
+          activeBrainSpace,
           activeMountIds,
           activeRole,
           activeModelId,
@@ -1200,6 +1207,9 @@ export const useChatStore = create<ChatStore>()(
           // Session persona override — backend validates against the
           // registry and threads it to ExecEnv::persona_id for the turn.
           persona_id: activePersonaId ?? '',
+          // Session brain binding — empty string = unconnected turn. The
+          // backend validates the space and persists it on the session.
+          brain_space: activeBrainSpace ?? '',
           // Per-message model override (or last-picked persistent one).
           model: activeModelId ?? '',
         }
@@ -1371,6 +1381,14 @@ export const useChatStore = create<ChatStore>()(
             // Session persona override is durable truth on reopen: the
             // backend persisted it on the turn that set it.
             activePersonaId: (data.active_persona_id as string | null) ?? null,
+            // Chat brain binding outlives the turn (chat picker): restore
+            // the session's bound space on reopen. The GET handler does not
+            // expose a top-level field yet — fall back to session metadata,
+            // which the WS ingress stamps on every bound turn.
+            activeBrainSpace:
+              (data.brain_space as string | null) ??
+              (data.metadata?.brain_space as string | null) ??
+              null,
             isStreaming: false,
             _pendingQueue: [],
             sessionLoadError: null,
@@ -1446,6 +1464,10 @@ export const useChatStore = create<ChatStore>()(
         set({ activePersonaId: personaId })
       },
 
+      setActiveBrainSpace(brainSpaceId: string | null) {
+        set({ activeBrainSpace: brainSpaceId })
+      },
+
       setActiveModelId(modelId: string | null) {
         set({ activeModelId: modelId })
       },
@@ -1501,6 +1523,7 @@ export const useChatStore = create<ChatStore>()(
           activeRole: null,
           activeModelId: null,
           activePersonaId: null,
+          activeBrainSpace: null,
           temperature: null,
           maxTokens: null,
           messages: [],
@@ -2049,6 +2072,7 @@ export const useChatStore = create<ChatStore>()(
         activeRole: state.activeRole,
         activeModelId: state.activeModelId,
         activePersonaId: state.activePersonaId,
+        activeBrainSpace: state.activeBrainSpace,
         temperature: state.temperature,
         maxTokens: state.maxTokens,
       }),

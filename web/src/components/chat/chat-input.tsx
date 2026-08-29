@@ -26,6 +26,7 @@ import { api } from '@/lib/api-client'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
 import { ApprovalModeSelector } from './approval-mode-selector'
+import { BrainPickerContainer } from './brain-picker'
 import { FanOutButton } from './FanOutButton'
 import { LiveActivityBar } from './live-activity-bar'
 import { ModelParamsPopover } from './model-params-popover'
@@ -843,6 +844,7 @@ export function ChatInput({
               setActiveRole={setActiveRole}
             />
             {!isCopilot && <PersonaPickerContainer />}
+            {!isCopilot && <BrainPickerContainer />}
             <ApprovalModeSelector />
             {!isCopilot && (
               <>

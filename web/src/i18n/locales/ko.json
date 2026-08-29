@@ -550,6 +550,13 @@
         "essay": "에세이",
         "blog": "블로그"
       }
+    },
+    "brain": {
+      "label": "브레인",
+      "toolsOff": "브레인 꺼짐",
+      "none": "연결 안 됨",
+      "connected": "브레인: {{name}}",
+      "defaultSuffix": "(기본)"
     }
   },
   "commandPalette": {

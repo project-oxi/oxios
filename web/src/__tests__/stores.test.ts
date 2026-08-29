@@ -1,4 +1,5 @@
 import { waitFor } from '@testing-library/react'
+import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -17,6 +18,7 @@ import {
 import { usePortalStore } from '@/stores/portal'
 import { useSidebarStore } from '@/stores/sidebar'
 import type { ChatMessage, StreamChunk } from '@/types'
+import { server } from './msw/server'
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -953,6 +955,115 @@ describe('useChatStore sendMessage turn start', () => {
     const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
     expect(payload.request_id).toBeUndefined()
     expect(payload.session_id).toBe('s1')
+  })
+})
+
+// Task 7 — session brain-space binding: persisted store field, picker
+// action, and the `brain_space` key the chat ingress validates (empty
+// string = unconnected turn). Explicit selection only here; Task 9 moves
+// the payload to the resolved (default-aware) value.
+describe('useChatStore activeBrainSpace (task 7)', () => {
+  let sendSpy: Mock
+  const mockWs = (): WebSocket =>
+    ({ readyState: 1, send: sendSpy, close: vi.fn() }) as unknown as WebSocket
+
+  beforeEach(() => {
+    localStorage.clear()
+    __clearStreamProcessorsForTesting()
+    sendSpy = vi.fn()
+    useChatStore.setState({
+      messages: [],
+      isStreaming: false,
+      streamStartedAt: null,
+      connected: true,
+      _ws: mockWs(),
+      _pendingQueue: [],
+      _reconnectTimer: null,
+      _pingTimer: null,
+      activeSessionId: 's1',
+      activeBrainSpace: null,
+    })
+  })
+
+  it('defaults to null (unconnected)', () => {
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('setActiveBrainSpace sets the binding and persists it', async () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    expect(useChatStore.getState().activeBrainSpace).toBe('personal')
+    // Persist middleware flushes the partialized state — wait out the tick.
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('oxios-chat-persist')!) as {
+        state: Record<string, unknown>
+      }
+      expect(persisted.state.activeBrainSpace).toBe('personal')
+    })
+  })
+
+  it('setActiveBrainSpace(null) clears the binding', () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    useChatStore.getState().setActiveBrainSpace(null)
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('sendMessage carries the explicit selection as brain_space', () => {
+    useChatStore.setState({ activeBrainSpace: 'personal' })
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.brain_space).toBe('personal')
+  })
+
+  it('sendMessage sends an empty brain_space when unconnected', () => {
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.brain_space).toBe('')
+  })
+
+  it('clearPersist resets the binding', () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    useChatStore.getState().clearPersist()
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('loadSession rehydrates the binding from the session record', async () => {
+    server.use(
+      http.get('/api/sessions/s-bind', () =>
+        HttpResponse.json({
+          id: 's-bind',
+          user_messages: [],
+          agent_responses: [],
+          trajectory_steps: [],
+          reasoning_records: [],
+          active_persona_id: null,
+          // Top-level field (kernel Session.brain_space) — not yet exposed
+          // by the GET handler, so the store falls back to session metadata.
+          metadata: { brain_space: 'work' },
+          compression: null,
+        }),
+      ),
+    )
+    await useChatStore.getState().loadSession('s-bind')
+    expect(useChatStore.getState().activeBrainSpace).toBe('work')
+  })
+
+  it('loadSession clears the binding when the session record has none', async () => {
+    useChatStore.setState({ activeBrainSpace: 'stale' })
+    server.use(
+      http.get('/api/sessions/s-free', () =>
+        HttpResponse.json({
+          id: 's-free',
+          user_messages: [],
+          agent_responses: [],
+          trajectory_steps: [],
+          reasoning_records: [],
+          metadata: {},
+          compression: null,
+        }),
+      ),
+    )
+    await useChatStore.getState().loadSession('s-free')
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
   })
 })
 

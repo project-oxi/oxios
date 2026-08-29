@@ -263,10 +263,11 @@ pub use kernel_handle::MarketplaceApi;
 pub use kernel_handle::{
     A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
-    InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
-    MemoApi, MemoryNote, ModelInfo, MountApi, MountInfo, PersonaApi, ProjectApi, ProjectInfo,
-    ProviderCategory, ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot,
-    RoutingUpdate, SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
+    InputModality as EngineInputModality, IssueApi, IssueQuery, IssueView, KnowledgeContext,
+    KnowledgeLens, KnowledgeNote, McpApi, MemoApi, MemoryNote, MilestoneView, ModelInfo, MountApi,
+    MountInfo, PersonaApi, ProjectApi, ProjectInfo, ProviderCategory, ProviderInfo,
+    RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot, RoutingUpdate, SecurityApi,
+    SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
 };
 #[cfg(feature = "browser")]
 pub use kernel_handle::{ScreenshotEngine, ScreenshotViewport};

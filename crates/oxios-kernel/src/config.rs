@@ -1494,7 +1494,6 @@ fn default_search_timeout_secs() -> u64 {
     15
 }
 
-
 /// Kernel configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KernelConfig {

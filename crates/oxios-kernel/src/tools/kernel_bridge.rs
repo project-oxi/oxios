@@ -95,7 +95,7 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
         register_always_on(
             registry,
             Arc::clone(&self.search_cache),
-            Arc::clone(&self.kernel_handle.search_results),
+            Arc::clone(&self.kernel_handle.tool_results),
             self.kernel_handle.engine.search_config(),
         );
 

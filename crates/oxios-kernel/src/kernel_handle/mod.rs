@@ -11,6 +11,7 @@ pub mod engine_api;
 pub mod exec_api;
 pub mod extension_api;
 pub mod infra_api;
+pub mod issue_api;
 pub mod knowledge_lens;
 pub mod marketplace_api;
 pub mod mcp_api;
@@ -42,6 +43,7 @@ pub use exec_api::ExecApi;
 pub use exec_api::SharedExecConfig;
 pub use extension_api::ExtensionApi;
 pub use infra_api::InfraApi;
+pub use issue_api::{AssignmentInfo, IssueApi, IssueQuery, IssueView, MilestoneView, NewIssue};
 pub use knowledge_lens::{
     CopilotResponse, KnowledgeContext, KnowledgeLens, KnowledgeNote, MemoryNote,
 };
@@ -166,10 +168,15 @@ pub struct KernelHandle {
     /// the kernel assembler so the web routes, the auto-run tick, and the
     /// `task` agent tool share ONE store. `None` on the preliminary handle.
     pub task_store: Option<Arc<tokio::sync::Mutex<crate::task::TaskStore>>>,
-    /// Structured web-search side channel: search tools insert payloads
-    /// keyed by `tool_call_id`; the agent-runtime completion callback takes
-    /// them when publishing `KernelEvent::ToolExecutionFinished`.
-    pub search_results: Arc<crate::tools::SearchResultBus>,
+    /// Structured tool-result side channel: tools insert payloads keyed by
+    /// `tool_call_id`; the agent-runtime completion callback takes them when
+    /// publishing `KernelEvent::ToolExecutionFinished`. Consumers today are
+    /// `web_search`/`get_search_results`, `todo`, and `issue`.
+    pub tool_results: Arc<crate::tools::StructuredResultBus>,
+    /// Per-project issue tracking + milestones. Shared across handles by the
+    /// assembler so the store cache and the ownership `flock` guards are
+    /// common — two instances would not see each other's claims.
+    pub issues: Arc<issue_api::IssueApi>,
 }
 
 impl KernelHandle {
@@ -222,10 +229,13 @@ impl KernelHandle {
             compression: None,
             host_tools: HostToolsApi::new(),
             streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
-            // Structured web-search side channel (tools → runtime callback).
+            // Structured tool-result side channel (tools → runtime callback).
             // Per-handle by default; the assembler may inject a shared
-            // instance across handles via `with_search_results`.
-            search_results: Arc::new(crate::tools::SearchResultBus::new()),
+            // instance across handles via `with_tool_results`.
+            tool_results: Arc::new(crate::tools::StructuredResultBus::new()),
+            // Per-handle by default; the assembler injects a shared instance
+            // via `with_issues` so ownership guards are observed everywhere.
+            issues: Arc::new(issue_api::IssueApi::new()),
             turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
@@ -335,13 +345,23 @@ impl KernelHandle {
         self
     }
 
-    /// Share one [`crate::tools::SearchResultBus`] across handles.
+    /// Share one [`crate::tools::StructuredResultBus`] across handles.
     ///
     /// Called by the kernel assembler so the preliminary handle (AgentRuntime)
     /// and the cached control-plane handle observe the same structured
-    /// search payloads.
-    pub fn with_search_results(mut self, bus: Arc<crate::tools::SearchResultBus>) -> Self {
-        self.search_results = bus;
+    /// tool payloads.
+    pub fn with_tool_results(mut self, bus: Arc<crate::tools::StructuredResultBus>) -> Self {
+        self.tool_results = bus;
+        self
+    }
+
+    /// Share one [`issue_api::IssueApi`] across handles.
+    ///
+    /// Required for correctness, not just efficiency: the facade holds the
+    /// `flock` guards backing issue assignment, so separate instances would
+    /// each believe the other's claims belong to a dead session.
+    pub fn with_issues(mut self, issues: Arc<issue_api::IssueApi>) -> Self {
+        self.issues = issues;
         self
     }
 

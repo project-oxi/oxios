@@ -50,7 +50,7 @@ use crate::types::AgentId;
 pub fn register_always_on(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
-    bus: Arc<crate::tools::SearchResultBus>,
+    bus: Arc<crate::tools::StructuredResultBus>,
     search: crate::config::SearchConfig,
 ) {
     registry.register(ReadTool::new());
@@ -101,7 +101,7 @@ fn register_browser_tools(_kernel: &KernelHandle, _registry: &ToolRegistry) {}
 pub fn register_always_on_gated(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
-    bus: Arc<crate::tools::SearchResultBus>,
+    bus: Arc<crate::tools::StructuredResultBus>,
     search: crate::config::SearchConfig,
     gate: Arc<AccessGate>,
     context: AgentContext,
@@ -165,11 +165,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        crate::tools::KernelWebSearchTool::new(
-            search_cache.clone(),
-            bus.clone(),
-            search,
-        ),
+        crate::tools::KernelWebSearchTool::new(search_cache.clone(), bus.clone(), search),
         gate.clone(),
         context.clone(),
         approval_gate.clone(),
@@ -178,10 +174,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        crate::tools::KernelGetSearchResultsTool::new(
-            GetSearchResultsTool::new(search_cache),
-            bus,
-        ),
+        crate::tools::KernelGetSearchResultsTool::new(GetSearchResultsTool::new(search_cache), bus),
         gate,
         context,
         approval_gate,
@@ -232,7 +225,7 @@ pub fn register_tools_from_cspace(
     register_always_on(
         registry,
         search_cache,
-        Arc::clone(&kernel.search_results),
+        Arc::clone(&kernel.tool_results),
         kernel.engine.search_config(),
     );
 
@@ -362,7 +355,7 @@ pub fn register_tools_from_cspace_gated(
         register_always_on_gated(
             registry,
             search_cache,
-            Arc::clone(&kernel.search_results),
+            Arc::clone(&kernel.tool_results),
             kernel.engine.search_config(),
             gate.clone(),
             context.clone(),
@@ -467,7 +460,7 @@ mod tests {
         register_always_on(
             &registry,
             cache,
-            Arc::new(crate::tools::SearchResultBus::new()),
+            Arc::new(crate::tools::StructuredResultBus::new()),
             crate::config::SearchConfig::default(),
         );
 

@@ -10,10 +10,14 @@
 //! - `mod.rs` — Project struct and ProjectSource enum (this file)
 //! - `manager.rs` — ProjectManager (CRUD, lookup, detection)
 //! - `detection.rs` — Detection logic (name/path/tag matching)
+//! - `paths.rs` — Per-project data directory (`~/.oxi/oxios/projects/<id>/`)
+//! - `milestone.rs` — Milestone definitions + the `milestone:` issue label
 
 pub mod conversation_buffer;
 pub mod detection;
 pub mod manager;
+pub mod milestone;
+pub mod paths;
 pub mod project_db;
 
 use chrono::{DateTime, Utc};
@@ -26,6 +30,8 @@ pub use conversation_buffer::{ConversationBuffer, ConversationTurn};
 pub use detection::{DetectionResult, detect_project, extract_path, find_by_id, find_by_name};
 
 pub use manager::{ProjectManager, ProjectManagerError};
+pub use milestone::{Milestone, MilestonePatch, MilestoneProgress, MilestoneStatus};
+pub use paths::{project_dir, project_issues_dir, project_milestones_path};
 
 /// Unique identifier for a Project.
 pub type ProjectId = Uuid;

@@ -15,8 +15,9 @@ pub mod pending_path_access;
 pub mod pending_tool_approvals;
 pub mod registration;
 pub mod registry;
-pub mod search_provider;
 pub mod retrieval;
+pub mod search_provider;
+pub mod structured_results;
 pub mod tool_types;
 
 pub use a2a_tools::{A2aDelegateTool, A2aQueryTool, A2aSendTool};
@@ -31,7 +32,6 @@ pub use mcp_tool::McpToolWrapper;
 pub use kernel_bridge::OxiosKernelBridge;
 pub use pending_path_access::{PathAccessResult, PendingPathAccess};
 pub use pending_tool_approvals::{PendingToolApprovals, ToolApprovalResult};
-pub use search_provider::{
-    KernelGetSearchResultsTool, KernelWebSearchTool, SearchResultBus,
-};
 pub use registry::{ToolMeta, known_tools};
+pub use search_provider::{KernelGetSearchResultsTool, KernelWebSearchTool};
+pub use structured_results::StructuredResultBus;

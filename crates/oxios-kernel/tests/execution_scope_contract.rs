@@ -6,7 +6,10 @@
 
 use std::path::PathBuf;
 
-use oxios_kernel::agent_runtime::{AgentRuntimeConfig, derive_execution_paths};
+use oxios_kernel::access_manager::AccessManager;
+use oxios_kernel::agent_runtime::{
+    AgentRuntimeConfig, apply_execution_grants, derive_execution_paths,
+};
 use oxios_kernel::orchestrator::Orchestrator;
 use oxios_kernel::persona::{
     AFFORDANCE_DIFF, AFFORDANCE_FILES, AFFORDANCE_TERMINAL, AFFORDANCE_WORKTREE_FANOUT,
@@ -206,4 +209,71 @@ fn session_context_holds_singular_project_id() {
         project_id: Some("p1".to_string()),
     };
     assert_eq!(ctx.project_id.as_deref(), Some("p1"));
+}
+
+/// Pattern root: strip the trailing `/**` glob so grants can be compared as
+/// directories.
+fn grant_root(pattern: &str) -> &str {
+    pattern.strip_suffix("/**").unwrap_or(pattern)
+}
+
+#[test]
+fn real_grant_path_folderless_gains_no_ambient_grants() {
+    let kernel_ws = tempfile::TempDir::new().expect("kernel ws tempdir");
+    let mut am = AccessManager::new();
+    let perms = am.get_or_create_permissions("agent-contract");
+
+    // The REAL grant path exercised by run_agent, with empty project roots.
+    apply_execution_grants(perms, &[], kernel_ws.path());
+
+    let perms = am.get_or_create_permissions("agent-contract");
+    let cwd = std::env::current_dir().expect("cwd");
+    let home = std::env::var("HOME").map(std::path::PathBuf::from).ok();
+
+    for pattern in &perms.allowed_paths {
+        let root = grant_root(pattern);
+        let root = std::path::Path::new(root);
+        assert!(
+            !cwd.starts_with(root),
+            "no grant may cover the process CWD (violated by {pattern})"
+        );
+        if let Some(home) = &home {
+            assert!(
+                !home.starts_with(root) && !root.starts_with(home),
+                "no grant may cover a user directory (violated by {pattern})"
+            );
+        }
+    }
+
+    // Exactly the kernel-infrastructure entries remain.
+    let mut grants: Vec<&str> = perms
+        .allowed_paths
+        .iter()
+        .map(String::as_str)
+        .collect();
+    grants.sort_unstable();
+    assert_eq!(grants.len(), 2, "only kernel-ws + /tmp: {grants:?}");
+    assert!(grants.contains(&"/tmp/**"));
+    assert!(grants
+        .iter()
+        .any(|g| g.starts_with(kernel_ws.path().to_string_lossy().as_ref())));
+}
+
+#[test]
+fn real_grant_path_roots_are_granted_verbatim() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let root_a = dir.path().join("a");
+    std::fs::create_dir_all(&root_a).expect("mkdir");
+    let kernel_ws = tempfile::TempDir::new().expect("kernel ws tempdir");
+    let mut am = AccessManager::new();
+    let perms = am.get_or_create_permissions("agent-roots");
+    apply_execution_grants(perms, &[root_a.clone()], kernel_ws.path());
+
+    let perms = am.get_or_create_permissions("agent-roots");
+    let want = format!("{}/**", root_a.to_string_lossy().trim_end_matches('/'));
+    assert!(
+        perms.allowed_paths.iter().any(|p| p == &want),
+        "project root granted verbatim: {:?}",
+        perms.allowed_paths
+    );
 }

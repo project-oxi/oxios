@@ -662,12 +662,14 @@ impl StateStore {
                                     .and_then(|v| v.as_str())
                                     .map(String::from)
                             })
+                            // Legacy plural key — matches the fallback
+                            // chain in `routes/events.rs` session detail.
                             .or_else(|| {
                                 session
                                     .metadata
-                                    .get("project_id")
+                                    .get("project_ids")
                                     .and_then(|v| v.as_str())
-                                    .and_then(|s| s.split(',').next().map(String::from))
+                                    .map(String::from)
                             }),
                         parent_session_id: session.parent_session_id.clone(),
                         created_at: session.created_at,

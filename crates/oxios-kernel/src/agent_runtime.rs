@@ -754,6 +754,40 @@ pub fn derive_execution_paths(
     (cwd, env.root_paths.clone())
 }
 
+/// Apply the execution-scope path grants for a run — the REAL grant path
+/// used by `run_agent` (design §6.1).
+///
+/// Grants, exhaustively:
+/// 1. Project roots — the ONLY project-derived grants. Empty roots ⇒
+///    nothing here (no ambient fallback): the workspace_dir / temp CWD is a
+///    working directory, never authority.
+/// 2. Kernel state-store workspace — kernel-internal (`~/.oxios/...`), not
+///    user data.
+/// 3. `/tmp/**` — general temp file access.
+///
+/// The process CWD is deliberately NOT granted.
+pub fn apply_execution_grants(
+    perms: &mut crate::access_manager::AgentPermissions,
+    root_grants: &[std::path::PathBuf],
+    kernel_ws: &std::path::Path,
+) {
+    for root in root_grants {
+        let pattern = format!("{}/**", root.to_string_lossy().trim_end_matches('/'));
+        if !perms.allowed_paths.iter().any(|p| p == &pattern) {
+            perms.allow_path(&pattern);
+        }
+    }
+
+    let kernel_ws_pattern = format!("{}/**", kernel_ws.to_string_lossy().trim_end_matches('/'));
+    if !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern) {
+        perms.allow_path(&kernel_ws_pattern);
+    }
+
+    if !perms.allowed_paths.iter().any(|p| p == "/tmp/**") {
+        perms.allow_path("/tmp/**");
+    }
+}
+
 /// Resolve the persona for this turn: an enabled explicit override wins;
 /// otherwise the global active persona. Invalid/disabled overrides degrade
 /// to the global default rather than failing the turn (RFC-039).
@@ -828,72 +862,17 @@ async fn run_agent(
 
     tracing::debug!(workspace = %workspace.display(), "Agent workspace scoped");
 
-    // Ensure all paths the agent might access are in allowed_paths.
-    //
-    // AgentLifecycleManager::ensure_permissions() adds kernel.workspace (~/.oxios/workspace),
-    // but the agent operates in different directories depending on context:
-    //
-    //   1. Process CWD — oxicode-sdk 0.35+ bakes `workspace_dir` into file tools
-    //      via `with_cwd`, so ReadTool/LsTool resolve relatives against the
-    //      workspace, NOT the process CWD. However, oxios's own CSpace tools
-    //      (kernel-bridge tools wrapped in GatedTool) and bash/exec
-    //      subprocesses may still resolve against the process CWD. We grant
-    //      it as a safety net so those tools aren't denied by GatedTool.
-    //   2. The project roots — the only project-derived grants.
-    //   3. Kernel workspace — state store path for sessions, etc.
-    //   4. /tmp -- general temp file access.
-    //
-    // All four must be in allowed_paths before GatedTool wraps any tool.
+    // Grant the execution scope (design §6.1): project roots ONLY plus the
+    // two kernel-infrastructure entries (state-store workspace under
+    // `~/.oxios`, `/tmp`). The process CWD is deliberately NOT granted —
+    // filesystem authority comes exclusively from project roots; relative
+    // paths outside the scope fail closed at GatedTool.
     {
         use crate::access_manager::{Role, Subject};
         let agent_name = format!("agent-{agent_id}");
         let mut am = kernel_handle.exec.access_manager().lock();
         let perms = am.get_or_create_permissions(&agent_name);
-
-        // 1. CWD -- critical: oxicode-sdk resolves relative paths here
-        if let Ok(cwd) = std::env::current_dir() {
-            let cwd_pattern = format!("{}/**", cwd.to_string_lossy().trim_end_matches('/'));
-            if !perms.allowed_paths.iter().any(|p| p == &cwd_pattern) {
-                perms.allow_path(&cwd_pattern);
-                tracing::debug!(
-                    agent = %agent_name,
-                    path = %cwd_pattern,
-                    "Added CWD to agent allowed paths"
-                );
-            }
-        }
-
-        // 2. Project roots — the ONLY project-derived grants. With empty
-        //    roots nothing is granted here (no ambient fallback): the
-        //    workspace_dir / temp CWD is a working directory, not authority.
-        for root in root_grants {
-            let pattern = format!("{}/**", root.to_string_lossy().trim_end_matches('/'));
-            if !perms.allowed_paths.iter().any(|p| p == &pattern) {
-                perms.allow_path(&pattern);
-                tracing::debug!(
-                    agent = %agent_name,
-                    path = %pattern,
-                    "Added project root to agent allowed paths"
-                );
-            }
-        }
-
-        // 3. Kernel workspace (state store path)
-        let kernel_ws = kernel_handle
-            .state
-            .workspace_path()
-            .to_string_lossy()
-            .to_string();
-        let kernel_ws_pattern = format!("{}/**", kernel_ws.trim_end_matches('/'));
-        if !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern)
-        {
-            perms.allow_path(&kernel_ws_pattern);
-        }
-
-        // 4. /tmp -- for general temp file access
-        if !perms.allowed_paths.iter().any(|p| p == "/tmp/**") {
-            perms.allow_path("/tmp/**");
-        }
+        apply_execution_grants(perms, &root_grants, kernel_handle.state.workspace_path());
 
         // Ensure RBAC Superuser role so AccessGate Layer 1 passes.
         let rbac_subject = Subject::Agent(agent_id);

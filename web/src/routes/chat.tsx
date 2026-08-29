@@ -19,6 +19,7 @@ import { ToolApprovalCard } from '@/components/chat/tool-approval-card'
 import { WorktreeComparePanel } from '@/components/chat/WorktreeComparePanel'
 import { PortalPanel } from '@/components/portal/portal-panel'
 import { Button } from '@/components/ui/button'
+import { WorkbenchShell } from '@/components/workbench/WorkbenchShell'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useRoles } from '@/hooks/use-engine'
@@ -322,236 +323,238 @@ export function ChatPage() {
   }
 
   return (
-    <div className="flex h-full">
-      <div className="flex flex-1 flex-col min-w-0">
-        {/* Reconnect warning banner */}
-        {!connected && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning text-xs border-b">
-            <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
-            <span className="flex-1">{t('chat.reconnecting')}</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-warning hover:text-warning"
-              onClick={() => {
-                disconnect()
-                connect()
-              }}
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              {t('chat.retry')}
-            </Button>
-          </div>
-        )}
-
-        {/* Task 10: surfaced load failure with retry (sits beside the
-            reconnect banner so the user can see WHY the pane is empty). */}
-        {sessionLoadError && (
-          <div className="flex items-center gap-2 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
-            <span className="flex-1">{t('chat.sessionLoadFailed')}</span>
-            <Button size="sm" variant="ghost" className="h-6 px-2" onClick={retryLoadSession}>
-              <RefreshCw className="mr-1 h-3 w-3" />
-              {t('chat.retry')}
-            </Button>
-          </div>
-        )}
-
-        {/* Search Panel toggle */}
-        <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-          {has(profile, 'terminal') && (
-            <TerminalToggle className="h-8 gap-1 rounded-lg border bg-background px-3 py-1.5 text-xs font-normal shadow-sm" />
+    <WorkbenchShell>
+      <div className="flex h-full">
+        <div className="flex flex-1 flex-col min-w-0">
+          {/* Reconnect warning banner */}
+          {!connected && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning text-xs border-b">
+              <span className="h-2 w-2 rounded-full bg-warning animate-pulse shrink-0" />
+              <span className="flex-1">{t('chat.reconnecting')}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-warning hover:text-warning"
+                onClick={() => {
+                  disconnect()
+                  connect()
+                }}
+              >
+                <RefreshCw className="h-3 w-3 mr-1" />
+                {t('chat.retry')}
+              </Button>
+            </div>
           )}
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-primary hover:border-primary/50 transition-colors shadow-sm"
-            onClick={() => usePortalStore.getState().pushView({ type: 'search' })}
-          >
-            <Search className="w-3.5 h-3.5" />
-            {t('common.search')}
-          </button>
-        </div>
 
-        {/* ── Messages area ── */}
-        <div
-          ref={messagesContainerRef}
-          onScroll={handleListScroll}
-          className="relative flex-1 min-h-0 overflow-y-auto"
-          role="log"
-          aria-label={t('common.chatMessages')}
-        >
-          {rows.map((row) => {
-            if (row.kind === 'empty') {
-              return (
-                <div key="empty" className="mx-auto max-w-3xl px-4 py-6">
-                  <EmptyChatState />
-                </div>
-              )
-            }
-            if (row.kind === 'collapse-bar') {
-              return (
-                <div key="collapse-bar" className="mx-auto max-w-3xl px-4 pt-6">
-                  <CompressedGroup
-                    count={row.count}
-                    expanded={expanded}
-                    onToggle={() => setExpanded((v) => !v)}
-                    foldedMessages={row.foldedMessages}
-                    compression={row.compression}
-                  />
-                </div>
-              )
-            }
-            if (row.kind === 'message') {
-              const m = row.message
-              const assistantIndex =
-                m.role === 'assistant'
-                  ? messages.slice(0, row.index).filter((x) => x.role === 'assistant').length
-                  : undefined
-              return (
-                <div
-                  key={m.id}
-                  data-msg-index={row.index}
-                  className="mx-auto max-w-3xl px-4 py-0.5"
-                >
-                  <MessageBubble
-                    message={m}
-                    sessionId={activeSessionId ?? undefined}
-                    assistantIndex={assistantIndex}
-                    onRetry={m.metadata?.isError ? () => handleRetry(m.id) : undefined}
-                  />
-                </div>
-              )
-            }
-            if (row.kind === 'interview') {
-              return (
-                <div key="interview" className="mx-auto max-w-3xl px-4 py-2">
-                  <InterviewWizard
-                    questions={activeInterview!}
-                    round={interviewRound}
-                    ambiguity={interviewAmbiguity}
-                    onSubmit={submitInterviewResponse}
-                    disabled={isStreaming}
-                  />
-                </div>
-              )
-            }
-            if (row.kind === 'tool-approval') {
-              return (
-                <div key="tool-approval" className="mx-auto max-w-3xl px-4 py-2">
-                  <ToolApprovalCard
-                    toolName={activeToolApproval!.toolName}
-                    reason={activeToolApproval!.reason}
-                    onApprove={(remember) =>
-                      resolveToolApproval(activeToolApproval!.id, true, remember)
-                    }
-                    onDeny={() => resolveToolApproval(activeToolApproval!.id, false)}
-                    disabled={isStreaming}
-                  />
-                </div>
-              )
-            }
-            // Task 10: loading shimmer placeholder.
-            if (row.kind === 'skeleton') {
-              return (
-                <div key="skeleton">
-                  <SessionSkeleton />
-                </div>
-              )
-            }
-            // path-access
-            return (
-              <div key="path-access" className="mx-auto max-w-3xl px-4 py-2">
-                <PathAccessCard
-                  path={activePathAccess!.path}
-                  mode={activePathAccess!.mode}
-                  toolName={activePathAccess!.toolName}
-                  reason={activePathAccess!.reason}
-                  onTempAllow={() => resolvePathAccess(activePathAccess!.id, 'temp')}
-                  onDeny={() => resolvePathAccess(activePathAccess!.id, 'deny')}
-                  disabled={isStreaming}
-                />
-              </div>
-            )
-          })}
-        </div>
-        {userScrolledUp && (
-          <button
-            type="button"
-            onClick={() => {
-              scrollToBottom()
-              setUserScrolledUp(false)
-            }}
-            className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border bg-background shadow-lg transition-all hover:bg-accent"
-            aria-label={t('chat.scrollToBottom')}
+          {/* Task 10: surfaced load failure with retry (sits beside the
+            reconnect banner so the user can see WHY the pane is empty). */}
+          {sessionLoadError && (
+            <div className="flex items-center gap-2 border-b bg-destructive/10 px-4 py-2 text-xs text-destructive">
+              <span className="flex-1">{t('chat.sessionLoadFailed')}</span>
+              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={retryLoadSession}>
+                <RefreshCw className="mr-1 h-3 w-3" />
+                {t('chat.retry')}
+              </Button>
+            </div>
+          )}
+
+          {/* Search Panel toggle */}
+          <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+            {has(profile, 'terminal') && (
+              <TerminalToggle className="h-8 gap-1 rounded-lg border bg-background px-3 py-1.5 text-xs font-normal shadow-sm" />
+            )}
+            <button
+              type="button"
+              className="flex items-center gap-1 rounded-lg border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-primary hover:border-primary/50 transition-colors shadow-sm"
+              onClick={() => usePortalStore.getState().pushView({ type: 'search' })}
+            >
+              <Search className="w-3.5 h-3.5" />
+              {t('common.search')}
+            </button>
+          </div>
+
+          {/* ── Messages area ── */}
+          <div
+            ref={messagesContainerRef}
+            onScroll={handleListScroll}
+            className="relative flex-1 min-h-0 overflow-y-auto"
+            role="log"
+            aria-label={t('common.chatMessages')}
           >
-            <ArrowDown className="h-4 w-4" />
-          </button>
-        )}
-        <ChatMiniMap messages={messages} onJump={handleMiniMapJump} />
-        <TextSelectionBar containerRef={messagesContainerRef} />
-        {/* RFC-044 Phase 4: fan-out agent status grid + compare/merge */}
-        {fanoutGroups.length > 0 && (
-          <div className="shrink-0 border-t bg-background/95 px-4 py-2">
-            {fanoutGroups.map((group) => {
-              const allSettled =
-                group.agents.length > 0 && group.agents.every((a) => a.status !== 'working')
+            {rows.map((row) => {
+              if (row.kind === 'empty') {
+                return (
+                  <div key="empty" className="mx-auto max-w-3xl px-4 py-6">
+                    <EmptyChatState />
+                  </div>
+                )
+              }
+              if (row.kind === 'collapse-bar') {
+                return (
+                  <div key="collapse-bar" className="mx-auto max-w-3xl px-4 pt-6">
+                    <CompressedGroup
+                      count={row.count}
+                      expanded={expanded}
+                      onToggle={() => setExpanded((v) => !v)}
+                      foldedMessages={row.foldedMessages}
+                      compression={row.compression}
+                    />
+                  </div>
+                )
+              }
+              if (row.kind === 'message') {
+                const m = row.message
+                const assistantIndex =
+                  m.role === 'assistant'
+                    ? messages.slice(0, row.index).filter((x) => x.role === 'assistant').length
+                    : undefined
+                return (
+                  <div
+                    key={m.id}
+                    data-msg-index={row.index}
+                    className="mx-auto max-w-3xl px-4 py-0.5"
+                  >
+                    <MessageBubble
+                      message={m}
+                      sessionId={activeSessionId ?? undefined}
+                      assistantIndex={assistantIndex}
+                      onRetry={m.metadata?.isError ? () => handleRetry(m.id) : undefined}
+                    />
+                  </div>
+                )
+              }
+              if (row.kind === 'interview') {
+                return (
+                  <div key="interview" className="mx-auto max-w-3xl px-4 py-2">
+                    <InterviewWizard
+                      questions={activeInterview!}
+                      round={interviewRound}
+                      ambiguity={interviewAmbiguity}
+                      onSubmit={submitInterviewResponse}
+                      disabled={isStreaming}
+                    />
+                  </div>
+                )
+              }
+              if (row.kind === 'tool-approval') {
+                return (
+                  <div key="tool-approval" className="mx-auto max-w-3xl px-4 py-2">
+                    <ToolApprovalCard
+                      toolName={activeToolApproval!.toolName}
+                      reason={activeToolApproval!.reason}
+                      onApprove={(remember) =>
+                        resolveToolApproval(activeToolApproval!.id, true, remember)
+                      }
+                      onDeny={() => resolveToolApproval(activeToolApproval!.id, false)}
+                      disabled={isStreaming}
+                    />
+                  </div>
+                )
+              }
+              // Task 10: loading shimmer placeholder.
+              if (row.kind === 'skeleton') {
+                return (
+                  <div key="skeleton">
+                    <SessionSkeleton />
+                  </div>
+                )
+              }
+              // path-access
               return (
-                <div key={group.groupId} className="space-y-1.5">
-                  {allSettled && (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-2xs text-muted-foreground">
-                        {group.prompt}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-6 shrink-0 gap-1 px-2 text-2xs"
-                        onClick={() => setCompareGroupId(group.groupId)}
-                      >
-                        <GitPullRequest className="h-3 w-3" />
-                        {t('chat.fanout.compare', { defaultValue: 'Compare' })}
-                      </Button>
-                    </div>
-                  )}
-                  <AgentFanoutCardGrid agents={group.agents} />
+                <div key="path-access" className="mx-auto max-w-3xl px-4 py-2">
+                  <PathAccessCard
+                    path={activePathAccess!.path}
+                    mode={activePathAccess!.mode}
+                    toolName={activePathAccess!.toolName}
+                    reason={activePathAccess!.reason}
+                    onTempAllow={() => resolvePathAccess(activePathAccess!.id, 'temp')}
+                    onDeny={() => resolvePathAccess(activePathAccess!.id, 'deny')}
+                    disabled={isStreaming}
+                  />
                 </div>
               )
             })}
           </div>
-        )}
-        {!activeInterview && (
-          <div className="bg-background/95 backdrop-blur-sm shrink-0">
-            <ChatInput
-              value={input}
-              onChange={setInput}
-              onSend={handleSend}
-              roles={roles}
-              activeRole={activeRole}
-              setActiveRole={setActiveRole}
-              activeModelId={activeModelId}
-              setActiveModelId={setActiveModelId}
-              onCancel={handleCancel}
-              isStreaming={isStreaming}
-              connected={connected}
-              queuedCount={queuedCount}
-            />
-          </div>
-        )}
+          {userScrolledUp && (
+            <button
+              type="button"
+              onClick={() => {
+                scrollToBottom()
+                setUserScrolledUp(false)
+              }}
+              className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border bg-background shadow-lg transition-all hover:bg-accent"
+              aria-label={t('chat.scrollToBottom')}
+            >
+              <ArrowDown className="h-4 w-4" />
+            </button>
+          )}
+          <ChatMiniMap messages={messages} onJump={handleMiniMapJump} />
+          <TextSelectionBar containerRef={messagesContainerRef} />
+          {/* RFC-044 Phase 4: fan-out agent status grid + compare/merge */}
+          {fanoutGroups.length > 0 && (
+            <div className="shrink-0 border-t bg-background/95 px-4 py-2">
+              {fanoutGroups.map((group) => {
+                const allSettled =
+                  group.agents.length > 0 && group.agents.every((a) => a.status !== 'working')
+                return (
+                  <div key={group.groupId} className="space-y-1.5">
+                    {allSettled && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-2xs text-muted-foreground">
+                          {group.prompt}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 shrink-0 gap-1 px-2 text-2xs"
+                          onClick={() => setCompareGroupId(group.groupId)}
+                        >
+                          <GitPullRequest className="h-3 w-3" />
+                          {t('chat.fanout.compare', { defaultValue: 'Compare' })}
+                        </Button>
+                      </div>
+                    )}
+                    <AgentFanoutCardGrid agents={group.agents} />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {!activeInterview && (
+            <div className="bg-background/95 backdrop-blur-sm shrink-0">
+              <ChatInput
+                value={input}
+                onChange={setInput}
+                onSend={handleSend}
+                roles={roles}
+                activeRole={activeRole}
+                setActiveRole={setActiveRole}
+                activeModelId={activeModelId}
+                setActiveModelId={setActiveModelId}
+                onCancel={handleCancel}
+                isStreaming={isStreaming}
+                connected={connected}
+                queuedCount={queuedCount}
+              />
+            </div>
+          )}
+        </div>
+        {stackOpen && <PortalPanel className="shrink-0" />}
+        {/* RFC-044 Phase 4: compare/merge panel */}
+        {compareGroupId &&
+          (() => {
+            const group = fanoutGroups.find((g) => g.groupId === compareGroupId)
+            if (!group) return null
+            return (
+              <WorktreeComparePanel
+                group={group}
+                open={!!compareGroupId}
+                onOpenChange={(v) => !v && setCompareGroupId(null)}
+              />
+            )
+          })()}
       </div>
-      {stackOpen && <PortalPanel className="shrink-0" />}
-      {/* RFC-044 Phase 4: compare/merge panel */}
-      {compareGroupId &&
-        (() => {
-          const group = fanoutGroups.find((g) => g.groupId === compareGroupId)
-          if (!group) return null
-          return (
-            <WorktreeComparePanel
-              group={group}
-              open={!!compareGroupId}
-              onOpenChange={(v) => !v && setCompareGroupId(null)}
-            />
-          )
-        })()}
-    </div>
+    </WorkbenchShell>
   )
 }

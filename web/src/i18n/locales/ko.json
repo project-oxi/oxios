@@ -2652,5 +2652,59 @@
     "showHistory": "기록 보기",
     "hideHistory": "기록 닫기",
     "noHistory": "아직 기록된 리비전이 없습니다."
+  },
+  "workbench": {
+    "noProject": "프로젝트 없음",
+    "addFolders": "폴더 추가",
+    "addFoldersHint": "로컬 도구를 사용하려면 폴더를 추가하세요",
+    "commandHint": "명령 팔레트 열기",
+    "projectSelector": {
+      "label": "프로젝트 선택",
+      "title": "프로젝트",
+      "create": "새 프로젝트…",
+      "editFolders": "폴더 편집…",
+      "settings": "프로젝트 설정…"
+    },
+    "rail": {
+      "label": "활동",
+      "conversation": "대화",
+      "files": "파일",
+      "terminal": "터미널",
+      "changes": "변경",
+      "preview": "미리보기"
+    },
+    "stage": {
+      "close": "닫기",
+      "conversation": "대화",
+      "files": "파일",
+      "terminal": "터미널",
+      "changes": "변경",
+      "preview": "미리보기"
+    },
+    "quickOpen": {
+      "placeholder": "검색할 파일 입력…",
+      "empty": "일치 항목 없음"
+    },
+    "editor": {
+      "save": "저장",
+      "saved": "저장됨",
+      "saveFailed": "저장 실패",
+      "readonly": "읽기 전용",
+      "truncated": "잘림",
+      "truncatedHint": "512KiB 초과 — 읽기 전용으로 표시됩니다."
+    },
+    "changes": {
+      "reviewPending": "검토 대기 {{count}}건",
+      "reviewed": "검토됨",
+      "revert": "되돌리기",
+      "empty": "아직 파일 변경이 없습니다"
+    },
+    "terminal": {
+      "empty": "터미널 출력이 아직 없습니다"
+    },
+    "preview": {
+      "empty": "미리보기가 없습니다",
+      "recentCount": "최근 변경 {{count}}건"
+    }
   }
 }

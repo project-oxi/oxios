@@ -2652,5 +2652,59 @@
     "showHistory": "Show history",
     "hideHistory": "Hide history",
     "noHistory": "No revisions recorded yet."
+  },
+  "workbench": {
+    "noProject": "No project",
+    "addFolders": "Add folders",
+    "addFoldersHint": "Add folders to enable local tools",
+    "commandHint": "to open command palette",
+    "projectSelector": {
+      "label": "Project selector",
+      "title": "Projects",
+      "create": "New project…",
+      "editFolders": "Edit folders…",
+      "settings": "Project settings…"
+    },
+    "rail": {
+      "label": "Activity",
+      "conversation": "Conversation",
+      "files": "Files",
+      "terminal": "Terminal",
+      "changes": "Changes",
+      "preview": "Preview"
+    },
+    "stage": {
+      "close": "Close",
+      "conversation": "Conversation",
+      "files": "Files",
+      "terminal": "Terminal",
+      "changes": "Changes",
+      "preview": "Preview"
+    },
+    "quickOpen": {
+      "placeholder": "Type to search files…",
+      "empty": "No matches"
+    },
+    "editor": {
+      "save": "Save",
+      "saved": "Saved",
+      "saveFailed": "Save failed",
+      "readonly": "Read-only",
+      "truncated": "truncated",
+      "truncatedHint": "File exceeds 512 KiB — content is read-only."
+    },
+    "changes": {
+      "reviewPending": "{{count}} pending review",
+      "reviewed": "Reviewed",
+      "revert": "Revert",
+      "empty": "No file changes yet"
+    },
+    "terminal": {
+      "empty": "No terminal output yet"
+    },
+    "preview": {
+      "empty": "No preview yet",
+      "recentCount": "{{count}} recent changes"
+    }
   }
 }

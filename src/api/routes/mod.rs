@@ -41,6 +41,7 @@ mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
 use search::{handle_browse, handle_search};
+mod issue_routes;
 mod mount_routes;
 mod project_routes;
 mod resource_routes;
@@ -127,6 +128,12 @@ pub(crate) use infra::{
     handle_mcp_server_register, handle_mcp_server_toggle, handle_mcp_server_update,
     handle_mcp_servers_list, handle_mcp_tool_call, handle_mcp_tools_list, handle_metrics,
     handle_permissions_get, handle_permissions_put, handle_security_permissions,
+};
+pub(crate) use issue_routes::{
+    handle_issue_close, handle_issue_create, handle_issue_get, handle_issue_release,
+    handle_issue_reopen, handle_issue_set_milestone, handle_issue_update, handle_issues_list,
+    handle_milestone_create, handle_milestone_delete, handle_milestone_update,
+    handle_milestones_list,
 };
 pub(crate) use knowledge_routes::{
     handle_knowledge_asset_get, handle_knowledge_backlinks, handle_knowledge_chat_append,
@@ -633,6 +640,43 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{id}/memories/{memoryId}",
             delete(handle_project_unlink_memory),
+        )
+        // Project issues + milestones
+        .route("/api/projects/{id}/issues", get(handle_issues_list))
+        .route("/api/projects/{id}/issues", post(handle_issue_create))
+        .route("/api/projects/{id}/issues/{number}", get(handle_issue_get))
+        .route(
+            "/api/projects/{id}/issues/{number}",
+            patch(handle_issue_update),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/close",
+            post(handle_issue_close),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/reopen",
+            post(handle_issue_reopen),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/release",
+            post(handle_issue_release),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/milestone",
+            put(handle_issue_set_milestone),
+        )
+        .route("/api/projects/{id}/milestones", get(handle_milestones_list))
+        .route(
+            "/api/projects/{id}/milestones",
+            post(handle_milestone_create),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            patch(handle_milestone_update),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            delete(handle_milestone_delete),
         )
         // Mounts (RFC-025)
         .route("/api/mounts", get(handle_mounts_list))

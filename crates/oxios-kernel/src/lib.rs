@@ -265,7 +265,7 @@ pub use kernel_handle::{
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
     InputModality as EngineInputModality, IssueApi, IssueQuery, IssueView, KnowledgeContext,
     KnowledgeLens, KnowledgeNote, McpApi, MemoApi, MemoryNote, MilestoneView, ModelInfo, MountApi,
-    MountInfo, PersonaApi, ProjectApi, ProjectInfo, ProviderCategory, ProviderInfo,
+    MountInfo, NewIssue, PersonaApi, ProjectApi, ProjectInfo, ProviderCategory, ProviderInfo,
     RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot, RoutingUpdate, SecurityApi,
     SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
 };

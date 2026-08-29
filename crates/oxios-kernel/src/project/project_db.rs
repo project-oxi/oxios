@@ -100,7 +100,11 @@ pub fn list_projects(conn: &rusqlite::Connection) -> Result<Vec<Project>> {
 }
 
 /// Delete a project by ID.
-pub fn delete_project(conn: &rusqlite::Connection, id: &str) -> Result<()> {
+///
+/// Returns the raw `rusqlite::Error` (not an anyhow flattening) so
+/// `ProjectManager::remove_project` can classify storage failures as
+/// `ProjectManagerError::Database` at the API boundary.
+pub fn delete_project(conn: &rusqlite::Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM projects WHERE id = ?1", rusqlite::params![id])?;
     Ok(())
 }

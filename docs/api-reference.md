@@ -1986,7 +1986,6 @@ fallbacks. `effective_profile` is the server-derived snapshot of the bound
 persona's affordances for this session's project (design §6.1); `null`
 when no persona binds. Web UI affordances render from it — never from
 persona capability strings.
-```
 
 **Error Response:** `404 Not Found`
 

@@ -212,8 +212,7 @@ pub(crate) async fn handle_project_delete(
 ) -> Result<StatusCode, AppError> {
     let api = project_api!(state);
 
-    api.remove_project(&id)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    api.remove_project(&id).map_err(project_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -343,5 +342,22 @@ mod tests {
             send(&mut svc, "GET", &format!("/api/projects/{id}/roots/status")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn delete_unknown_project_maps_to_404_via_shared_mapper() {
+        // F1: DELETE goes through project_error like create/update — a
+        // missing project is 404, a storage failure is 500 without the raw
+        // sqlite message (never a blanket 400).
+        let tmp = tempfile::tempdir().unwrap();
+        let app = test_support::test_app(tmp.path());
+        let mut svc = router(&app);
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let (status, body) = send(&mut svc, "DELETE", &format!("/api/projects/{unknown}")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "body: {body}");
+        assert!(
+            !body["error"].as_str().unwrap_or("").contains("database"),
+            "sqlite message must not leak: {body}"
+        );
     }
 }

@@ -192,7 +192,7 @@ That's it. The OS handles the rest.
     └─────────┘
 ```
 
-**No containers. No subprocess browser.** Everything runs in-process, sandboxed by workspace rules and RBAC. The kernel exposes all functionality through `KernelHandle` — a facade of 22 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in [ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-kernelhandle-facade)).
+**No containers. No subprocess browser.** Everything runs in-process, sandboxed by workspace rules and RBAC. The kernel exposes all functionality through `KernelHandle` — a facade of 21 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in [ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-kernelhandle-facade)).
 
 ---
 

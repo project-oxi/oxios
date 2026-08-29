@@ -8,7 +8,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -115,8 +114,9 @@ impl ProjectApi {
     }
 
     /// Remove a project.
-    pub fn remove_project(&self, id: &str) -> Result<()> {
-        let project_id = Uuid::parse_str(id).context("Invalid project ID")?;
+    pub fn remove_project(&self, id: &str) -> std::result::Result<(), ProjectManagerError> {
+        let project_id = Uuid::parse_str(id)
+            .map_err(|_| ProjectManagerError::Invalid(format!("invalid project ID: {id}")))?;
         self.project_manager.remove_project(project_id)
     }
 }

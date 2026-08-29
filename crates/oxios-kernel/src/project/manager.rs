@@ -263,7 +263,7 @@ impl ProjectManager {
     }
 
     /// Remove a project.
-    pub fn remove_project(&self, id: ProjectId) -> Result<()> {
+    pub fn remove_project(&self, id: ProjectId) -> Result<(), ProjectManagerError> {
         {
             let mut projects = self.projects.write();
             let project = projects

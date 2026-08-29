@@ -96,7 +96,7 @@ Oxios is built on two foundational metaphors:
 │                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │                  KernelHandle (Facade / Syscall Table)           │   │
-│  │  22 typed APIs (State · Agent · Security · Exec · Browser ·      │   │
+│  │  21 typed APIs (State · Agent · Security · Exec · Browser ·      │   │
 │  │  MCP · A2A · Memory · Engine · …  — full list in §4)             │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -1093,7 +1093,7 @@ Google's A2A protocol for horizontal agent↔agent communication. Unlike MCP (ve
 
 ## 4. KernelHandle Facade
 
-The KernelHandle is the **syscall table** of the Agent OS. It is a facade composed of **22 typed APIs** that provide the single path for all kernel operations — all tools go through it, never reaching subsystems directly (full list below).
+The KernelHandle is the **syscall table** of the Agent OS. It is a facade composed of **21 typed APIs** that provide the single path for all kernel operations — all tools go through it, never reaching subsystems directly (full list below).
 
 | Domain | Typed APIs |
 |--------|-----------|
@@ -1336,7 +1336,7 @@ Complete path of a user message through the system:
   │   │       ├── state_store.rs       config.rs              types.rs
   │   │       ├── access_manager/      # RBAC + path sandbox + audit trail
   │   │       ├── brain/              # daemonless BrainSession + BrainInstaller (§3.14)
-  │   │       ├── kernel_handle/       # Facade — 22 typed APIs (see §4)
+  │   │       ├── kernel_handle/       # Facade — 21 typed APIs (see §4)
   │   │       ├── tools/               # builtin/, kernel_bridge.rs, exec_tool.rs
   │   │       ├── skill/               # Unified skill system (RFC-009): clawhub, skills_sh
   │   │       ├── persona/             a2a/                   resilience/

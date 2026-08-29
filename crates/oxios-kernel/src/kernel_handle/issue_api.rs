@@ -576,38 +576,10 @@ fn view_of(
 mod tests {
     use super::*;
 
-    /// `OXIOS_DATA_HOME` is process-global; serialize the tests that set it.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    struct DataHome {
-        _tmp: tempfile::TempDir,
-        _guard: std::sync::MutexGuard<'static, ()>,
-        prev: Option<String>,
-    }
-
-    impl DataHome {
-        fn new() -> Self {
-            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let tmp = tempfile::tempdir().unwrap();
-            let prev = std::env::var("OXIOS_DATA_HOME").ok();
-            // SAFETY: guarded by ENV_LOCK; restored on drop.
-            unsafe { std::env::set_var("OXIOS_DATA_HOME", tmp.path()) };
-            Self {
-                _tmp: tmp,
-                _guard: guard,
-                prev,
-            }
-        }
-    }
-
-    impl Drop for DataHome {
-        fn drop(&mut self) {
-            match self.prev.take() {
-                Some(v) => unsafe { std::env::set_var("OXIOS_DATA_HOME", v) },
-                None => unsafe { std::env::remove_var("OXIOS_DATA_HOME") },
-            }
-        }
-    }
+    /// Scoped `data_home` override. The lock lives in `project::paths` so
+    /// every test touching that variable — here and there — shares one, which
+    /// two separate mutexes would not accomplish.
+    use crate::project::paths::test_support::temp_data_home;
 
     #[test]
     fn ownership_id_is_stable_across_turns() {
@@ -628,7 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn issues_are_numbered_per_project() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let p1 = ProjectId::new_v4();
         let p2 = ProjectId::new_v4();
@@ -653,7 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn milestone_membership_survives_an_sdk_write() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
 
@@ -697,7 +669,7 @@ mod tests {
 
     #[tokio::test]
     async fn milestone_progress_is_derived_from_issues() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create_milestone(project, "v1".into(), None, None, None)
@@ -722,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_live_claim_blocks_another_session() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create(project, NewIssue::new("contended").session("a"))
@@ -738,7 +710,7 @@ mod tests {
 
     #[tokio::test]
     async fn releasing_a_session_makes_its_claim_reclaimable() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create(project, NewIssue::new("handover").session("a"))
@@ -754,7 +726,7 @@ mod tests {
 
     #[tokio::test]
     async fn deleting_a_milestone_strips_it_from_members() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create_milestone(project, "doomed".into(), None, None, None)
@@ -780,7 +752,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_milestone_slugs_are_rejected() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create_milestone(project, "v1".into(), None, None, None)
@@ -793,7 +765,7 @@ mod tests {
 
     #[tokio::test]
     async fn milestone_filter_selects_only_members() {
-        let _home = DataHome::new();
+        let _home = temp_data_home();
         let api = IssueApi::new();
         let project = ProjectId::new_v4();
         api.create(

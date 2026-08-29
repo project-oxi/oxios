@@ -81,25 +81,88 @@ pub fn remove_project_dir(id: ProjectId) -> std::io::Result<()> {
     }
 }
 
+/// Test-only scoped override of [`data_home`].
+///
+/// `OXIOS_DATA_HOME` is process-global and Rust runs unit tests in parallel
+/// threads of one process, so every test that touches it must hold the *same*
+/// lock. This module owns both the lock and the setter precisely so a second
+/// module cannot introduce a second mutex over the same variable — which is
+/// not synchronization at all, just two tests that each think they are safe.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard};
+
+    use super::DATA_HOME_ENV;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Held for as long as the override should apply. Restores the previous
+    /// value on drop, so a panicking test cannot leak it into the next one.
+    pub(crate) struct DataHomeGuard {
+        _lock: MutexGuard<'static, ()>,
+        prev: Option<String>,
+        _tmp: Option<tempfile::TempDir>,
+    }
+
+    impl Drop for DataHomeGuard {
+        fn drop(&mut self) {
+            // SAFETY: the lock is still held; no other test thread can be
+            // reading or writing this variable.
+            match self.prev.take() {
+                Some(v) => unsafe { std::env::set_var(DATA_HOME_ENV, v) },
+                None => unsafe { std::env::remove_var(DATA_HOME_ENV) },
+            }
+        }
+    }
+
+    fn acquire(dir: &Path, tmp: Option<tempfile::TempDir>) -> DataHomeGuard {
+        // `unwrap_or_else(into_inner)`: one panicking test must not poison the
+        // lock and cascade into every other test in the binary.
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var(DATA_HOME_ENV).ok();
+        // SAFETY: guarded by ENV_LOCK for the guard's whole lifetime.
+        unsafe { std::env::set_var(DATA_HOME_ENV, dir) };
+        DataHomeGuard {
+            _lock: lock,
+            prev,
+            _tmp: tmp,
+        }
+    }
+
+    /// Point `data_home()` at a fresh temp directory for the guard's lifetime.
+    pub(crate) fn temp_data_home() -> DataHomeGuard {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        acquire(&tmp.path().to_path_buf(), Some(tmp))
+    }
+
+    /// Point `data_home()` at `dir` for the guard's lifetime.
+    pub(crate) fn data_home_at(dir: &Path) -> DataHomeGuard {
+        acquire(dir, None)
+    }
+
+    /// Take the lock without overriding, for a test that asserts the default.
+    pub(crate) fn without_override() -> DataHomeGuard {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var(DATA_HOME_ENV).ok();
+        // SAFETY: guarded by ENV_LOCK for the guard's whole lifetime.
+        unsafe { std::env::remove_var(DATA_HOME_ENV) };
+        DataHomeGuard {
+            _lock: lock,
+            prev,
+            _tmp: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_support::{data_home_at, without_override};
     use super::*;
 
-    /// `OXIOS_DATA_HOME` is process-global; these tests must not run
-    /// concurrently with each other.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn with_data_home<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var(DATA_HOME_ENV).ok();
-        // SAFETY: guarded by ENV_LOCK; restored before the guard drops.
-        unsafe { std::env::set_var(DATA_HOME_ENV, dir) };
-        let out = f();
-        match prev {
-            Some(v) => unsafe { std::env::set_var(DATA_HOME_ENV, v) },
-            None => unsafe { std::env::remove_var(DATA_HOME_ENV) },
-        }
-        out
+        let _guard = data_home_at(dir);
+        f()
     }
 
     #[test]
@@ -143,18 +206,12 @@ mod tests {
 
     #[test]
     fn data_home_defaults_under_the_dot_oxi_umbrella() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var(DATA_HOME_ENV).ok();
-        // SAFETY: guarded by ENV_LOCK; restored below.
-        unsafe { std::env::remove_var(DATA_HOME_ENV) };
+        let _guard = without_override();
         let home = data_home();
         assert!(
             home.ends_with("oxios") && home.parent().is_some_and(|p| p.ends_with(".oxi")),
             "expected ~/.oxi/oxios, got {}",
             home.display()
         );
-        if let Some(v) = prev {
-            unsafe { std::env::set_var(DATA_HOME_ENV, v) };
-        }
     }
 }

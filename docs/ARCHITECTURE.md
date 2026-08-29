@@ -822,6 +822,55 @@ Projects partition conversations and resources into isolated contexts, auto-dete
 
 ---
 
+### 3.15.1 IssueApi — Project Issues, Milestones, and Session Todo
+
+Two related surfaces added with `oxicode-sdk` 0.77.
+
+**Issues and milestones** are scoped to a Project and stored as markdown
+documents under `~/.oxi/oxios/projects/<project-id>/`:
+
+```
+~/.oxi/oxios/projects/<uuid>/
+  issues/0001-fix-login.md     YAML frontmatter + markdown body
+  issues/.alive/<identity>     flock files (SDK-managed)
+  milestones.yaml              milestone definitions
+```
+
+One directory per project means one id space, so issue numbers (`#12`) are
+project-scoped and stable. `IssueApi` wraps `oxicode_sdk::FileIssueStore`,
+which supplies atomic writes, content-hash CAS, and process-liveness
+assignment; Oxios adds the project scoping, the ownership identity, and the
+milestone layer.
+
+**Oxios issues are deliberately separate from `oxicode`'s per-folder
+`.oxicode/issues/` store.** The two products track different scopes: a
+terminal agent tracks the folder it was launched in, Oxios tracks a Project
+that may span zero or many folders. We reuse the SDK implementation without
+sharing its data.
+
+The address is also the security boundary. `gate::OXI_HOME_DENY_ROOTS`
+already denies `~/.oxi` wholesale to the file tools, so issue files are
+unreachable through `read`/`write`/`edit`/`grep`/`find`/`ls`, while
+`IssueApi` reaches them via `std::fs` without passing `AccessGate`. The agent
+can therefore only mutate issues through the `issue` tool — which maintains
+the CAS check and the assignment lock that a raw `edit` would bypass.
+
+**Ownership** is `oxios-<pid>-<session>`, carried into
+`ToolContext.session_id` via `AgentConfig.session_id`, and backed by an
+`AliveGuard` (`flock`) held for the session's lifetime. Daemon exit releases
+every guard, so claims become reclaimable without a timeout or heartbeat.
+
+**Milestones** carry membership as a reserved `milestone:<slug>` issue label
+— `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write, so a
+field would not survive. Progress is derived by listing labelled issues, never
+stored.
+
+**Session todo** is separate and lives only in memory: `TodoRegistry` keys one
+`OxiosTodoState` per chat session and is wired to `AgentConfig.todo`, so a
+plan created on one turn is still there on the next. The kernel's `todo` tool
+wraps the SDK contract to publish a phase snapshot for the Web UI's live
+checklist.
+
 ### 3.16 McpBridge — Model Context Protocol
 
 ```

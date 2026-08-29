@@ -7,7 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Project issues and milestones.** Every Project gets a GitHub-shaped
+  issue tracker: project-scoped numbers (`#12`), status, priority, labels,
+  a markdown body, and milestones that group issues and show derived
+  progress. Issues are markdown documents under
+  `~/.oxi/oxios/projects/<id>/issues/`, backed by `oxicode-sdk` 0.77's
+  `FileIssueStore` (atomic writes, content-hash CAS, `flock`-based
+  assignment liveness). Reachable from chat through the `issue` tool and
+  from the Web UI through Issues and Milestones tabs on the project page.
+
+  Oxios issues are **not** shared with `oxicode`'s per-folder
+  `.oxicode/issues/` store: the two products track different scopes, and
+  converging them would reduce the engine to a TUI skin. We reuse the SDK
+  implementation without sharing its data.
+
+  The storage address doubles as the security boundary — the existing
+  `~/.oxi` whole-root deny already keeps issue files out of reach of the
+  file tools, so the agent can only mutate an issue through the tool that
+  maintains the CAS check and the assignment lock.
+
+  Milestone membership rides a reserved `milestone:<slug>` label, because
+  `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write.
+  Progress is derived, never stored, so it cannot go stale.
+
+- **Session todo plans, rendered live in chat.** The agent's `todo` tool is
+  now wired to a session-scoped `TodoRegistry`, so a plan survives across
+  the turns of a conversation instead of resetting each message. The
+  transcript shows a live checklist (status glyphs, strikethrough on closed
+  tasks, the in-progress task emphasised, block reasons inline), and a
+  sticky strip above the composer shows `completed/total · current task`
+  while work is outstanding.
+
+### Fixed
+
+- **`AgentConfig.session_id` was `None`,** so `ToolContext.session_id` was
+  empty for every tool. Issue assignment derives its ownership identity from
+  it, and the SDK's lock only protects anything when that identity is
+  non-empty and backed by a `flock` the process holds — the same defect the
+  engine documents as its #13. Two existing consumers (`hook_runner`,
+  `task_tool`) also stop receiving an empty value.
+- **A test that never ran.** `format_results_matches_sdk_shape` in
+  `search_provider` had lost its `#[test]` attribute.
+
 ### Changed
+
+- **`SearchResultBus` → `StructuredResultBus`,** lifted out of
+  `search_provider` into its own module. It was already a generic
+  `tool_call_id -> Value` map; `todo` and `issue` are the second and third
+  consumers, so a per-tool bus would have been duplication. The delivery
+  path (kernel event → WS `tool_end.results` → tool render) is unchanged.
+- **`oxicode-sdk` / `oxicode-agent` / `oxicode-ai` 0.73.0 → 0.77.0.** No
+  source changes were required; 0.77 adds the issue store and tool to the
+  SDK surface and keeps the todo tool and `TodoStateProvider`.
+- **The always-on tool tier and the gate's Layer-0 exemption list are now
+  one shared constant** (`gate::LAYER0_EXEMPT_TOOLS`) with a parity test. A
+  tool registered in the tier but missing from the list is registered (so
+  the LLM calls it) and then hard-denied on every call — the catch-22 that
+  previously shipped for `web_search`.
+
 
 - **Brain cutover to the oxibrain 0.10 agent-first CLI contract** —
   one process per operation, nothing resident. Agent-facing ops

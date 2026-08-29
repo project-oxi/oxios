@@ -93,8 +93,9 @@ pub struct BrainSection {
     pub enabled: bool,
     /// Brain data directory. Empty → `~/.oxi/brain` (`$OXI_BRAIN_DIR` honored).
     pub dir: String,
-    /// Space to operate in (fallback; `~/.oxi/config.toml [vault].space` wins).
-    pub space: String,
+    /// Default brain space offered to new chats that have no project binding. Empty = unconnected.
+    #[serde(default)]
+    pub default_space: String,
     /// Explicit binary path. Non-empty skips auto-install.
     pub binary_path: String,
     /// Install the binary from GitHub Releases when absent.
@@ -106,7 +107,7 @@ impl Default for BrainSection {
         Self {
             enabled: true,
             dir: String::new(),
-            space: "personal".to_string(),
+            default_space: String::new(),
             binary_path: String::new(),
             auto_install: true,
         }
@@ -1494,7 +1495,6 @@ fn default_search_timeout_secs() -> u64 {
     15
 }
 
-
 /// Kernel configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KernelConfig {
@@ -1514,7 +1514,7 @@ pub struct KernelConfig {
     /// 2. `~/.oxi/config.toml [vault].path` (ecosystem-canonical; default
     ///    reads the file via `OXIOS_OXI_CONFIG_PATH` env override if set,
     ///    else `~/.oxi/config.toml`).
-    /// 3. Fallback `~/.oxi/vault` (with `expand_home`).
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
     ///
     /// `None` ⇒ steps 2–3. The merged vault is shared by oxios and oximemo
     /// per ECOSYSTEM C5 v1.1.
@@ -2808,7 +2808,7 @@ mod tests {
         assert!(sec.enabled);
         assert!(sec.auto_install);
         assert_eq!(sec.dir, "");
-        assert_eq!(sec.space, "personal");
+        assert_eq!(sec.default_space, "");
         assert_eq!(sec.binary_path, "");
 
         let sec: BrainSection = toml::from_str(
@@ -2825,6 +2825,15 @@ mod tests {
             toml::from_str("socket_path = \"/tmp/s.sock\"\nauto_manage = true\n").unwrap();
         assert!(sec.enabled);
         assert!(sec.auto_install);
+    }
+
+    #[test]
+    fn brain_section_legacy_space_key_parses() {
+        // Pre-binding configs carried `[brain] space`; the field is gone but
+        // the key must parse harmlessly (serde ignores unknown fields).
+        let sec: BrainSection = toml::from_str("space = \"x\"\n").unwrap();
+        assert!(sec.enabled);
+        assert_eq!(sec.default_space, "");
     }
 
     #[test]
@@ -3317,7 +3326,7 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         assert_eq!(resolved, expand_home("~/from-ecosystem"));
 
         // Tier 3: explicit absent AND oxi config absent → fallback
-        // `~/.oxi/vault`. Hermetic: the seam points at a NONEXISTENT path
+        // `~/.oxi/spaces/personal/vault`. Hermetic: the seam points at a NONEXISTENT path
         // inside the tempdir so no workstation's real `~/.oxi/config.toml`
         // can leak into the assertion.
         let nonexistent = dir.join("oxi-config-absent.toml");

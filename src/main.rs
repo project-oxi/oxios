@@ -1600,7 +1600,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
         &home,
         &oxios_kernel::config::expand_home(&config.brain.dir).to_string_lossy(),
     );
-    let space = oxios_kernel::resolve_space(&home, &config.brain.space);
 
     match cmd {
         BrainCmd::Status => {
@@ -1618,7 +1617,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
                 None => println!("binary: not installed (run `oxios brain install`)"),
             }
             println!("dir: {}", dir.display());
-            println!("space: {space}");
             if let Some(b) = binary {
                 // Store stats come from the one-shot `admin stats` verb —
                 // no session child, matching the kernel's per-op transport.
@@ -1653,11 +1651,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let bin = installer
                 .locate_binary()
                 .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
-            let vault = config.kernel.resolved_knowledge_root();
-            if oxios_kernel::brain::ensure_vault_root(&dir.join("documents.toml"), &vault, &space)?
-            {
-                println!("documents.toml: seeded vault root");
-            }
             // `--embed` is best-effort (boot degrades the same way). Stock
             // oxibrain never attaches an embedder in the CLI, so the embed
             // step reports "no embedding port configured" even though the

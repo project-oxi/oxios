@@ -7,17 +7,12 @@ use std::path::{Path, PathBuf};
 pub struct BrainConfig {
     /// Brain data directory the session child serves (`--dir`).
     pub dir: PathBuf,
-    /// Space to operate in (default `"personal"`).
-    pub space: String,
 }
 
 impl BrainConfig {
     /// Create a new config.
-    pub fn new(dir: impl Into<PathBuf>, space: impl Into<String>) -> Self {
-        Self {
-            dir: dir.into(),
-            space: space.into(),
-        }
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
     }
 }
 

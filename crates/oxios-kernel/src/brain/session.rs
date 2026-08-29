@@ -606,7 +606,7 @@ mod tests {
         let session = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         );
         (session, tmp)
     }
@@ -658,8 +658,8 @@ mod tests {
         let s = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
-            // Boot config binds "personal"; the call binds "work".
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            // No boot-time binding: the op call itself carries the space.
+            BrainConfig::new(tmp.path().join("brain")),
         );
         s.recall("work", "hello", 50).await;
 
@@ -765,7 +765,7 @@ mod tests {
                 &crate::config::BrainSection::default(),
             )),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         );
         assert!(s.recall("personal", "q", 10).await.is_none());
         assert!(s.stats("personal").await.is_none());
@@ -883,7 +883,7 @@ mod tests {
         let s = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         )
         .with_spawner(Arc::clone(&fake) as Arc<dyn Spawn>);
         (s, fake)
@@ -941,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn disabled_session_degrades_without_touching_anything() {
-        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain", "personal"));
+        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain"));
         assert!(!s.is_available());
         assert!(s.recall("personal", "q", 100).await.is_none());
         assert!(s.remember("personal", "fact", "agent").await.is_none());

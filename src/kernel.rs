@@ -14,7 +14,6 @@ use oxios_kernel::{
     PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
     SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
     auth::AuthManager, config::load_config, git_layer::rel_path, mcp::validate_mcp_command,
-    resolve_space,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
@@ -1254,23 +1253,18 @@ impl KernelBuilder {
             &config.brain,
         ));
         let brain_dir = oxios_kernel::brain::resolved_brain_dir(&home, &config.brain.dir);
-        // T17 precedence: `~/.oxi/config.toml [vault].space` wins.
-        let space = resolve_space(&home, &config.brain.space);
         let brain = Arc::new(if config.brain.enabled {
             oxios_kernel::BrainSession::new(
                 installer.clone(),
                 config.brain.auto_install,
-                oxios_kernel::BrainConfig::new(brain_dir.clone(), space.clone()),
+                oxios_kernel::BrainConfig::new(brain_dir.clone()),
             )
         } else {
             // `enabled = false` ⇒ never spawn the child, never invoke the
             // installer, never poll the binary. NoopSpawn errors every
             // spawn attempt; BrainApi stays attached so routes serve the
             // degraded shape (None / 503) instead of 500.
-            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(
-                brain_dir.clone(),
-                space.clone(),
-            ))
+            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(brain_dir.clone()))
         });
 
         // Agent CLI lane: pre-allow the oxibrain binary so exec structured
@@ -1292,24 +1286,10 @@ impl KernelBuilder {
                 inst.legacy_cleanup(&dir).await;
             });
 
-            // Document-plane declaration + warm index (C1: never blocks boot).
+            // Warm document index (C1: never blocks boot).
             let inst = installer.clone();
             let dir = brain_dir.clone();
-            let knowledge_root = config.kernel.resolved_knowledge_root();
-            let vault_space = space.clone();
             tokio::spawn(async move {
-                match oxios_kernel::brain::ensure_vault_root(
-                    &dir.join("documents.toml"),
-                    &knowledge_root,
-                    &vault_space,
-                ) {
-                    Ok(true) => tracing::info!("documents.toml: seeded vault root"),
-                    Ok(false) => {}
-                    Err(e) => tracing::warn!(
-                        error = %e,
-                        "documents.toml seed failed — first search auto-materializes"
-                    ),
-                }
                 if let Some(bin) = inst.locate_binary() {
                     // Stock oxibrain `admin index --embed` always reports
                     // "no embedding port configured" — no non-test caller

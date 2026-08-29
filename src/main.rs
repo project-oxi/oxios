@@ -2636,8 +2636,12 @@ async fn run(cli: Cli) -> Result<()> {
                                         }
                                     }
                                     if !mount_ids.is_empty()
-                                        && let Err(e) =
-                                            pm.update_project_bundle(p.id, Some(mount_ids), None)
+                                        && let Err(e) = pm.update_project_bundle(
+                                            p.id,
+                                            Some(mount_ids),
+                                            None,
+                                            None,
+                                        )
                                     {
                                         eprintln!(
                                             "{} Project created but mount link failed: {}",

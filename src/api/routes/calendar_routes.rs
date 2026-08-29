@@ -8,23 +8,13 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use oxios_calendar::{EventDraft, EventPatch};
 
+use super::deserialize_some;
 use crate::api::error::AppError;
 use crate::api::server::AppState;
-
-/// Distinguish an absent field (`None` = don't change) from an explicit JSON
-/// `null` (`Some(None)` = clear). Without this, serde maps both to `None`,
-/// so unlinking (`note_path: null`) would be a silent no-op.
-fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    Deserialize::deserialize(deserializer).map(Some)
-}
 
 // ---------------------------------------------------------------------------
 // Request / query types

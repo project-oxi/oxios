@@ -95,6 +95,11 @@ pub struct Project {
     /// when this Project is active.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub instructions: String,
+    /// Default brain space inherited by NEW chats created in this Project
+    /// when the user has not explicitly picked a brain. The Web layer applies
+    /// it to new chats; the kernel only stores and serves the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_brain_space: Option<String>,
 }
 
 fn default_emoji() -> String {
@@ -123,6 +128,7 @@ impl Project {
             last_active_at: now,
             mount_ids: Vec::new(),
             instructions: String::new(),
+            default_brain_space: None,
         }
     }
 

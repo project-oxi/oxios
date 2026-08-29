@@ -2332,7 +2332,9 @@ fn migrate_projects_to_mounts(
 
         // Link the resolved Mounts and clear the legacy `paths` field so the
         // runtime legacy fallbacks never re-activate for this Project.
-        if let Err(e) = project_manager.update_project_bundle(project.id, Some(mount_ids), None) {
+        if let Err(e) =
+            project_manager.update_project_bundle(project.id, Some(mount_ids), None, None)
+        {
             tracing::warn!(
                 project = %project.name,
                 error = %e,

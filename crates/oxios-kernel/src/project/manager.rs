@@ -269,12 +269,16 @@ impl ProjectManager {
         Ok(())
     }
 
-    /// Update a Project's RFC-025 fields (mount_ids, instructions).
+    /// Update a Project's RFC-025 fields (mount_ids, instructions) and its
+    /// default brain space. For `default_brain_space`, the outer `Option`
+    /// selects change (`Some`) vs leave-untouched (`None`); the inner `None`
+    /// clears the value.
     pub fn update_project_bundle(
         &self,
         id: ProjectId,
         mount_ids: Option<Vec<crate::mount::MountId>>,
         instructions: Option<String>,
+        default_brain_space: Option<Option<String>>,
     ) -> Result<Project> {
         let mut projects = self.projects.write();
         let project = projects
@@ -286,6 +290,9 @@ impl ProjectManager {
         }
         if let Some(instr) = instructions {
             project.instructions = instr;
+        }
+        if let Some(space) = default_brain_space {
+            project.default_brain_space = space;
         }
         project.updated_at = Utc::now();
 

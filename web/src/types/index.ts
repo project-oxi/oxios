@@ -636,7 +636,6 @@ export interface SystemStatus {
       total_completed: number
       total_failed: number
     }
-    spaces_active?: number
     projects_active?: number
   }
 }

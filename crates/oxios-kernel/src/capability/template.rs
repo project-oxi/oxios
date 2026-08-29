@@ -10,7 +10,7 @@
 //! ```text
 //! worker()     → Exec + Browser + Knowledge(RW)
 //!   standard() → worker + Memory(READ)
-//!   operator() → standard + Space + Agent + A2a + Program + MCP + Memory(WRITE)
+//!   operator() → standard + Agent + A2a + Program + MCP + Memory(WRITE)
 //!   supervisor() → operator + Security + Budget + Resource + Cron
 //! ```
 //!
@@ -25,7 +25,6 @@
 //! ```
 
 use crate::types::AgentId;
-use uuid::Uuid;
 
 use super::types::{CSpace, Capability, CapabilityId, Issuer, ResourceRef, Rights};
 
@@ -73,7 +72,7 @@ impl CapabilityTemplate {
         t
     }
 
-    /// **Operator** — standard + space, agent, A2A, persona, program,
+    /// **Operator** — standard + agent, A2A, persona, program,
     /// MCP, and memory write.
     ///
     /// Intended for agents that coordinate work across multiple
@@ -81,10 +80,6 @@ impl CapabilityTemplate {
     pub fn operator() -> Self {
         let mut t = Self::standard();
         let extra = vec![
-            (
-                ResourceRef::Space { id: Uuid::nil() },
-                Rights::READ | Rights::WRITE,
-            ),
             (
                 ResourceRef::Agent { id: AgentId::nil() },
                 Rights::READ | Rights::WRITE,
@@ -207,12 +202,12 @@ impl CapabilityTemplate {
     /// **Base** — every tool including Oxios control.
     ///
     /// Superset of [`code_profile`](Self::code_profile) plus the full
-    /// control plane: project (space), agent lifecycle, A2A, persona,
+    /// control plane: project, agent lifecycle, A2A, persona,
     /// security, budget, and resource domains.
     pub fn base_profile() -> Self {
         let mut t = Self::code_profile();
         let control: [&str; 7] = [
-            "space", "agent", "a2a", "persona", "security", "budget", "resource",
+            "project", "agent", "a2a", "persona", "security", "budget", "resource",
         ];
         t.caps.extend(control.map(|domain| {
             (
@@ -244,7 +239,7 @@ impl CapabilityTemplate {
     pub fn control_profile() -> Self {
         let mut t = Self { caps: Vec::new() };
         let domains = [
-            "space",
+            "project",
             "persona",
             "task",
             "security",
@@ -411,7 +406,7 @@ mod tests {
             })
             .collect();
         let mut expected = vec![
-            "space",
+            "project",
             "persona",
             "task",
             "security",

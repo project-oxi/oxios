@@ -280,7 +280,7 @@ pub fn register_tools_from_cspace(
             // agents use exec to run program commands.
             ResourceRef::Skill { .. } => {}
 
-            // Space, Agent, Mcp resource refs are handled through
+            // Agent, Mcp resource refs are handled through
             // their respective KernelDomain registrations above
             // or through dedicated tool paths.
             _ => {}
@@ -325,7 +325,7 @@ pub fn register_tools_from_cspace(
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` (gated) |
 /// | `Browser` | `EXECUTE` | SDK browse tools |
 /// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
-/// | `KernelDomain { "space" }` | any | `ProjectTool` + `MountTool` |
+/// | `KernelDomain { "project" }` | any | `ProjectTool` + `MountTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
@@ -405,7 +405,7 @@ pub fn register_tools_from_cspace_gated(
                     // CLI (exec structured mode). Domain stays recognized so
                     // persona grants keep their meaning.
                 }
-                "space" => {
+                "project" => {
                     registry.register(ProjectTool::from_kernel(kernel));
                     registry.register(MountTool::from_kernel(kernel));
                 }

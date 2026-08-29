@@ -266,7 +266,7 @@ fn escape_xml(s: &str) -> String {
 
 /// Well-known domain names that can appear in a kernel manifest.
 const KNOWN_DOMAINS: &[&str] = &[
-    "space",
+    "project",
     "agent",
     "a2a",
     "memory",
@@ -287,10 +287,10 @@ const KNOWN_DOMAINS: &[&str] = &[
 /// ```text
 /// ## Kernel Manifest
 ///
-/// Active domains: space, agent, memory, program
+/// Active domains: project, agent, memory, program
 ///
-/// ### space
-/// Filesystem workspace management and conversation buffers.
+/// ### project
+/// Project and mount (path-alias) management.
 ///
 /// ### agent
 /// ...
@@ -317,7 +317,7 @@ pub fn build_kernel_manifest(active_domains: &[&str]) -> String {
 /// Return a short human-readable description for a known domain.
 fn domain_description(domain: &str) -> &'static str {
     match domain {
-        "space" => "Filesystem workspace management and conversation buffers.",
+        "project" => "Project and mount (path-alias) management.",
         "agent" => "Agent lifecycle, runtime, and supervisor.",
         "a2a" => "Agent-to-agent communication and delegation.",
         "memory" => {
@@ -547,10 +547,10 @@ mod tests {
 
     #[test]
     fn test_build_kernel_manifest() {
-        let md = build_kernel_manifest(&["space", "agent", "memory", "knowledge", "program"]);
+        let md = build_kernel_manifest(&["project", "agent", "memory", "knowledge", "program"]);
         assert!(md.contains("## Kernel Manifest"));
-        assert!(md.contains("Active domains: space, agent, memory, knowledge, program"));
-        assert!(md.contains("### space"));
+        assert!(md.contains("Active domains: project, agent, memory, knowledge, program"));
+        assert!(md.contains("### project"));
         assert!(md.contains("### agent"));
         assert!(md.contains("### memory"));
         assert!(md.contains("### knowledge"));
@@ -560,8 +560,8 @@ mod tests {
 
     #[test]
     fn test_build_kernel_manifest_filters_unknown() {
-        let md = build_kernel_manifest(&["space", "unknown-domain"]);
-        assert!(md.contains("### space"));
+        let md = build_kernel_manifest(&["project", "unknown-domain"]);
+        assert!(md.contains("### project"));
         assert!(!md.contains("unknown-domain"));
     }
 

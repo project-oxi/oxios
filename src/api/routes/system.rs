@@ -124,8 +124,8 @@ pub(crate) struct ComponentHealth {
     pub brain: BrainHealth,
     /// Agent subsystem health.
     pub agents: AgentHealth,
-    /// Active spaces count.
-    pub spaces_active: usize,
+    /// Active projects count.
+    pub projects_active: usize,
 }
 
 /// Response body for the status endpoint.
@@ -249,7 +249,7 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
         },
         brain: brain_health,
         agents: agent_health,
-        spaces_active: state
+        projects_active: state
             .kernel
             .projects
             .as_ref()

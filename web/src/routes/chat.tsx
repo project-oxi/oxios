@@ -20,8 +20,9 @@ import { WorktreeComparePanel } from '@/components/chat/WorktreeComparePanel'
 import { PortalPanel } from '@/components/portal/portal-panel'
 import { Button } from '@/components/ui/button'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
+import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useRoles } from '@/hooks/use-engine'
-import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
+import { has } from '@/lib/affordances'
 import { buildChatRows } from '@/lib/chat-rows'
 import { addInputHistory } from '@/lib/input-history-storage'
 import { getToken, useChatStore } from '@/stores/chat'
@@ -33,7 +34,7 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 // ---------------------------------------------------------------------------
 // Chat UI — Claude-inspired centered layout
 // ---------------------------------------------------------------------------
-function ChatPage() {
+export function ChatPage() {
   const { t } = useTranslation()
   // Scope the subscription to exactly the fields the page renders — the
   // whole-store destructure re-rendered ChatPage on every store write (e.g.
@@ -95,8 +96,9 @@ function ChatPage() {
   )
   const queuedCount = useChatStore((s) => s._pendingQueue.length)
   const stackOpen = usePortalStore((s) => s.stack.length > 0)
-  // RFC-044 Phase 3/4: persona capabilities + fan-out agent tracking.
-  const { capabilities } = usePersonaCapabilities()
+  // Server-derived persona affordances (design §6.1) drive the header's
+  // conditional controls; fan-out agent tracking is unrelated store state.
+  const profile = useEffectiveProfile()
   const fanoutGroups = useFanoutStore((s) => s.groups)
   const [compareGroupId, setCompareGroupId] = useState<string | null>(null)
   const { data: rolesData } = useRoles()
@@ -356,7 +358,7 @@ function ChatPage() {
 
         {/* Search Panel toggle */}
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
-          {capabilities.has('terminal') && (
+          {has(profile, 'terminal') && (
             <TerminalToggle className="h-8 gap-1 rounded-lg border bg-background px-3 py-1.5 text-xs font-normal shadow-sm" />
           )}
           <button

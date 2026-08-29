@@ -24,12 +24,12 @@ export interface PersonaItem {
   description: string
   enabled: boolean
   personality_traits?: string[]
-  /// RFC-044 Phase 3: capability tags surfaced by the list endpoint.
+  system_prompt?: string
   capabilities?: string[]
   category?: string
   genre?: string | null
-  system_prompt?: string
-  /// Tool access profile: 'base' | 'code' | 'minimal'.
+  /// Tool access profile: 'base' | 'code' | 'minimal' | 'control'.
+  /// (Task 6: UI affordances are derived server-side from profile × roots.)
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'
   /// Whether this persona is the global active one (list endpoint).
   active?: boolean

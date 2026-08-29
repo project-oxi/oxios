@@ -17,9 +17,10 @@ import { type ChangeEvent, type DragEvent, useCallback, useEffect, useRef, useSt
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useBrainSearchMutation } from '@/hooks/use-brain'
+import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useIsTouch } from '@/hooks/use-is-touch'
 import { useKnowledgeSearch } from '@/hooks/use-knowledge'
-import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
+import { has } from '@/lib/affordances'
 import { api } from '@/lib/api-client'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
@@ -206,9 +207,9 @@ export function ChatInput({
   // Search hooks
   const knowledgeSearch = useKnowledgeSearch()
   const memorySearch = useBrainSearchMutation()
-  // RFC-044 Phase 3: persona capabilities drive composer affordances.
-  const { capabilities } = usePersonaCapabilities()
-
+  // Server-derived persona affordances (design §6.1) drive the composer's
+  // conditional controls.
+  const profile = useEffectiveProfile()
   // Mention search
   // searchMentions must stay referentially stable: it is a dependency of the
   // mention effect below. useMutation() returns a NEW result object every
@@ -817,7 +818,7 @@ export function ChatInput({
               </>
             )}
             {!isCopilot && <ModelParamsPopover />}
-            {!isCopilot && capabilities.has('worktree-fanout') && <FanOutButton />}
+            {!isCopilot && has(profile, 'worktree-fanout') && <FanOutButton />}
           </div>
           {/* Right: queue + send */}
           <div className="flex items-center shrink-0 gap-1.5">

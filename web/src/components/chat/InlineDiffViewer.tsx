@@ -1,8 +1,9 @@
 // InlineDiffViewer — minimal line-by-line diff renderer for tool call results.
 //
-// RFC-044 Phase 3: when a persona exposes the `diff-viewer` capability,
-// tool call results that include file edits (tool_name matches edit/write/
-// patch, or args carry old_text / new_text) render an inline diff with green
+// Task 6 (project-roots persona workbench): when the session's
+// server-derived EffectiveProfile carries the `diff` affordance, tool call
+// results that include file edits (tool_name matches edit/write/patch, or
+// args carry old_text / new_text) render an inline diff with green
 // (added) / red (removed) backgrounds. The intent is to make the agent's
 // edits scannable without leaving the chat surface.
 //

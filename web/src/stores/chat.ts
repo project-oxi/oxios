@@ -10,6 +10,7 @@ import type {
   ChatBlock,
   ChatMessage,
   CompressionInfo,
+  EffectiveProfile,
   InterviewAnswer,
   InterviewQuestion,
   StreamChunk,
@@ -107,6 +108,13 @@ interface ChatRuntimeState {
    *  outside the store. */
   _lastLoadedSessionId: string | null
 
+  /** Server-derived execution snapshot for the active session (design
+   *  §6.1). Runtime-only — never persisted: rehydrated from SessionDetail
+   *  on loadSession, refreshed on every done-chunk `effective_profile`,
+   *  cleared when the session identity resets. The single source for all
+   *  conditional chat controls (via use-effective-profile); persona
+   *  names/categories/capability strings are never consulted. */
+  effectiveProfile: EffectiveProfile | null
   // ── WebSocket lifecycle (encapsulated, not persisted) ──
   /** WebSocket instance managed by the store. */
   _ws: WebSocket | null
@@ -850,6 +858,7 @@ export const useChatStore = create<ChatStore>()(
       isLoadingSession: false,
       sessionLoadError: null as string | null,
       _lastLoadedSessionId: null as string | null,
+      effectiveProfile: null as EffectiveProfile | null,
       activeToolApproval: null,
       activePathAccess: null,
       // WebSocket lifecycle
@@ -1206,11 +1215,14 @@ export const useChatStore = create<ChatStore>()(
         // F9: discard buffered tokens from any prior streaming session.
         discardPendingTokens()
         // Task 10: surface the in-flight window (skeleton) and any failure
-        // (banner) so the chat pane never appears blank and stranded.
         set({
           isLoadingSession: true,
           sessionLoadError: null,
           _lastLoadedSessionId: sessionId,
+          // The previous session's snapshot must not bleed into the
+          // loading window; use-effective-profile's fetch fallback covers
+          // the gap until this fetch resolves.
+          effectiveProfile: null,
         })
         try {
           const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
@@ -1346,6 +1358,10 @@ export const useChatStore = create<ChatStore>()(
             // Session persona override is durable truth on reopen: the
             // backend persisted it on the turn that set it.
             activePersonaId: (data.active_persona_id as string | null) ?? null,
+            // Server-derived execution snapshot (design §6.1) rides on the
+            // SessionDetail; null when no persona binds.
+            effectiveProfile:
+              (data.effective_profile as EffectiveProfile | null | undefined) ?? null,
             isStreaming: false,
             _pendingQueue: [],
             sessionLoadError: null,
@@ -1380,6 +1396,9 @@ export const useChatStore = create<ChatStore>()(
           interviewRound: 0,
           interviewAmbiguity: 0,
           compression: null,
+          // No session ⇒ no profile; the next turn's done chunk (or the
+          // session-detail fallback) re-resolves it.
+          effectiveProfile: null,
         }))
       },
 
@@ -1835,6 +1854,10 @@ export const useChatStore = create<ChatStore>()(
             if (vid) {
               set({ activeProjectId: vid, _lastDoneProjectId: vid })
             }
+            // Server-derived execution snapshot (design §6.1): the kernel
+            // resolves it per turn and the gateway sends it (explicitly
+            // null when no persona binds) — kernel truth always wins.
+            set({ effectiveProfile: chunk.effective_profile ?? null })
             // Queue drain: if the user queued follow-ups while this turn
             // streamed, dispatch the next one now that the turn is idle.
             _activeRequestId = null

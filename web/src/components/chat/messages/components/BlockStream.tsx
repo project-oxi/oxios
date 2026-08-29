@@ -10,16 +10,18 @@
 // air above it so the conclusion stands apart from the process that produced
 // it.
 //
-// RFC-044 Phase 3: when the active persona exposes the `diff-viewer`
-// capability, edit/write/patch tool calls also render an InlineDiffViewer
-// below their card so the agent's edits are scannable without leaving chat.
+// Task 6 (project-roots persona workbench): when the session's
+// server-derived EffectiveProfile carries the `diff` affordance, edit/write/
+// patch tool calls also render an InlineDiffViewer below their card so the
+// agent's edits are scannable without leaving chat.
 
 import { memo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InlineDiffViewer, isFileEditCall } from '@/components/chat/InlineDiffViewer'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import { Thinking } from '@/components/chat/thinking'
-import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
+import { useEffectiveProfile } from '@/hooks/use-effective-profile'
+import { has } from '@/lib/affordances'
 import type { ChatBlock, ChatToolPayload } from '@/types'
 import { SubAgentBlock } from './SubAgentBlock'
 import { ToolCallCard } from './ToolCallList'
@@ -30,11 +32,9 @@ interface BlockStreamProps {
   /** Turn still generating — enables the trailing working pulse. */
   generating?: boolean
 }
-
-/** Build a small wrapper that renders the tool card + the optional diff. */
-function renderToolBlock(b: ChatBlock & { type: 'tool' }, showDiffViewer: boolean): ReactNode {
+function renderToolBlock(b: ChatBlock & { type: 'tool' }, showDiff: boolean): ReactNode {
   const card = <ToolCallCard call={b} defaultExpanded={false} />
-  if (!showDiffViewer) return card
+  if (!showDiff) return card
   const args = (b as ChatToolPayload).arguments
   if (!args || typeof args !== 'object') return card
   if (!isFileEditCall((b as ChatToolPayload).apiName, args as Record<string, unknown>)) {
@@ -92,8 +92,8 @@ export const BlockStream = memo(function BlockStream({
   messageId,
   generating,
 }: BlockStreamProps) {
-  const { capabilities } = usePersonaCapabilities()
-  const showDiffViewer = capabilities.has('diff-viewer')
+  const profile = useEffectiveProfile()
+  const showDiff = has(profile, 'diff')
 
   return (
     <div className="flex flex-col">
@@ -116,7 +116,7 @@ export const BlockStream = memo(function BlockStream({
             />
           )
         } else if (b.type === 'tool') {
-          node = renderToolBlock(b, showDiffViewer)
+          node = renderToolBlock(b, showDiff)
         } else if (b.type === 'text') {
           node = (
             <MarkdownMessage

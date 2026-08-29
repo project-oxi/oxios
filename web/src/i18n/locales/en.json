@@ -1440,7 +1440,7 @@
     "genrePlaceholder": "Select a genre",
     "genreNone": "None",
     "toolProfile": "Tool access",
-    "toolProfileHint": "Which tools this persona's agents receive",
+    "toolProfileHint": "Tool scope for this persona's agents — the server derives chat affordances (files, terminal, diff, fan-out) from it",
     "toolProfiles": {
       "base": "Base — every tool incl. Oxios control",
       "code": "Code — coding tools, no Oxios control",

@@ -27,9 +27,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use oxicode_sdk::{
-    AgentTool, AgentToolResult, SearchCache, ToolContext, ToolError, WebSearchTool,
-};
+use oxicode_sdk::{AgentTool, AgentToolResult, SearchCache, ToolContext, ToolError, WebSearchTool};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
@@ -98,11 +96,7 @@ impl KernelWebSearchTool {
     /// Query a managed provider. `Ok(items)` on a well-formed response
     /// (possibly empty); `Err` only on transport/HTTP/auth failures, which
     /// trigger the scraping fallback.
-    async fn provider_search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<Value>, String> {
+    async fn provider_search(&self, query: &str, limit: usize) -> Result<Vec<Value>, String> {
         match self.search.provider {
             crate::config::SearchProvider::Scrape => Err("no managed provider configured".into()),
             crate::config::SearchProvider::Tavily => {
@@ -129,7 +123,9 @@ impl KernelWebSearchTool {
         limit: usize,
     ) -> Result<Vec<Value>, String> {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.search.timeout_secs.max(1)))
+            .timeout(std::time::Duration::from_secs(
+                self.search.timeout_secs.max(1),
+            ))
             .build()
             .map_err(|e| format!("client build failed: {e}"))?;
         let resp = client
@@ -166,7 +162,9 @@ impl KernelWebSearchTool {
                     .unwrap_or_default()
                     .to_string();
                 let snippet = truncate_chars(
-                    item.get("content").and_then(|v| v.as_str()).unwrap_or_default(),
+                    item.get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default(),
                     SNIPPET_MAX_CHARS,
                 );
                 Some(json!({"title": title, "url": url, "snippet": snippet, "source": "Tavily"}))
@@ -181,7 +179,9 @@ impl KernelWebSearchTool {
         limit: usize,
     ) -> Result<Vec<Value>, String> {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.search.timeout_secs.max(1)))
+            .timeout(std::time::Duration::from_secs(
+                self.search.timeout_secs.max(1),
+            ))
             .build()
             .map_err(|e| format!("client build failed: {e}"))?;
         let mut req = client
@@ -199,7 +199,10 @@ impl KernelWebSearchTool {
                 req = req.query(&[("search_lang", lang), ("country", country)]);
             }
         }
-        let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
@@ -222,7 +225,9 @@ impl KernelWebSearchTool {
                     .unwrap_or_default()
                     .to_string();
                 let snippet = truncate_chars(
-                    item.get("description").and_then(|v| v.as_str()).unwrap_or_default(),
+                    item.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default(),
                     SNIPPET_MAX_CHARS,
                 );
                 Some(json!({"title": title, "url": url, "snippet": snippet, "source": "Brave"}))
@@ -242,7 +247,10 @@ impl KernelWebSearchTool {
             .map(|(i, r)| {
                 let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default();
                 let url = r.get("url").and_then(|v| v.as_str()).unwrap_or_default();
-                let snippet = r.get("snippet").and_then(|v| v.as_str()).unwrap_or_default();
+                let snippet = r
+                    .get("snippet")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 format!("{}. **{}**\n   {}\n   {}", i + 1, title, url, snippet)
             })
             .collect::<Vec<_>>()
@@ -309,8 +317,7 @@ impl AgentTool for KernelWebSearchTool {
         match self.provider_search(&query, limit).await {
             Ok(items) => {
                 let output = Self::format_results(&query, &items);
-                let payload =
-                    json!({"query": query, "resultCount": items.len(), "results": items});
+                let payload = json!({"query": query, "resultCount": items.len(), "results": items});
                 self.bus.insert(tool_call_id, payload.clone());
                 return Ok(AgentToolResult::success(output).with_metadata(payload));
             }
@@ -379,7 +386,10 @@ impl AgentTool for KernelGetSearchResultsTool {
         signal: Option<tokio::sync::oneshot::Receiver<()>>,
         ctx: &ToolContext,
     ) -> Result<AgentToolResult, ToolError> {
-        let result = self.inner.execute(tool_call_id, params, signal, ctx).await?;
+        let result = self
+            .inner
+            .execute(tool_call_id, params, signal, ctx)
+            .await?;
         if result.success
             && let Some(meta) = &result.metadata
         {

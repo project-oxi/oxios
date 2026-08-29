@@ -12,7 +12,7 @@
 // What it does NOT do:
 //   • Talk to React / zustand directly. Caller applies patches.
 //   • Handle Oxios-semantic chunks (model, memory, interview_question,
-//     tool_approval, mount_detected) — those stay on the store's legacy arms.
+//     tool_approval) — those stay on the store's legacy arms.
 //   • RAF batching. Caller batches text.delta events before calling.
 //
 // One StreamProcessor per assistant message. Store keeps Map<msgId, StreamProcessor>.

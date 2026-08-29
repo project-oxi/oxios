@@ -1,4 +1,4 @@
-import { FolderPlus, ShieldCheck, X } from 'lucide-react'
+import { ShieldCheck, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 
@@ -7,7 +7,6 @@ interface PathAccessCardProps {
   mode: string
   toolName: string
   reason: string
-  onMount: () => void
   onTempAllow: () => void
   onDeny: () => void
   disabled?: boolean
@@ -15,8 +14,7 @@ interface PathAccessCardProps {
 
 /**
  * Inline path-access card shown when an agent tries to read or write a
- * file outside its `allowed_paths`. Offers three choices:
- *   - Create Mount (persistent path alias, survives restart)
+ * file outside its `allowed_paths`. Offers two choices:
  *   - Temporarily allow (session-scoped `allowed_paths` entry)
  *   - Deny (return the error to the agent)
  *
@@ -27,7 +25,6 @@ export function PathAccessCard({
   mode,
   toolName,
   reason,
-  onMount,
   onTempAllow,
   onDeny,
   disabled,
@@ -62,15 +59,6 @@ export function PathAccessCard({
             </Button>
             <Button onClick={onTempAllow} variant="outline" size="sm" disabled={disabled}>
               {t('pathAccess.allowOnce')}
-            </Button>
-            <Button
-              onClick={onMount}
-              size="sm"
-              disabled={disabled}
-              className="bg-success/90 hover:bg-success text-success-foreground"
-            >
-              <FolderPlus className="h-3.5 w-3.5 mr-1" />
-              {t('pathAccess.createMount')}
             </Button>
           </div>
         </div>

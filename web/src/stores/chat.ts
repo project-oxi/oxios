@@ -12,7 +12,6 @@ import type {
   CompressionInfo,
   InterviewAnswer,
   InterviewQuestion,
-  Project,
   StreamChunk,
   ToolCallContext,
 } from '@/types'
@@ -28,8 +27,6 @@ interface PersistedState {
   activeSessionId: string | null
   /** Project ID associated with the active session (grouping). */
   activeProjectId: string | null
-  /** RFC-025: Active Mount IDs (comma-separated, primary first). */
-  activeMountIds: string | null
   /** RFC-032: Active role hint (null = no role; uses default model). */
   activeRole: string | null
   /** Model override id (null = follow default / role). Persisted across reloads. */
@@ -76,14 +73,6 @@ interface ChatRuntimeState {
   _lastDoneSessionId: string | null
   /** The project ID from the last "done" chunk. */
   _lastDoneProjectId: string | null
-  /** AI-detected project (Phase 2 stub, always null). */
-  detectedProject: Project | null
-  /** RFC-025: detected mount tag from the last orchestrator response. */
-  detectedMountTag: string | null
-  /** RFC-025: detected mount IDs from the last orchestrator response. */
-  detectedMountIds: string[]
-  /** IDs of dismissed detection badges. */
-  dismissedProjectIds: string[]
   /** Active structured interview questions (null = no interview active). */
   activeInterview: InterviewQuestion[] | null
   /** Active tool approval request awaiting user response (RFC-017). */
@@ -92,7 +81,7 @@ interface ChatRuntimeState {
     toolName: string
     reason: string
   } | null
-  /** Active path-access request awaiting user response (Mount/temp/deny). */
+  /** Active path-access request awaiting user response (temp-allow/deny). */
   activePathAccess: {
     id: string
     path: string
@@ -180,13 +169,6 @@ interface ChatActions {
   setTemperature: (temperature: number | null) => void
   /** Set the per-message max output tokens (null = provider default). */
   setMaxTokens: (maxTokens: number | null) => void
-  /** RFC-025: accept detected mount IDs into the active binding. */
-  setActiveMountIds: (mountIds: string[] | null) => void
-  /** RFC-025: Clear detected mount tag and IDs (e.g. on badge accept/dismiss). */
-  clearDetectedMount: () => void
-  setDetectedProject: (project: Project | null) => void
-  /** Dismiss a detection badge (don't show again for this project). */
-  dismissDetection: (projectId: string) => void
   /** Remove a single message by id. Used by the inline error retry flow (RFC-032). */
   removeMessage: (id: string) => void
   /** Clear persisted state (e.g. on logout). */
@@ -195,8 +177,8 @@ interface ChatActions {
   submitInterviewResponse: (answers: InterviewAnswer[]) => void
   /** Resolve a pending tool approval (RFC-017). */
   resolveToolApproval: (id: string, approved: boolean, remember?: boolean) => Promise<void>
-  /** Resolve a pending path-access request (mount/temp/deny). */
-  resolvePathAccess: (id: string, action: 'mount' | 'temp' | 'deny') => Promise<void>
+  /** Resolve a pending path-access request (temp-allow/deny). */
+  resolvePathAccess: (id: string, action: 'temp' | 'deny') => Promise<void>
   /** Handle an incoming WS chunk. */
   handleChunk: (chunk: StreamChunk) => void
 }
@@ -845,7 +827,6 @@ export const useChatStore = create<ChatStore>()(
     (set, get) => ({
       activeSessionId: null,
       activeProjectId: null,
-      activeMountIds: null,
       activeRole: null,
       activeModelId: null,
       activePersonaId: null,
@@ -861,10 +842,6 @@ export const useChatStore = create<ChatStore>()(
       _pendingQueue: [],
       _lastDoneSessionId: null,
       _lastDoneProjectId: null,
-      detectedProject: null,
-      detectedMountTag: null,
-      detectedMountIds: [],
-      dismissedProjectIds: [],
       activeInterview: null,
       interviewRound: 0,
       interviewAmbiguity: 0,
@@ -1135,7 +1112,6 @@ export const useChatStore = create<ChatStore>()(
           activeSessionId,
           activeProjectId,
           activePersonaId,
-          activeMountIds,
           activeRole,
           activeModelId,
           temperature,
@@ -1194,7 +1170,6 @@ export const useChatStore = create<ChatStore>()(
           session_id: activeSessionId ?? '',
           // Web-C2: backend WS handler reads singular `project_id`
           project_id: activeProjectId ?? '',
-          mount_ids: activeMountIds ?? '',
           // RFC-032: role hint for model routing
           role: activeRole ?? '',
           // Session persona override — backend validates against the
@@ -1428,13 +1403,6 @@ export const useChatStore = create<ChatStore>()(
           activeSessionId: null,
           messages: [],
           _pendingQueue: [],
-          detectedProject: null,
-        })
-      },
-
-      setActiveMountIds(mountIds: string[] | null) {
-        set({
-          activeMountIds: mountIds ? mountIds.join(',') : null,
         })
       },
 
@@ -1474,30 +1442,10 @@ export const useChatStore = create<ChatStore>()(
         })
       },
 
-      setDetectedMountTag(tag: string | null) {
-        set({ detectedMountTag: tag })
-      },
-
-      clearDetectedMount() {
-        set({ detectedMountTag: null, detectedMountIds: [] })
-      },
-
-      setDetectedProject(project: Project | null) {
-        set({ detectedProject: project })
-      },
-
-      dismissDetection(projectId: string) {
-        set((s) => ({
-          dismissedProjectIds: [...s.dismissedProjectIds, projectId],
-          detectedProject: s.detectedProject?.id === projectId ? null : s.detectedProject,
-        }))
-      },
-
       clearPersist() {
         set({
           activeSessionId: null,
           activeProjectId: null,
-          activeMountIds: null,
           activeRole: null,
           activeModelId: null,
           activePersonaId: null,
@@ -1510,8 +1458,6 @@ export const useChatStore = create<ChatStore>()(
           interviewAmbiguity: 0,
           activeToolApproval: null,
           activePathAccess: null,
-          detectedMountTag: null,
-          detectedMountIds: [],
         })
       },
 
@@ -1628,7 +1574,7 @@ export const useChatStore = create<ChatStore>()(
           console.warn('[chat] tool approval resolve failed:', e)
         }
       },
-      async resolvePathAccess(id: string, action: 'mount' | 'temp' | 'deny') {
+      async resolvePathAccess(id: string, action: 'temp' | 'deny') {
         clearWatchdog()
         const { activePathAccess } = get()
         if (!activePathAccess || activePathAccess.id !== id) return
@@ -1815,25 +1761,6 @@ export const useChatStore = create<ChatStore>()(
             }))
             const sid = chunk.session_id ?? null
             const vid = chunk.project_id ?? null
-            // RFC-025: extract mount_tag from metadata (gateway sets it)
-            const chunkExtra = chunk as unknown as Record<string, unknown>
-            const mountTag = chunkExtra.mount_tag as string | undefined
-            const mountIdsRaw = chunkExtra.mount_ids as string | string[] | undefined
-            // Web-M4: gateway serializes mount_ids as a JSON-array string
-            // (e.g. `["id1","id2"]`); splitting on comma produces garbage.
-            const mountIds = Array.isArray(mountIdsRaw)
-              ? mountIdsRaw
-              : typeof mountIdsRaw === 'string' && mountIdsRaw.trim().startsWith('[')
-                ? (() => {
-                    try {
-                      return JSON.parse(mountIdsRaw) as string[]
-                    } catch {
-                      return []
-                    }
-                  })()
-                : mountIdsRaw
-                  ? mountIdsRaw.split(',').filter(Boolean)
-                  : []
             const toolCalls = chunk.tool_calls ?? []
             const phase = chunk.phase
             const evaluationPassed: boolean | undefined =
@@ -1907,13 +1834,6 @@ export const useChatStore = create<ChatStore>()(
             }
             if (vid) {
               set({ activeProjectId: vid, _lastDoneProjectId: vid })
-            }
-            // RFC-025: store detected mount tag + ids for the detection badge.
-            if (mountTag) {
-              set({ detectedMountTag: mountTag })
-            }
-            if (mountIds.length > 0) {
-              set({ detectedMountIds: mountIds })
             }
             // Queue drain: if the user queued follow-ups while this turn
             // streamed, dispatch the next one now that the turn is idle.
@@ -2045,7 +1965,6 @@ export const useChatStore = create<ChatStore>()(
       partialize: (state): PersistedState => ({
         activeSessionId: state.activeSessionId,
         activeProjectId: state.activeProjectId,
-        activeMountIds: state.activeMountIds,
         activeRole: state.activeRole,
         activeModelId: state.activeModelId,
         activePersonaId: state.activePersonaId,

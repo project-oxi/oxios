@@ -84,46 +84,17 @@ export interface SessionDetail {
   metadata?: Record<string, unknown>
 }
 
-// Project (replaces Space)
+// Project
 export interface Project {
   id: string
   name: string
-  description?: string
-  paths?: string[]
-  tags?: string[]
-  emoji?: string
-  source?: string
-  memory_visible?: boolean
-  /** RFC-025: referenced Mount IDs */
-  mount_ids?: string[]
-  /** RFC-025: custom instructions injected into the system prompt */
-  instructions?: string
+  /** Absolute directories this project spans; the first root is the cwd. */
+  root_paths: string[]
+  /** Custom instructions injected into the system prompt. */
+  instructions: string
   created_at: string
-  updated_at?: string
-  last_active_at?: string
-  metadata?: Record<string, unknown>
-}
-
-// Mount (RFC-025) — path alias
-export interface MountMeta {
-  languages: string[]
-  stack: string[]
-  markers: string[]
-  summary: string
-}
-
-export interface Mount {
-  id: string
-  name: string
-  paths: string[]
-  auto_description: string
-  auto_meta: MountMeta
-  source: string
-  enrichment_pending: boolean
-  last_enriched_at?: string
-  created_at: string
-  updated_at?: string
-  last_active_at?: string
+  updated_at: string
+  last_active_at: string
 }
 
 // Skill (RFC-009 unified model)
@@ -589,8 +560,6 @@ export interface Persona {
   category?: string
   /// Writing sub-category: 'novel' | 'scenario' | 'essay' | 'blog'.
   genre?: string | null
-  /// Mount IDs the chat composer auto-attaches when selected.
-  default_mount_ids?: string[]
   /// Tool access profile: 'base' (all tools incl. Oxios control) |
   /// 'code' (coding tools, no control) | 'minimal' (file + web search).
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'

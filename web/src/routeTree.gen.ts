@@ -33,7 +33,6 @@ import { Route as BrainOperationsRouteImport } from './routes/brain/operations'
 import { Route as BrainSearchRouteImport } from './routes/brain/search'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
-import { Route as MountsIndexRouteImport } from './routes/mounts/index'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
@@ -163,11 +162,6 @@ const KnowledgeGraphRoute = KnowledgeGraphRouteImport.update({
   path: '/knowledge/graph',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MountsIndexRoute = MountsIndexRouteImport.update({
-  id: '/mounts/',
-  path: '/mounts/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -236,7 +230,6 @@ export interface FileRoutesByFullPath {
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
-  '/mounts/': typeof MountsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
@@ -271,7 +264,6 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsIndexRoute
   '/brain': typeof BrainIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
-  '/mounts': typeof MountsIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
@@ -307,7 +299,6 @@ export interface FileRoutesById {
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
-  '/mounts/': typeof MountsIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
@@ -344,7 +335,6 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
-    | '/mounts/'
     | '/projects/'
     | '/sessions/'
     | '/workspace/'
@@ -379,7 +369,6 @@ export interface FileRouteTypes {
     | '/agents'
     | '/brain'
     | '/knowledge'
-    | '/mounts'
     | '/projects'
     | '/sessions'
     | '/workspace'
@@ -414,7 +403,6 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
-    | '/mounts/'
     | '/projects/'
     | '/sessions/'
     | '/workspace/'
@@ -450,7 +438,6 @@ export interface RootRouteChildren {
   AgentsIndexRoute: typeof AgentsIndexRoute
   BrainIndexRoute: typeof BrainIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
-  MountsIndexRoute: typeof MountsIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
@@ -628,13 +615,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KnowledgeGraphRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/mounts/': {
-      id: '/mounts/'
-      path: '/mounts'
-      fullPath: '/mounts/'
-      preLoaderRoute: typeof MountsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/projects/': {
       id: '/projects/'
       path: '/projects'
@@ -733,7 +713,6 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsIndexRoute: AgentsIndexRoute,
   BrainIndexRoute: BrainIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
-  MountsIndexRoute: MountsIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,

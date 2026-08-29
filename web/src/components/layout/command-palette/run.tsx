@@ -14,7 +14,7 @@ import type { CommandProvider, PaletteItem, QueryContext } from './types'
  * Run provider — verb `run` (prefix `>`).
  *
  * v1 = frontend message synthesis (design §8). Composes an intent over the
- * existing per-message slots (`project_id`, `mount_ids`) and sends via the chat
+ * existing per-message slot (`project_id`) and sends via the chat
  * WS. `@persona` is deferred to v2 (no per-message slot yet); persona switching
  * is owned by `~ @persona` (SwitchProvider).
  *
@@ -26,7 +26,6 @@ export function useRunProvider(): CommandProvider {
   const router = useRouter()
 
   const setActiveProject = useChatStore((s) => s.setActiveProject)
-  const setActiveMountIds = useChatStore((s) => s.setActiveMountIds)
   const sendMessage = useChatStore((s) => s.sendMessage)
 
   const projectsQ = useProjects()
@@ -109,7 +108,6 @@ export function useRunProvider(): CommandProvider {
                   score: 100,
                   onSelect: () => {
                     setActiveProject(project.id)
-                    setActiveMountIds(project.mount_ids ?? null)
                     router.history.push('/chat')
                   },
                 },
@@ -125,7 +123,6 @@ export function useRunProvider(): CommandProvider {
                 score: 100,
                 onSelect: () => {
                   setActiveProject(project.id)
-                  setActiveMountIds(project.mount_ids ?? null)
                   startChat(intent)
                 },
               },
@@ -169,6 +166,6 @@ export function useRunProvider(): CommandProvider {
         return []
       },
     }),
-    [t, skills, projects, startChat, setActiveProject, setActiveMountIds, router],
+    [t, skills, projects, startChat, setActiveProject, router],
   )
 }

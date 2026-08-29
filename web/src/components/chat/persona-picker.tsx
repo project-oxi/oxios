@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { Check, ChevronDown, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { api } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
@@ -62,23 +61,6 @@ export function groupByCategory<T extends { category?: string | null }>(
   return groups
 }
 
-/**
- * Merge a persona's `default_mount_ids` into the current mount selection.
- * Pure helper (unit-tested): keeps existing selection order (primary first),
- * appends missing defaults, de-duplicates, drops empties.
- */
-export function mergeMountIds(current: string | null, defaults: string[]): string {
-  const existing = (current ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const merged = [...existing]
-  for (const id of defaults) {
-    if (id && !merged.includes(id)) merged.push(id)
-  }
-  return merged.join(',')
-}
-
 // ─── Props ────────────────────────────────────────────────────
 
 export interface PersonaPickerProps {
@@ -87,12 +69,6 @@ export interface PersonaPickerProps {
   globalPersonaName: string | null
   activePersonaId: string | null
   setActivePersona: (id: string | null) => void
-  /**
-   * Called after a persona with `default_mount_ids` is selected so the
-   * caller can attach mounts (composer chips). Receives the merged ids.
-   */
-  onAutoAttachMounts?: (mergedMountIds: string) => void
-  currentMountIds?: string | null
 }
 
 // ─── Component ────────────────────────────────────────────────
@@ -111,8 +87,6 @@ export function PersonaPicker({
   globalPersonaName,
   activePersonaId,
   setActivePersona,
-  onAutoAttachMounts,
-  currentMountIds,
 }: PersonaPickerProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -129,9 +103,6 @@ export function PersonaPicker({
 
   const pick = (persona: Persona | null) => {
     setActivePersona(persona?.id ?? null)
-    if (persona?.default_mount_ids?.length && onAutoAttachMounts) {
-      onAutoAttachMounts(mergeMountIds(currentMountIds ?? null, persona.default_mount_ids))
-    }
     setOpen(false)
   }
 
@@ -247,10 +218,8 @@ interface ActivePersonaName {
  * personas page / command palette.
  */
 export function PersonaPickerContainer() {
-  const { t } = useTranslation()
   const activePersonaId = useChatStore((s) => s.activePersonaId)
   const setActivePersona = useChatStore((s) => s.setActivePersona)
-  const activeMountIds = useChatStore((s) => s.activeMountIds)
 
   const personasQuery = useQuery({
     queryKey: ['personas'],
@@ -279,12 +248,6 @@ export function PersonaPickerContainer() {
       globalPersonaName={activePersonaQuery.data?.name ?? null}
       activePersonaId={activePersonaId}
       setActivePersona={setActivePersona}
-      currentMountIds={activeMountIds}
-      onAutoAttachMounts={(merged) => {
-        if (merged === (activeMountIds ?? '')) return
-        useChatStore.setState({ activeMountIds: merged })
-        toast.info(t('chat.persona.mountsAttached'))
-      }}
     />
   )
 }

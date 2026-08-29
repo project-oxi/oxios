@@ -72,10 +72,9 @@ export const handlers = [
   http.get('/api/email/inbox', () => HttpResponse.json({ messages: [] })),
   http.get('/api/cron/jobs', () => HttpResponse.json({ jobs: [] })),
 
-  // ── Knowledge / persona / mounts ────────────────────────────────────────
+  // ── Knowledge / persona ──────────────────────────────────────────────────
   http.get('/api/knowledge', () => HttpResponse.json({ items: [] })),
   http.get('/api/persona', () => HttpResponse.json({ persona: null })),
-  http.get('/api/mounts', () => HttpResponse.json({ mounts: [] })),
 
   // ── Models ──────────────────────────────────────────────────────────────
   http.get('/api/models', () => HttpResponse.json({ providers: [], models: [], default: null })),

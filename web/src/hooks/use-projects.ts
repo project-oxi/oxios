@@ -6,21 +6,15 @@ import type { Project } from '@/types'
 
 export interface CreateProjectInput {
   name: string
-  emoji?: string
-  /** RFC-025: custom instructions injected into the system prompt. */
+  /** Absolute directories this project spans; the first root is the cwd. */
+  root_paths?: string[]
+  /** Custom instructions injected into the system prompt. */
   instructions?: string
 }
 
 export interface UpdateProjectInput {
   name?: string
-  paths?: string[]
-  tags?: string[]
-  emoji?: string
-  description?: string
-  memory_visible?: boolean
-  /** RFC-025: referenced Mount IDs. */
-  mount_ids?: string[]
-  /** RFC-025: custom instructions injected into the system prompt. */
+  root_paths?: string[]
   instructions?: string
 }
 
@@ -77,42 +71,6 @@ export function useDeleteProject() {
     mutationFn: (id: string) => api.delete(`/api/projects/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['projects'] })
-    },
-  })
-}
-
-/** Get memories linked to a project. */
-export function useProjectMemories(projectId: string | null, page = 1) {
-  return useQuery({
-    queryKey: ['project-memories', projectId, page],
-    queryFn: () =>
-      api.get<{ items: unknown[]; total: number }>(
-        `/api/projects/${projectId}/memories?page=${page}`,
-      ),
-    enabled: !!projectId,
-  })
-}
-
-/** Link a memory to a project. */
-export function useLinkProjectMemory() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ projectId, memoryId }: { projectId: string; memoryId: string }) =>
-      api.post(`/api/projects/${projectId}/memories`, { memory_id: memoryId }),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['project-memories', vars.projectId] })
-    },
-  })
-}
-
-/** Unlink a memory from a project. */
-export function useUnlinkProjectMemory() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ projectId, memoryId }: { projectId: string; memoryId: string }) =>
-      api.delete(`/api/projects/${projectId}/memories/${memoryId}`),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: ['project-memories', vars.projectId] })
     },
   })
 }

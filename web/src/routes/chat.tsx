@@ -17,13 +17,10 @@ import { TerminalToggle } from '@/components/chat/TerminalToggle'
 import { TextSelectionBar } from '@/components/chat/text-selection-bar'
 import { ToolApprovalCard } from '@/components/chat/tool-approval-card'
 import { WorktreeComparePanel } from '@/components/chat/WorktreeComparePanel'
-import { MountDetectionBadge } from '@/components/mount/mount-detection-badge'
 import { PortalPanel } from '@/components/portal/portal-panel'
-import { AiDetectionBadge } from '@/components/project/ai-detection-badge'
 import { Button } from '@/components/ui/button'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { useRoles } from '@/hooks/use-engine'
-import { useMounts } from '@/hooks/use-mounts'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { buildChatRows } from '@/lib/chat-rows'
 import { addInputHistory } from '@/lib/input-history-storage'
@@ -47,20 +44,14 @@ function ChatPage() {
     isStreaming,
     connected,
     activeSessionId,
-    activeProjectId,
-    detectedProject,
     activeInterview,
     interviewRound,
     interviewAmbiguity,
     activeRole,
     activeModelId,
-    activeMountIds,
-    setActiveMountIds,
     sendMessage,
-    setActiveProject,
     setActiveRole,
     setActiveModelId,
-    dismissDetection,
     submitInterviewResponse,
     activeToolApproval,
     resolveToolApproval,
@@ -80,20 +71,14 @@ function ChatPage() {
       isStreaming: s.isStreaming,
       connected: s.connected,
       activeSessionId: s.activeSessionId,
-      activeProjectId: s.activeProjectId,
-      detectedProject: s.detectedProject,
       activeInterview: s.activeInterview,
       interviewRound: s.interviewRound,
       interviewAmbiguity: s.interviewAmbiguity,
       activeRole: s.activeRole,
       activeModelId: s.activeModelId,
-      activeMountIds: s.activeMountIds,
-      setActiveMountIds: s.setActiveMountIds,
       sendMessage: s.sendMessage,
-      setActiveProject: s.setActiveProject,
       setActiveRole: s.setActiveRole,
       setActiveModelId: s.setActiveModelId,
-      dismissDetection: s.dismissDetection,
       submitInterviewResponse: s.submitInterviewResponse,
       activeToolApproval: s.activeToolApproval,
       resolveToolApproval: s.resolveToolApproval,
@@ -116,24 +101,6 @@ function ChatPage() {
   const [compareGroupId, setCompareGroupId] = useState<string | null>(null)
   const { data: rolesData } = useRoles()
   const roles = Object.entries(rolesData?.roles ?? {}).map(([name, model]) => ({ name, model }))
-  const { data: mountsData } = useMounts()
-  const activeMountIdsArr = activeMountIds ? activeMountIds.split(',').filter(Boolean) : []
-  const activeMounts = activeMountIdsArr
-    .map((id) => {
-      const m = mountsData?.items?.find((x) => x.id === id)
-      return m ? { id: m.id, label: m.name } : null
-    })
-    .filter((x): x is { id: string; label: string } => x !== null)
-
-  const handleAttachMount = (id: string) => {
-    const cur = activeMountIds ? activeMountIds.split(',').filter(Boolean) : []
-    if (cur.includes(id)) return
-    setActiveMountIds([...cur, id])
-  }
-  const handleRemoveMount = (id: string) => {
-    const cur = activeMountIds ? activeMountIds.split(',').filter(Boolean) : []
-    setActiveMountIds(cur.filter((x) => x !== id))
-  }
 
   const [input, setInput] = useState('')
   useDraftPersistence(activeSessionId, input, setInput)
@@ -387,18 +354,6 @@ function ChatPage() {
           </div>
         )}
 
-        {/* AI Detection Badge */}
-        {detectedProject && !activeProjectId && (
-          <AiDetectionBadge
-            project={detectedProject}
-            onApply={() => setActiveProject(detectedProject.id)}
-            onDismiss={() => dismissDetection(detectedProject.id)}
-          />
-        )}
-
-        {/* RFC-025: Mount Detection Badge */}
-        <MountDetectionBadge />
-
         {/* Search Panel toggle */}
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
           {capabilities.has('terminal') && (
@@ -508,7 +463,6 @@ function ChatPage() {
                   mode={activePathAccess!.mode}
                   toolName={activePathAccess!.toolName}
                   reason={activePathAccess!.reason}
-                  onMount={() => resolvePathAccess(activePathAccess!.id, 'mount')}
                   onTempAllow={() => resolvePathAccess(activePathAccess!.id, 'temp')}
                   onDeny={() => resolvePathAccess(activePathAccess!.id, 'deny')}
                   disabled={isStreaming}
@@ -577,10 +531,7 @@ function ChatPage() {
               onCancel={handleCancel}
               isStreaming={isStreaming}
               connected={connected}
-              activeMounts={activeMounts}
               queuedCount={queuedCount}
-              onAttachMount={handleAttachMount}
-              onRemoveMount={handleRemoveMount}
             />
           </div>
         )}

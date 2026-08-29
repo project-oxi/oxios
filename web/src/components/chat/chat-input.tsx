@@ -6,7 +6,6 @@ import {
   Brain,
   Clock,
   FileText,
-  HardDrive,
   Image,
   Paperclip,
   Send,
@@ -20,7 +19,6 @@ import { Button } from '@/components/ui/button'
 import { useBrainSearchMutation } from '@/hooks/use-brain'
 import { useIsTouch } from '@/hooks/use-is-touch'
 import { useKnowledgeSearch } from '@/hooks/use-knowledge'
-import { useMounts } from '@/hooks/use-mounts'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { api } from '@/lib/api-client'
 import { getInputHistory } from '@/lib/input-history-storage'
@@ -50,7 +48,7 @@ export interface ContextAttachment {
 }
 
 interface MentionResult {
-  type: 'mount' | 'knowledge' | 'memory' | 'role'
+  type: 'knowledge' | 'memory' | 'role'
   id: string
   label: string
   snippet: string
@@ -78,9 +76,6 @@ interface ChatInputProps {
   setActiveRole?: (role: string | null) => void
   activeModelId?: string | null
   setActiveModelId?: (id: string | null) => void
-  activeMounts?: { id: string; label: string }[]
-  onAttachMount?: (id: string) => void
-  onRemoveMount?: (id: string) => void
   placeholder?: string
 }
 
@@ -184,9 +179,6 @@ export function ChatInput({
   setActiveRole = () => {},
   activeModelId = null,
   setActiveModelId = () => {},
-  activeMounts = [],
-  onAttachMount = () => {},
-  onRemoveMount = () => {},
   placeholder,
 }: ChatInputProps) {
   const { t } = useTranslation()
@@ -214,7 +206,6 @@ export function ChatInput({
   // Search hooks
   const knowledgeSearch = useKnowledgeSearch()
   const memorySearch = useBrainSearchMutation()
-  const { data: mountsData } = useMounts()
   // RFC-044 Phase 3: persona capabilities drive composer affordances.
   const { capabilities } = usePersonaCapabilities()
 
@@ -231,20 +222,14 @@ export function ChatInput({
   const searchInputsRef = useRef({
     knowledgeSearch,
     memorySearch,
-    mountsData,
     roles,
     isCopilot: false,
   })
-  searchInputsRef.current = { knowledgeSearch, memorySearch, mountsData, roles, isCopilot }
+  searchInputsRef.current = { knowledgeSearch, memorySearch, roles, isCopilot }
 
   const searchMentions = useCallback(async (query: string): Promise<MentionResult[]> => {
     if (searchInputsRef.current.isCopilot) return []
-    const {
-      knowledgeSearch: k,
-      memorySearch: mem,
-      mountsData: mounts,
-      roles: roleList,
-    } = searchInputsRef.current
+    const { knowledgeSearch: k, memorySearch: mem, roles: roleList } = searchInputsRef.current
     const results: MentionResult[] = []
     try {
       const kRes = await k.mutateAsync({ query, limit: 5 })
@@ -276,15 +261,6 @@ export function ChatInput({
       /* offline */
     }
     const mq = query.toLowerCase()
-    for (const m of mounts?.items ?? []) {
-      if (m.name.toLowerCase().includes(mq) || m.auto_description.toLowerCase().includes(mq))
-        results.push({
-          type: 'mount',
-          id: m.id,
-          label: m.name,
-          snippet: m.auto_description.slice(0, 80),
-        })
-    }
     for (const r of roleList) {
       if (r.name.toLowerCase().includes(mq))
         results.push({ type: 'role', id: r.model, label: r.name, snippet: r.model })
@@ -293,12 +269,10 @@ export function ChatInput({
       switch (t) {
         case 'role':
           return 0
-        case 'mount':
-          return 1
         case 'knowledge':
-          return 2
+          return 1
         default:
-          return 3
+          return 2
       }
     }
     results.sort((a, b) => kindRank(a.type) - kindRank(b.type) || (b.score ?? 0) - (a.score ?? 0))
@@ -651,24 +625,8 @@ export function ChatInput({
         </div>
       )}
       {/* Context chips */}
-      {(activeMounts.length > 0 || contextAttachments.length > 0) && (
+      {contextAttachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
-          {activeMounts.map((m) => (
-            <span
-              key={`mount-${m.id}`}
-              className="inline-flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs text-primary"
-            >
-              <HardDrive className="h-3 w-3" />
-              <span className="truncate max-w-[140px]">{m.label}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveMount(m.id)}
-                className="ml-0.5 -mr-1 rounded-full p-0.5 hover:bg-primary/20"
-              >
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </span>
-          ))}
           {contextAttachments.map((ctx) => (
             <span
               key={`${ctx.type}-${ctx.id}`}
@@ -701,9 +659,7 @@ export function ChatInput({
                   key={`${result.type}-${result.id}`}
                   type="button"
                   onClick={() => {
-                    if (result.type === 'mount') {
-                      onAttachMount(result.id)
-                    } else if (result.type === 'role') {
+                    if (result.type === 'role') {
                       setActiveRole(result.label)
                     } else {
                       const ctx: ContextAttachment = {
@@ -728,9 +684,7 @@ export function ChatInput({
                       : 'hover:bg-accent/50',
                   )}
                 >
-                  {result.type === 'mount' ? (
-                    <HardDrive className="h-4 w-4 mt-0.5 shrink-0 text-status-success" />
-                  ) : result.type === 'knowledge' ? (
+                  {result.type === 'knowledge' ? (
                     <FileText className="h-4 w-4 mt-0.5 shrink-0 text-status-info" />
                   ) : result.type === 'role' ? (
                     <Sparkles className="h-4 w-4 mt-0.5 shrink-0 text-status-warning" />
@@ -744,13 +698,11 @@ export function ChatInput({
                     )}
                   </div>
                   <span className="text-2xs text-muted-foreground/60 shrink-0 mt-0.5">
-                    {result.type === 'mount'
-                      ? t('mention.mount')
-                      : result.type === 'knowledge'
-                        ? t('mention.knowledge')
-                        : result.type === 'role'
-                          ? t('mention.agent')
-                          : t('mention.memory')}
+                    {result.type === 'knowledge'
+                      ? t('mention.knowledge')
+                      : result.type === 'role'
+                        ? t('mention.agent')
+                        : t('mention.memory')}
                   </span>
                 </button>
               ))

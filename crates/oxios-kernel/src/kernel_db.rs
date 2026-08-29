@@ -57,7 +57,6 @@ impl KernelDatabase {
     pub fn conn(&self) -> parking_lot::MutexGuard<'_, Connection> {
         self.conn.lock()
     }
-
 }
 
 #[cfg(test)]
@@ -96,5 +95,4 @@ mod tests {
             .expect("fk");
         assert_eq!(fk, 1);
     }
-
 }

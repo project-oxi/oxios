@@ -30,7 +30,6 @@ impl DirGuard {
     }
 }
 
-
 fn manager() -> ProjectManager {
     let db = Arc::new(KernelDatabase::open_in_memory().expect("in-memory db"));
     ProjectManager::new(db, None).expect("project manager")
@@ -47,15 +46,24 @@ fn validate_accepts_absolute_existing_dirs_and_dedupes_order_stable() {
     let out = validate_root_paths(vec![PathBuf::from("/tmp"), PathBuf::from("/tmp")])
         .expect("valid roots");
     assert_eq!(out.len(), 1, "duplicates must dedupe to one entry");
-    assert_eq!(out[0], std::fs::canonicalize("/tmp").expect("canonicalize /tmp"));
+    assert_eq!(
+        out[0],
+        std::fs::canonicalize("/tmp").expect("canonicalize /tmp")
+    );
 
     // Two distinct dirs: order preserved, both canonicalized.
     let a = DirGuard::new("a");
     let b = DirGuard::new("b");
     let out = validate_root_paths(vec![a.path(), b.path()]).expect("valid roots");
     assert_eq!(out.len(), 2, "distinct dirs must both be kept");
-    assert_eq!(out[0], std::fs::canonicalize(a.path()).expect("canonicalize a"));
-    assert_eq!(out[1], std::fs::canonicalize(b.path()).expect("canonicalize b"));
+    assert_eq!(
+        out[0],
+        std::fs::canonicalize(a.path()).expect("canonicalize a")
+    );
+    assert_eq!(
+        out[1],
+        std::fs::canonicalize(b.path()).expect("canonicalize b")
+    );
 }
 
 #[test]
@@ -64,7 +72,10 @@ fn validate_rejects_relative_path() {
         .expect_err("relative path must be rejected");
     match err {
         ProjectManagerError::InvalidRoot { reason, .. } => {
-            assert!(reason.contains("absolute"), "reason must mention absolute, got: {reason}");
+            assert!(
+                reason.contains("absolute"),
+                "reason must mention absolute, got: {reason}"
+            );
         }
         other => panic!("expected InvalidRoot, got: {other:?}"),
     }
@@ -73,12 +84,14 @@ fn validate_rejects_relative_path() {
 #[test]
 fn validate_rejects_missing_dir() {
     let missing = nonexistent_dir();
-    let err =
-        validate_root_paths(vec![missing.clone()]).expect_err("missing dir must be rejected");
+    let err = validate_root_paths(vec![missing.clone()]).expect_err("missing dir must be rejected");
     match err {
         ProjectManagerError::InvalidRoot { path, reason } => {
             assert_eq!(path, missing);
-            assert!(reason.contains("does not exist"), "reason must say it does not exist, got: {reason}");
+            assert!(
+                reason.contains("does not exist"),
+                "reason must say it does not exist, got: {reason}"
+            );
         }
         other => panic!("expected InvalidRoot, got: {other:?}"),
     }
@@ -93,7 +106,10 @@ fn validate_rejects_file_not_dir() {
     let err = validate_root_paths(vec![file]).expect_err("plain file must be rejected");
     match err {
         ProjectManagerError::InvalidRoot { reason, .. } => {
-            assert!(reason.contains("not a directory"), "reason must say not a directory, got: {reason}");
+            assert!(
+                reason.contains("not a directory"),
+                "reason must say not a directory, got: {reason}"
+            );
         }
         other => panic!("expected InvalidRoot, got: {other:?}"),
     }
@@ -111,12 +127,19 @@ fn create_persists_roundtrip_and_unique_name() {
     let dir = DirGuard::new("roundtrip");
 
     let project = pm
-        .create("roundtrip-project", vec![dir.path()], "always run cargo clippy first")
+        .create(
+            "roundtrip-project",
+            vec![dir.path()],
+            "always run cargo clippy first",
+        )
         .expect("create");
 
     let loaded = pm.get_project(project.id).expect("project after create");
     assert_eq!(loaded.name, "roundtrip-project");
-    assert_eq!(loaded.root_paths, validate_root_paths(vec![dir.path()]).expect("valid roots"));
+    assert_eq!(
+        loaded.root_paths,
+        validate_root_paths(vec![dir.path()]).expect("valid roots")
+    );
     assert_eq!(loaded.instructions, "always run cargo clippy first");
 
     // Second create with the same name must fail with NameExists.
@@ -131,7 +154,9 @@ fn create_persists_roundtrip_and_unique_name() {
 fn update_revalidates_roots() {
     let pm = manager();
     let dir = DirGuard::new("update-me");
-    let project = pm.create("update-target", vec![dir.path()], "").expect("create");
+    let project = pm
+        .create("update-target", vec![dir.path()], "")
+        .expect("create");
 
     // Update carrying a nonexistent dir must fail without mutating the record.
     let missing = nonexistent_dir();
@@ -140,7 +165,10 @@ fn update_revalidates_roots() {
         .expect_err("invalid roots must fail the update");
     match err {
         ProjectManagerError::InvalidRoot { reason, .. } => {
-            assert!(reason.contains("does not exist"), "reason must say it does not exist, got: {reason}");
+            assert!(
+                reason.contains("does not exist"),
+                "reason must say it does not exist, got: {reason}"
+            );
         }
         other => panic!("expected InvalidRoot, got: {other:?}"),
     }
@@ -158,5 +186,8 @@ fn remove_then_get_is_none() {
     let pm = manager();
     let project = pm.create("doomed", vec![], "").expect("create");
     pm.remove_project(project.id).expect("remove");
-    assert!(pm.get_project(project.id).is_none(), "removed project must not resolve");
+    assert!(
+        pm.get_project(project.id).is_none(),
+        "removed project must not resolve"
+    );
 }

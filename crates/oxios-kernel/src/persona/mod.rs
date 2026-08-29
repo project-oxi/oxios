@@ -112,13 +112,7 @@ pub fn resolve_effective_profile(
     turn_persona_id: Option<&str>,
     project_id: Option<&str>,
 ) -> Option<EffectiveProfile> {
-    let persona = turn_persona_id
-        .and_then(|id| {
-            persona_manager
-                .and_then(|pm| pm.store().get(id))
-                .filter(|p| p.enabled)
-        })
-        .or_else(|| persona_manager.and_then(|pm| pm.get_active_persona()))?;
+    let persona = resolve_turn_persona(persona_manager, turn_persona_id)?;
     let has_roots = project_id
         .and_then(|pid| uuid::Uuid::parse_str(pid).ok())
         .and_then(|uuid| project_manager.and_then(|pm| pm.get_project(uuid)))
@@ -131,6 +125,26 @@ pub fn resolve_effective_profile(
             .map(String::from)
             .collect(),
     })
+}
+
+/// Resolve the persona for a turn: an enabled explicit override wins;
+/// otherwise the global active persona. Invalid/disabled overrides degrade
+/// to the global default rather than failing the turn (RFC-039).
+///
+/// The ONE implementation of the turn-persona chain — used by the agent
+/// runtime (system prompt / CSpace) and by effective-profile resolution
+/// (web affordances) so both always agree on the same persona.
+pub fn resolve_turn_persona(
+    persona_manager: Option<&PersonaManager>,
+    turn_persona_id: Option<&str>,
+) -> Option<Persona> {
+    turn_persona_id
+        .and_then(|id| {
+            persona_manager
+                .and_then(|pm| pm.store().get(id))
+                .filter(|p| p.enabled)
+        })
+        .or_else(|| persona_manager.and_then(|pm| pm.get_active_persona()))
 }
 
 /// Exactly one persona is active at a time (single slot). RFC-039.
@@ -934,7 +948,6 @@ mod tests {
         for id in ["novelist", "scenarist", "essayist", "blogger"] {
             assert_eq!(by_id(id).category, "writing");
         }
-
     }
 
     #[test]

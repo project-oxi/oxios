@@ -1486,6 +1486,8 @@
     "save": "Save",
     "search": "Search by name, description, or tag...",
     "resultsCount": "{{count}} results",
+    "staleRoot": "Missing",
+    "staleRootHint": "This folder no longer exists on disk. Edit the project to fix or remove it.",
     "title": "Projects",
     "undoWarning": "This action cannot be undone.",
     "updateError": "Failed to update: {{error}}",

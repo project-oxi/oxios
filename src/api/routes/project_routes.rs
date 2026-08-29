@@ -74,10 +74,46 @@ fn project_error(e: ProjectManagerError) -> AppError {
         ProjectManagerError::InvalidRoot { .. } | ProjectManagerError::NameExists(_) => {
             AppError::UnprocessableEntity(e.to_string())
         }
-        ProjectManagerError::Invalid(_) | ProjectManagerError::Database(_) => {
-            AppError::BadRequest(e.to_string())
-        }
+        // Client-recoverable misuse.
+        ProjectManagerError::Invalid(_) => AppError::BadRequest(e.to_string()),
+        // Storage failures are the server's fault, not the client's — and
+        // the raw sqlite message must not leak into the response body.
+        ProjectManagerError::Database(_) => AppError::Internal("Project storage error".into()),
     }
+}
+
+/// Per-root liveness for a project (design §9: a stale project root is
+/// surfaced in project editing, never silently replaced by an ambient
+/// workspace). No session needed — this is pure project-record inspection.
+#[derive(serde::Serialize)]
+pub(crate) struct RootStatus {
+    path: String,
+    exists: bool,
+    is_dir: bool,
+}
+
+/// GET /api/projects/:id/roots/status — stale-root surfacing.
+pub(crate) async fn handle_project_roots_status(
+    state: State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<RootStatus>>, AppError> {
+    let api = project_api!(state);
+    let project = api
+        .get_project(&id)
+        .ok_or_else(|| AppError::NotFound("Project not found".into()))?;
+    let statuses = project
+        .root_paths
+        .iter()
+        .map(|path| {
+            let meta = std::fs::metadata(path);
+            RootStatus {
+                path: path.clone(),
+                exists: meta.is_ok(),
+                is_dir: meta.map(|m| m.is_dir()).unwrap_or(false),
+            }
+        })
+        .collect();
+    Ok(Json(statuses))
 }
 
 // ─── Handlers ───────────────────────────────────────────────
@@ -180,4 +216,132 @@ pub(crate) async fn handle_project_delete(
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)] // `.unwrap()` on setup ops is idiomatic in tests
+
+    use crate::api::routes::{build_routes, test_support};
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::Service;
+
+    fn router(app: &test_support::TestApp) -> Router {
+        build_routes(app.state.clone()).with_state(app.state.clone())
+    }
+
+    async fn send(svc: &mut Router, method: &str, uri: &str) -> (StatusCode, serde_json::Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        let response = svc.call(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let json = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap()
+        };
+        (status, json)
+    }
+
+    /// Create a project over the real route table; returns its id.
+    async fn create_project(svc: &mut Router, name: &str, roots: Vec<String>) -> String {
+        let body = serde_json::json!({ "name": name, "root_paths": roots });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/projects")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = svc.call(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        json["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn roots_status_reports_exists_and_is_dir_per_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let live = tmp.path().join("live-repo");
+        std::fs::create_dir_all(&live).unwrap();
+        let app = test_support::test_app(tmp.path());
+        let mut svc = router(&app);
+        let id = create_project(
+            &mut svc,
+            "status-live",
+            vec![live.to_string_lossy().to_string()],
+        )
+        .await;
+        // validate_root_paths canonicalizes at create time (macOS /var is a
+        // symlink to /private/var), so the stored root is the canonical form.
+        let canon = live.canonicalize().unwrap();
+
+        let (status, body) =
+            send(&mut svc, "GET", &format!("/api/projects/{id}/roots/status")).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let entries = body.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["path"], canon.to_string_lossy().to_string());
+        assert_eq!(entries[0]["exists"], serde_json::json!(true));
+        assert_eq!(entries[0]["is_dir"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn roots_status_flags_root_deleted_after_creation() {
+        // Design §9: a root that vanishes after validation is surfaced as
+        // stale (exists=false) — never silently replaced by ambient scope.
+        let tmp = tempfile::tempdir().unwrap();
+        let doomed = tmp.path().join("doomed-repo");
+        std::fs::create_dir_all(&doomed).unwrap();
+        let app = test_support::test_app(tmp.path());
+        let mut svc = router(&app);
+        let id = create_project(
+            &mut svc,
+            "status-stale",
+            vec![doomed.to_string_lossy().to_string()],
+        )
+        .await;
+        std::fs::remove_dir_all(&doomed).unwrap();
+
+        let (status, body) =
+            send(&mut svc, "GET", &format!("/api/projects/{id}/roots/status")).await;
+        assert_eq!(status, StatusCode::OK, "body: {body}");
+        let entries = body.as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["exists"], serde_json::json!(false));
+        assert_eq!(entries[0]["is_dir"], serde_json::json!(false));
+    }
+
+    #[tokio::test]
+    async fn roots_status_unknown_project_is_404_and_folderless_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = test_support::test_app(tmp.path());
+        let mut svc = router(&app);
+
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let (status, _) = send(
+            &mut svc,
+            "GET",
+            &format!("/api/projects/{unknown}/roots/status"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let id = create_project(&mut svc, "status-folderless", vec![]).await;
+        let (status, body) =
+            send(&mut svc, "GET", &format!("/api/projects/{id}/roots/status")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, serde_json::json!([]));
+    }
 }

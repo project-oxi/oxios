@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Edit, FolderOpen, Trash2 } from 'lucide-react'
+import { ArrowLeft, Edit, FolderOpen, FolderX, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DeleteProjectDialog } from '@/components/project/delete-project-dialog'
@@ -8,7 +8,7 @@ import { ErrorState } from '@/components/shared/error-state'
 import { LoadingCards } from '@/components/shared/loading'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useProject } from '@/hooks/use-projects'
+import { useProject, useProjectRootsStatus } from '@/hooks/use-projects'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Project } from '@/types'
 
@@ -17,9 +17,14 @@ export const Route = createFileRoute('/projects/$projectId')({
 })
 
 /** Details tab: root list + instructions + record metadata (design §4.2). */
-function ProjectDetailsCard({ project }: { project: Project }) {
+export function ProjectDetailsCard({ project }: { project: Project }) {
   const { t } = useTranslation()
-
+  // Design §9: a stale project root is surfaced here — never silently
+  // replaced by an ambient workspace. Null while the status query loads.
+  const { data: rootStatus } = useProjectRootsStatus(project.id)
+  const staleSet = new Set(
+    (rootStatus ?? []).filter((r) => !r.exists || !r.is_dir).map((r) => r.path),
+  )
   const details = [
     { label: t('projects.createdAt'), value: new Date(project.created_at).toLocaleString() },
     { label: t('projects.updatedAt'), value: new Date(project.updated_at).toLocaleString() },
@@ -43,14 +48,32 @@ function ProjectDetailsCard({ project }: { project: Project }) {
               <p className="text-sm text-muted-foreground">{t('projects.noFoldersYet')}</p>
             ) : (
               <div className="space-y-2">
-                {project.root_paths.map((path) => (
-                  <div key={path} className="flex items-center gap-2 text-sm">
-                    <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    <code className="text-xs bg-muted px-2 py-1 rounded font-mono truncate">
-                      {path}
-                    </code>
-                  </div>
-                ))}
+                {project.root_paths.map((path) => {
+                  const stale = staleSet.has(path)
+                  return (
+                    <div key={path} className="flex items-center gap-2 text-sm">
+                      {stale ? (
+                        <FolderX
+                          className="h-3.5 w-3.5 shrink-0 text-destructive"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                      <code className="text-xs bg-muted px-2 py-1 rounded font-mono truncate">
+                        {path}
+                      </code>
+                      {stale && (
+                        <span
+                          className="shrink-0 inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-2xs font-medium text-destructive"
+                          title={t('projects.staleRootHint')}
+                        >
+                          {t('projects.staleRoot')}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

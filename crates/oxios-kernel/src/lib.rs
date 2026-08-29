@@ -224,8 +224,8 @@ pub use backup::{BackupManifest, BackupSection};
 pub use config::{
     BrowserConfig, ChannelsConfig, CronConfig, DaemonConfig, EmailConfig, EmbeddingConfig,
     EngineConfig, ExecConfig, ExecMode, GitConfig, InlineCronJob, LoggingConfig, MarketplaceConfig,
-    McpConfig, McpServerDef, MemoryConfig, OrchestratorConfig, OxiosConfig,
-    PersonaConfig, SkillsShConfig, SqliteMemoryConfig,
+    McpConfig, McpServerDef, MemoryConfig, OrchestratorConfig, OxiosConfig, PersonaConfig,
+    SkillsShConfig, SqliteMemoryConfig,
 };
 pub use git_layer::{
     CommitContext, CommitDiff, CommitInfo, DiffKind, DiffStats, FileDiff, GitLayer, LogEntry,
@@ -257,9 +257,9 @@ pub use kernel_handle::{
     A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
     InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
-    MemoApi, MemoryNote, ModelInfo, PersonaApi, ProjectApi, ProjectInfo,
-    ProviderCategory, ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot,
-    RoutingUpdate, SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
+    MemoApi, MemoryNote, ModelInfo, PersonaApi, ProjectApi, ProjectInfo, ProviderCategory,
+    ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot, RoutingUpdate,
+    SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
 };
 #[cfg(feature = "browser")]
 pub use kernel_handle::{ScreenshotEngine, ScreenshotViewport};

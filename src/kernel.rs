@@ -1747,10 +1747,8 @@ impl KernelBuilder {
         // manager (it impls Clone) before the orchestrator consumes it; the
         // maxer drains eligible subscription providers over a window.
         let maxer_lifecycle = lifecycle.clone();
-        let planner = oxios_kernel::WorkPlanner::new(
-            Arc::clone(&skill_manager),
-            project_manager.clone(),
-        );
+        let planner =
+            oxios_kernel::WorkPlanner::new(Arc::clone(&skill_manager), project_manager.clone());
         let token_maxer = Arc::new(oxios_kernel::TokenMaxer::new(
             maxer_lifecycle,
             Arc::clone(&quota_tracker),
@@ -2098,7 +2096,6 @@ fn build_marketplace_api_value(config: &OxiosConfig) -> MarketplaceApi {
         Arc::new(skills_sh_client),
     )
 }
-
 
 /// Register the knowledge git auto-commit pipeline (bounded channel
 /// + async commit consumer + S-4 post-crash reconcile) on the shared

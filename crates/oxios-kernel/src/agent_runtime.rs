@@ -43,7 +43,7 @@ use crate::access_manager::{
 };
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
-use crate::persona::{Persona, PersonaManager, ToolProfile};
+use crate::persona::{PersonaManager, ToolProfile, resolve_turn_persona};
 use crate::tools::registration::register_tools_from_cspace_gated;
 
 use crate::KernelHandle;
@@ -788,22 +788,6 @@ pub fn apply_execution_grants(
     }
 }
 
-/// Resolve the persona for this turn: an enabled explicit override wins;
-/// otherwise the global active persona. Invalid/disabled overrides degrade
-/// to the global default rather than failing the turn (RFC-039).
-fn resolve_turn_persona(
-    persona_manager: Option<&PersonaManager>,
-    turn_override: Option<&str>,
-) -> Option<Persona> {
-    turn_override
-        .and_then(|id| {
-            persona_manager
-                .and_then(|pm| pm.store().get(id))
-                .filter(|p| p.enabled)
-        })
-        .or_else(|| persona_manager.and_then(|pm| pm.get_active_persona()))
-}
-
 /// Create and run an oxicode-sdk `Agent` with CSpace-based tool registration.
 ///
 /// Uses `engine.oxi().agent()` (AgentBuilder) for full middleware,
@@ -845,11 +829,13 @@ async fn run_agent(
     // the CWD; grants come ONLY from project roots. With no roots the CWD
     // falls back to workspace_dir / a per-agent temp dir — a working
     // directory, never an authority grant.
-    let (mut workspace, root_grants) =
-        derive_execution_paths(
-            &ExecEnv { root_paths: root_paths.to_vec(), ..Default::default() },
-            config,
-        );
+    let (mut workspace, root_grants) = derive_execution_paths(
+        &ExecEnv {
+            root_paths: root_paths.to_vec(),
+            ..Default::default()
+        },
+        config,
+    );
     if root_paths.is_empty() && config.workspace_dir.is_none() {
         // Refine the generic temp fallback to a per-agent directory.
         workspace = std::env::temp_dir()

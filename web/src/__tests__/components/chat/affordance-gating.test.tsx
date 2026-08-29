@@ -163,11 +163,24 @@ describe('chat shell affordance gating (per EffectiveProfile variant)', () => {
   })
 
   it('persona switch swaps affordances but never unmounts the transcript', async () => {
+    // Seeded transcript row: its content must survive the in-route persona
+    // swap — the shell keeps the conversation, not just an empty log node.
+    useChatStore.setState({
+      messages: [
+        {
+          id: 'u-seed',
+          role: 'user' as const,
+          content: 'TRANSCRIPT_ROW_KEEP',
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    })
     setProfile(CODE_ROOTS)
     const { container } = renderShell()
     await waitFor(() => expect(screen.queryByTitle(FANOUT_BUTTON)).not.toBeNull())
     const transcript = container.querySelector('[role="log"]')
     expect(transcript).not.toBeNull()
+    expect(transcript!.textContent).toContain('TRANSCRIPT_ROW_KEEP')
     act(() => {
       useChatStore.setState({ effectiveProfile: MINIMAL })
     })
@@ -176,6 +189,9 @@ describe('chat shell affordance gating (per EffectiveProfile variant)', () => {
     // The exact same transcript DOM node persists across the profile change —
     // the conversation is never a conditional child of the profile.
     expect(container.querySelector('[role="log"]')).toBe(transcript)
+    // P-d tightening: the inner row content survives too, so the swap did
+    // not merely keep a shell while discarding history.
+    expect(container.querySelector('[role="log"]')!.textContent).toContain('TRANSCRIPT_ROW_KEEP')
   })
 })
 

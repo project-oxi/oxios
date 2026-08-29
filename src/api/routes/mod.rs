@@ -153,8 +153,8 @@ pub(crate) use marketplace::{
 #[cfg(feature = "memo")]
 pub(crate) use memo_routes::{handle_memo_disable, handle_memo_enable, handle_memo_status};
 pub(crate) use project_routes::{
-    handle_project_create, handle_project_delete, handle_project_get, handle_project_update,
-    handle_projects_list,
+    handle_project_create, handle_project_delete, handle_project_get, handle_project_roots_status,
+    handle_project_update, handle_projects_list,
 };
 pub(crate) use resource_routes::{
     handle_resource_history, handle_resource_overload, handle_resource_snapshot,
@@ -641,6 +641,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/projects/{id}", get(handle_project_get))
         .route("/api/projects/{id}", put(handle_project_update))
         .route("/api/projects/{id}", delete(handle_project_delete))
+        .route(
+            "/api/projects/{id}/roots/status",
+            get(handle_project_roots_status),
+        )
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))
         // Budget

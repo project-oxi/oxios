@@ -17,10 +17,8 @@ use oxios_kernel::persona::{
 };
 use oxios_kernel::project::ProjectManager;
 use oxios_kernel::session_context::SessionContext;
-use oxios_kernel::{
-    AgentLifecycleManager, EventBus, KernelDatabase, StateStore,
-};
 use oxios_kernel::turn_registry::TurnRegistry;
+use oxios_kernel::{AgentLifecycleManager, EventBus, KernelDatabase, StateStore};
 use oxios_ouroboros::ExecEnv;
 
 fn workspace_orchestrator() -> (Orchestrator, std::sync::Arc<ProjectManager>) {
@@ -115,21 +113,23 @@ fn folderless_agent_gains_no_ambient_grants() {
 #[tokio::test]
 async fn persona_resolution_turn_overrides_session_overrides_global() {
     let persona_manager = PersonaManager::new();
-    persona_manager.set_active("research").await.expect("active");
+    persona_manager
+        .set_active("research")
+        .await
+        .expect("active");
     // A disabled persona that must fall through to the global active.
-    persona_manager.store().set_enabled("review", false).expect("disable");
+    persona_manager
+        .store()
+        .set_enabled("review", false)
+        .expect("disable");
 
     let db = KernelDatabase::open_in_memory().expect("db");
     let project_manager = ProjectManager::new(std::sync::Arc::new(db), None).expect("pm");
 
     // Unknown project ⇒ has_roots false ⇒ folderless affordances.
-    let profile = resolve_effective_profile(
-        Some(&persona_manager),
-        Some(&project_manager),
-        None,
-        None,
-    )
-    .expect("global persona resolves");
+    let profile =
+        resolve_effective_profile(Some(&persona_manager), Some(&project_manager), None, None)
+            .expect("global persona resolves");
     assert_eq!(profile.persona_id, "research");
     assert_eq!(profile.tool_profile, "code");
     assert_eq!(profile.affordances, vec![AFFORDANCE_DIFF]);
@@ -171,7 +171,12 @@ async fn persona_resolution_turn_overrides_session_overrides_global() {
 #[test]
 fn affordances_matrix() {
     use ToolProfile::{Base, Code, Control, Minimal};
-    let with_roots = [AFFORDANCE_DIFF, AFFORDANCE_FILES, AFFORDANCE_TERMINAL, AFFORDANCE_WORKTREE_FANOUT];
+    let with_roots = [
+        AFFORDANCE_DIFF,
+        AFFORDANCE_FILES,
+        AFFORDANCE_TERMINAL,
+        AFFORDANCE_WORKTREE_FANOUT,
+    ];
     for p in [Base, Code] {
         assert_eq!(derive_affordances(&p, true), with_roots);
         assert_eq!(derive_affordances(&p, false), vec![AFFORDANCE_DIFF]);
@@ -189,8 +194,7 @@ fn effective_profile_serializes_bilingual_keys() {
         tool_profile: "code".to_string(),
         affordances: vec![AFFORDANCE_FILES.to_string()],
     };
-    let json: serde_json::Value =
-        serde_json::to_value(&profile).expect("serialize");
+    let json: serde_json::Value = serde_json::to_value(&profile).expect("serialize");
     let mut keys: Vec<&str> = json
         .as_object()
         .expect("object")
@@ -246,17 +250,15 @@ fn real_grant_path_folderless_gains_no_ambient_grants() {
     }
 
     // Exactly the kernel-infrastructure entries remain.
-    let mut grants: Vec<&str> = perms
-        .allowed_paths
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let mut grants: Vec<&str> = perms.allowed_paths.iter().map(String::as_str).collect();
     grants.sort_unstable();
     assert_eq!(grants.len(), 2, "only kernel-ws + /tmp: {grants:?}");
     assert!(grants.contains(&"/tmp/**"));
-    assert!(grants
-        .iter()
-        .any(|g| g.starts_with(kernel_ws.path().to_string_lossy().as_ref())));
+    assert!(
+        grants
+            .iter()
+            .any(|g| g.starts_with(kernel_ws.path().to_string_lossy().as_ref()))
+    );
 }
 
 #[test]

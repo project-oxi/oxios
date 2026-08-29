@@ -2602,11 +2602,7 @@ async fn run(cli: Cli) -> Result<()> {
                     // validated (absolute, existing directory) before creation.
                     let root_paths: Vec<std::path::PathBuf> =
                         paths.iter().map(std::path::PathBuf::from).collect();
-                    match pm.create(
-                        name,
-                        root_paths,
-                        instructions.as_deref().unwrap_or(""),
-                    ) {
+                    match pm.create(name, root_paths, instructions.as_deref().unwrap_or("")) {
                         Ok(p) => {
                             println!(
                                 "{} Project '{}' created ({})",

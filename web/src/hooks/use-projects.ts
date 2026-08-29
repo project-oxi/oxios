@@ -40,6 +40,22 @@ export function useProject(id: string | null) {
   })
 }
 
+/** Liveness of one project root (design §9 stale-root surfacing). */
+export interface RootStatus {
+  path: string
+  exists: boolean
+  is_dir: boolean
+}
+
+/** Per-root exists/is_dir for a project (GET /api/projects/:id/roots/status). */
+export function useProjectRootsStatus(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ['project-roots-status', id],
+    queryFn: () => api.get<RootStatus[]>(`/api/projects/${id}/roots/status`),
+    enabled: !!id,
+  })
+}
+
 /** Create a new project. */
 export function useCreateProject() {
   const qc = useQueryClient()

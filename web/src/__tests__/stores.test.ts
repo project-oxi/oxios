@@ -1603,3 +1603,187 @@ describe('parseChunk', () => {
     expect('error' in chunk).toBe(true)
   })
 })
+
+// ── §8.1 chat quality bar (project-roots workbench, Task 8) ────────────────
+
+// Shared WS boot: fake socket that opens on the same setTimeout(0) schedule
+// the store uses, plus the auth/status stubs connect() fetches.
+function stubOpenWebSocket(handlers: {
+  send?: (payload: string) => void
+  onDeliver?: (deliver: (data: string) => void) => void
+}) {
+  class FakeWebSocket {
+    static OPEN = 1
+    static CLOSED = 3
+    url: string
+    readyState = 0
+    onopen: (() => void) | null = null
+    onclose: (() => void) | null = null
+    onmessage: ((_e: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(url: string) {
+      this.url = url
+      setTimeout(() => {
+        this.readyState = 1
+        this.onopen?.()
+      }, 0)
+      if (handlers.onDeliver) {
+        handlers.onDeliver((data: string) => this.onmessage?.({ data }))
+      }
+    }
+    close() {
+      this.readyState = 3
+    }
+    send(payload: string) {
+      handlers.send?.(payload)
+    }
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ auth_enabled: false }),
+    })),
+  )
+}
+
+// §8.1: Stop cancels the server-side turn on the SAME session turn key the
+// stream uses, retains the partial answer, and marks the turn interrupted
+// (metadata.cancelled → InterruptedNotice) rather than successful.
+describe('useChatStore stop (§8.1 stop_marks_turn_interrupted_and_keeps_partial)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    __clearAuthCacheForTesting()
+    __clearStreamProcessorsForTesting()
+    __clearResolvedApprovalIdsForTesting()
+    useChatStore.setState({
+      connected: false,
+      isStreaming: false,
+      _ws: null,
+      _sendQueue: [],
+      _pendingQueue: [],
+      _reconnectAttempts: 0,
+      _reconnectTimer: null,
+      _pingTimer: null,
+      messages: [],
+    })
+  })
+
+  it('stop_marks_turn_interrupted_and_keeps_partial', async () => {
+    vi.useFakeTimers()
+    const sent: string[] = []
+    stubOpenWebSocket({ send: (payload) => sent.push(payload) })
+
+    await useChatStore.getState().connect()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(useChatStore.getState().connected).toBe(true)
+
+    useChatStore.setState({
+      activeSessionId: 'sess-stop',
+      messages: [
+        { id: 'u1', role: 'user', content: 'long task' },
+        { id: 'a1', role: 'assistant', content: 'partial ans', generating: true },
+      ] as never,
+      isStreaming: true,
+      activeToolApproval: { id: 'ap1', toolName: 'bash', reason: 'run ls' },
+    })
+
+    // The Stop button path (chat.tsx handleCancel): an explicit server
+    // cancel frame keyed by the session turn key (no request_id once a
+    // session exists).
+    useChatStore.getState().cancelTurn()
+    expect(sent).toHaveLength(1)
+    expect(JSON.parse(sent[0]!)).toEqual({
+      type: 'cancel',
+      session_id: 'sess-stop',
+      request_id: null,
+    })
+
+    // Server confirms with the cancelled terminal: partial retained,
+    // generating cleared, metadata.cancelled set, never an error card.
+    useChatStore
+      .getState()
+      .handleChunk({ type: 'error', kind: 'cancelled', message: 'Turn cancelled by user' } as never)
+    const msgs = useChatStore.getState().messages
+    expect(msgs).toHaveLength(2)
+    expect(msgs[1]!.content).toBe('partial ans')
+    expect(msgs[1]!.generating).toBe(false)
+    expect(msgs[1]!.metadata?.cancelled).toBe(true)
+    expect(msgs[1]!.metadata?.isError).toBeFalsy()
+    const s = useChatStore.getState()
+    expect(s.isStreaming).toBe(false)
+    expect(s.activeToolApproval).toBeNull()
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})
+
+// §8.1: after a reconnect the server's replay buffer re-delivers messages
+// the client already applied; the dedup ring must drop them so the terminal
+// message is ONE complete transcript, not duplicated blocks.
+describe('useChatStore reconnect dedup (§8.1 reconnect_dedups_replayed_blocks)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    __clearAuthCacheForTesting()
+    __clearStreamProcessorsForTesting()
+    __clearResolvedApprovalIdsForTesting()
+    useChatStore.setState({
+      connected: false,
+      isStreaming: false,
+      _ws: null,
+      _sendQueue: [],
+      _pendingQueue: [],
+      _reconnectAttempts: 0,
+      _reconnectTimer: null,
+      _pingTimer: null,
+      messages: [],
+    })
+  })
+
+  it('reconnect_dedups_replayed_blocks', async () => {
+    vi.useFakeTimers()
+    let deliver: ((data: string) => void) | null = null
+    stubOpenWebSocket({ onDeliver: (d) => (deliver = d) })
+
+    await useChatStore.getState().connect()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(useChatStore.getState().connected).toBe(true)
+
+    useChatStore.setState({
+      messages: [
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '',
+          timestamp: new Date().toISOString(),
+          generating: true,
+        },
+      ] as never,
+      isStreaming: true,
+    })
+
+    // First delivery applies. The replayed frame (same msg id — server
+    // buffer overlap after a fast reconnect) must be dropped; the next id
+    // applies normally.
+    deliver!(JSON.stringify({ seq: 1, id: 'm1', type: 'token', content: 'hello ' }))
+    deliver!(JSON.stringify({ seq: 1, id: 'm1', type: 'token', content: 'hello ' }))
+    deliver!(JSON.stringify({ seq: 2, id: 'm2', type: 'token', content: 'world' }))
+    // Tokens are batched behind one rAF flush (F9) — fire the frame.
+    await vi.advanceTimersByTimeAsync(32)
+
+    const msgs = useChatStore.getState().messages
+    const last = msgs.at(-1)!
+    expect(msgs).toHaveLength(1)
+    expect(last.content).toBe('hello world')
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})

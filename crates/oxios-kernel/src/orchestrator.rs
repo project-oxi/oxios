@@ -220,7 +220,6 @@ impl Orchestrator {
         self.project_manager.read().as_ref().cloned()
     }
 
-
     /// Resolve the workspace for a turn from a project id alone (design §4.3).
     ///
     /// Blank/`None` ids, unparseable ids, and stale bindings (project no
@@ -774,8 +773,7 @@ mod project_workspace_tests {
     fn workspace_orchestrator() -> (Orchestrator, Arc<ProjectManager>) {
         let event_bus = EventBus::new(64);
         let tmp = tempfile::TempDir::new().expect("tempdir");
-        let state_store =
-            Arc::new(StateStore::new(tmp.path().to_path_buf()).expect("state store"));
+        let state_store = Arc::new(StateStore::new(tmp.path().to_path_buf()).expect("state store"));
         let access_manager = Arc::new(parking_lot::Mutex::new(
             crate::access_manager::AccessManager::new(),
         ));
@@ -817,9 +815,10 @@ mod project_workspace_tests {
         assert!(ws.context_body.contains("keep tests fast"));
         // The canonicalized root appears in the context body.
         let canon = std::fs::canonicalize(&root).expect("canonicalize");
-        assert!(ws
-            .context_body
-            .contains(&canon.to_string_lossy().to_string()));
+        assert!(
+            ws.context_body
+                .contains(&canon.to_string_lossy().to_string())
+        );
     }
 
     #[test]

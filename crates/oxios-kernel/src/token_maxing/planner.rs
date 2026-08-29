@@ -103,5 +103,4 @@ impl WorkPlanner {
         // Source C — recurring patterns: intentionally stubbed (RFC-031 §7).
         None
     }
-
 }

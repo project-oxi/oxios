@@ -1486,6 +1486,8 @@
     "save": "저장",
     "search": "이름, 설명 또는 태그로 검색...",
     "resultsCount": "{{count}}건",
+    "staleRoot": "폴더 없음",
+    "staleRootHint": "이 폴더가 디스크에 더 이상 없습니다. 프로젝트를 편집해 수정하거나 제거하세요.",
     "title": "프로젝트",
     "undoWarning": "이 작업은 되돌릴 수 없습니다.",
     "updateError": "수정 실패: {{error}}",

@@ -1093,5 +1093,4 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].user_id, "recent-user");
     }
-
 }

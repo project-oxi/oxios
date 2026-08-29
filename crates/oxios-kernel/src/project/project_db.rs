@@ -65,10 +65,8 @@ pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// Returns `rusqlite::Result` so callers can distinguish the unique-name
 /// constraint violation from other failures.
 pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> rusqlite::Result<()> {
-    let root_paths =
-        serde_json::to_string(&project.root_paths).map_err(|e| {
-            rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-        })?;
+    let root_paths = serde_json::to_string(&project.root_paths)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "INSERT INTO projects
          (id, name, root_paths, instructions, created_at, updated_at, last_active_at)
@@ -97,7 +95,8 @@ pub fn list_projects(conn: &rusqlite::Connection) -> Result<Vec<Project>> {
          FROM projects ORDER BY name",
     )?;
     let rows = stmt.query_map([], row_to_project)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 /// Delete a project by ID.

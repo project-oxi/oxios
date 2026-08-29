@@ -203,6 +203,8 @@ impl PersistenceHook {
                     None => tracing::debug!("brain unavailable — memory write skipped"),
                 }
             }
+        } else if !plan.memory.is_empty() {
+            tracing::debug!("brain unbound — memory write skipped");
         }
 
         // Knowledge writes

@@ -331,6 +331,7 @@ impl AgentRuntime {
             &directive.acceptance_criteria,
             env.cspace_hint.as_deref(),
             &env.mount_paths,
+            env.project_id,
             env.workspace_context.as_deref(),
             session_ctx,
             session_id,
@@ -359,6 +360,11 @@ impl AgentRuntime {
         acceptance_criteria: &[String],
         cspace_hint: Option<&str>,
         mount_paths: &[std::path::PathBuf],
+        // Active project for the turn. Resolved by
+        // `Orchestrator::resolve_exec_env` from explicit `project_ids` or
+        // auto-detection; carried here so the `issue` tool can scope itself
+        // to the project without re-resolving it.
+        project_id: Option<uuid::Uuid>,
         workspace_context: Option<&str>,
         // Retained for API compatibility; recall timing moved to the brain.
         _session_ctx: &mut SessionContext,
@@ -584,6 +590,7 @@ impl AgentRuntime {
                 self.routing_stats.clone(),
                 session_id.clone(),
                 mount_paths,
+                project_id,
                 restore_state,
                 tool_profile,
             )
@@ -765,6 +772,7 @@ async fn run_agent(
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
     mount_paths: &[std::path::PathBuf],
+    project_id: Option<uuid::Uuid>,
     restore_state: Option<&serde_json::Value>,
     tool_profile: ToolProfile,
 ) -> Result<(

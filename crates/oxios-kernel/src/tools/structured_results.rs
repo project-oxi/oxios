@@ -37,6 +37,16 @@ pub struct StructuredResultBus {
     entries: Mutex<HashMap<String, Value>>,
 }
 
+impl std::fmt::Debug for StructuredResultBus {
+    /// Reports the pending-entry count, never the payloads — tool results can
+    /// carry user content and this type is embedded in `Debug` tool structs.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StructuredResultBus")
+            .field("pending", &self.entries.lock().len())
+            .finish()
+    }
+}
+
 impl StructuredResultBus {
     /// Create an empty bus.
     pub fn new() -> Self {

@@ -18,6 +18,7 @@ pub mod registry;
 pub mod retrieval;
 pub mod search_provider;
 pub mod structured_results;
+pub mod todo;
 pub mod tool_types;
 
 pub use a2a_tools::{A2aDelegateTool, A2aQueryTool, A2aSendTool};
@@ -35,3 +36,4 @@ pub use pending_tool_approvals::{PendingToolApprovals, ToolApprovalResult};
 pub use registry::{ToolMeta, known_tools};
 pub use search_provider::{KernelGetSearchResultsTool, KernelWebSearchTool};
 pub use structured_results::StructuredResultBus;
+pub use todo::{OxiosTodoState, TodoRegistry, TodoTool};

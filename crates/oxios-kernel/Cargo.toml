@@ -40,10 +40,10 @@ oxibrain-client = { workspace = true }
 # 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
 # BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser
 # features — products own browsing themselves (RFC-046).
-oxicode-agent = "0.73.0"
+oxicode-agent = "0.77.0"
 # oxicode-ai — needed for ContentBlock/ImageContent in browse tool screenshots.
 # The SDK re-exports ContentBlock but not ImageContent, so we depend directly.
-oxicode-ai = "0.73.0"
+oxicode-ai = "0.77.0"
 # First-party app module cores (optional, opt-in via the `memo`/`timeline`
 # features). Published to crates.io; resolved from the registry.
 oximemo-core = { version = "0.7", optional = true }

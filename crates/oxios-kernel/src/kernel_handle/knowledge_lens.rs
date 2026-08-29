@@ -136,25 +136,33 @@ impl KnowledgeLens {
     /// Recall relevant knowledge for a given context/query.
     ///
     /// Combines markdown note search (via KnowledgeBase) with brain recall
-    /// (via the daemon). Returns notes ranked by relevance.
-    pub async fn recall_for_context(&self, query: &str, limit: usize) -> Result<KnowledgeContext> {
+    /// (via the daemon). Returns notes ranked by relevance. `brain_space`
+    /// selects the oxibrain space to recall from; `None` (unbound turn)
+    /// skips the brain leg and returns knowledge notes only.
+    pub async fn recall_for_context(
+        &self,
+        query: &str,
+        limit: usize,
+        brain_space: Option<&str>,
+    ) -> Result<KnowledgeContext> {
         // Recall relevant memory from the brain (assembled context text).
-        let memories: Vec<MemoryNote> = if let Some(brain) = &self.brain {
-            brain
-                .recall(query, 2000)
-                .await
-                .map(|text| {
-                    vec![MemoryNote {
-                        id: "recall".to_string(),
-                        source: "brain".to_string(),
-                        content: text.chars().take(300).collect(),
-                        importance: 1.0,
-                    }]
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let memories: Vec<MemoryNote> =
+            if let (Some(brain), Some(space)) = (&self.brain, brain_space) {
+                brain
+                    .recall(space, query, 2000)
+                    .await
+                    .map(|text| {
+                        vec![MemoryNote {
+                            id: "recall".to_string(),
+                            source: "brain".to_string(),
+                            content: text.chars().take(300).collect(),
+                            importance: 1.0,
+                        }]
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
         let memories_len = memories.len();
 
         // Search knowledge notes
@@ -185,16 +193,18 @@ impl KnowledgeLens {
             index_entries_used: memories_len,
         })
     }
-
     /// Copilot chat — AI-powered question answering about the knowledge base.
     ///
     /// This method is async (uses `provider.stream()` which is Send).
+    /// `brain_space` selects the oxibrain space for the memory-context leg;
+    /// `None` (no binding at this endpoint) skips the brain search.
     #[allow(clippy::unused_async)]
     pub async fn copilot_chat(
         &self,
         engine_handle: Arc<crate::engine::EngineHandle>,
         question: &str,
         context_path: Option<&str>,
+        brain_space: Option<&str>,
     ) -> Result<CopilotResponse> {
         let mut context_parts = Vec::new();
         let mut referenced_notes = Vec::new();
@@ -223,8 +233,10 @@ impl KnowledgeLens {
 
         // 3. Memory context
         let mut referenced_memories = Vec::new();
-        if let Some(brain) = &self.brain
-            && let Some(resp) = brain.search(question, "hybrid", 3, Some(&["memory"])).await
+        if let (Some(brain), Some(space)) = (&self.brain, brain_space)
+            && let Some(resp) = brain
+                .search(space, question, "hybrid", 3, Some(&["memory"]))
+                .await
         {
             for item in &resp.memory {
                 // 0.8 envelope uses entity_* keys; fall back to the

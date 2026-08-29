@@ -93,13 +93,11 @@ pub(crate) struct ComponentStatus {
     pub detail: Option<String>,
 }
 
-/// Brain daemon health (RFC-047).
+/// Brain daemonless health (RFC-047).
 #[derive(Debug, Serialize, Clone)]
 pub(crate) struct BrainHealth {
-    /// Whether the daemon is reachable.
+    /// Whether the session child is up or the binary is installed.
     pub available: bool,
-    /// Episode count in the space (None when unreachable).
-    pub episodes: Option<i64>,
 }
 
 /// Agent subsystem health.
@@ -202,16 +200,8 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
             snap.available || snap.binary_installed
         })
         .unwrap_or(false);
-    let episodes = match state.kernel.brain.as_ref() {
-        Some(brain) => brain
-            .stats()
-            .await
-            .and_then(|s| s.get("episodes").and_then(|e| e.as_i64())),
-        None => None,
-    };
     let brain_health = BrainHealth {
         available: brain_ok,
-        episodes,
     };
 
     // Agent health — count active from supervisor, metrics from export

@@ -1024,6 +1024,9 @@ pub(crate) async fn handle_knowledge_copilot(
             Arc::clone(state.kernel.engine.engine_handle()),
             &body.question,
             body.context_path.as_deref(),
+            // The knowledge copilot has no chat-scoped binding yet — the
+            // memory-context leg is skipped until an endpoint carries one.
+            None,
         )
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;

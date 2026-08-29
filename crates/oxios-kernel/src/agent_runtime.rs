@@ -338,6 +338,7 @@ impl AgentRuntime {
             env.model_override.as_deref(),
             env.role.as_deref(),
             env.persona_id.as_deref(),
+            env.brain_space.as_deref(),
             env.restore_state.as_ref(),
         )
         .await
@@ -367,6 +368,7 @@ impl AgentRuntime {
         model_override: Option<&str>,
         role: Option<&str>,
         persona_id: Option<&str>,
+        brain_space: Option<&str>,
         restore_state: Option<&serde_json::Value>,
     ) -> Result<ExecutionResult> {
         let prompt = build_user_prompt_inner(goal, acceptance_criteria);
@@ -462,8 +464,10 @@ impl AgentRuntime {
         }
 
         // Blend relevant memories into system prompt (RFC-047: brain recall).
-        if let Some(brain) = &self.kernel_handle.brain {
-            match brain.recall(goal, 3000).await {
+        // The chat-scoped binding selects the space; an unbound turn skips
+        // recall entirely (no boot-time space anymore).
+        if let (Some(brain), Some(space)) = (&self.kernel_handle.brain, brain_space) {
+            match brain.recall(space, goal, 3000).await {
                 Some(context) => {
                     tracing::info!("Recalled brain context for task");
                     system_prompt.push_str(&format!("\n\n## Relevant Memory\n{context}\n",));
@@ -496,7 +500,7 @@ impl AgentRuntime {
         match self
             .kernel_handle
             .knowledge_lens
-            .recall_for_context(goal, 5)
+            .recall_for_context(goal, 5, brain_space)
             .await
         {
             Ok(ctx) if !ctx.notes.is_empty() => {
@@ -583,6 +587,7 @@ impl AgentRuntime {
                 audit_trail,
                 self.routing_stats.clone(),
                 session_id.clone(),
+                brain_space,
                 mount_paths,
                 restore_state,
                 tool_profile,
@@ -714,6 +719,7 @@ impl AgentRuntime {
                 *idx += 1;
                 current
             };
+            let hook_brain_space = brain_space.map(str::to_string);
             tokio::spawn(async move {
                 match hook
                     .evaluate(
@@ -733,7 +739,13 @@ impl AgentRuntime {
                                 "PersistenceHook executing plan"
                             );
                             let session_id = sid.unwrap_or_default();
-                            hook.execute_plan(plan, &session_id, msg_index).await;
+                            hook.execute_plan(
+                                plan,
+                                &session_id,
+                                msg_index,
+                                hook_brain_space.as_deref(),
+                            )
+                            .await;
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, "PersistenceHook evaluate failed"),
@@ -748,7 +760,6 @@ impl AgentRuntime {
 /// Create and run an oxicode-sdk `Agent` with CSpace-based tool registration.
 ///
 /// Uses `engine.oxi().agent()` (AgentBuilder) for full middleware,
-/// observability, and security integration from oxicode-sdk 0.23.0.
 #[allow(clippy::too_many_arguments)]
 async fn run_agent(
     config: &AgentRuntimeConfig,
@@ -764,6 +775,7 @@ async fn run_agent(
     audit_trail: Option<Arc<AuditTrail>>,
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
+    brain_space: Option<&str>,
     mount_paths: &[std::path::PathBuf],
     restore_state: Option<&serde_json::Value>,
     tool_profile: ToolProfile,
@@ -1154,10 +1166,11 @@ async fn run_agent(
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();
-    let routing_stats_for_cb = routing_stats.clone();
+    let brain_space_for_callback = brain_space.map(str::to_string);
     // RFC-015: real-time event publishing for chat transparency.
     // Falls back to None when the caller did not opt in.
     let transparency_session: Option<String> = session_id.clone();
+    let routing_stats_for_cb = routing_stats.clone();
     let kernel_handle_for_cb: Arc<KernelHandle> = Arc::clone(&kernel_handle);
     // P1 chat transparency: per-session streaming sink registry. The
     // callback looks up the sink for this session and pushes live text
@@ -1295,17 +1308,18 @@ async fn run_agent(
                 // by tool_call_id and we take them here.
                 if let Some(ref sid) = transparency_session {
                     let results = kernel_handle_for_cb.search_results.take(&tool_call_id);
-                    let _ = kernel_handle_for_cb
-                        .infra
-                        .publish(KernelEvent::ToolExecutionFinished {
-                            session_id: sid.clone(),
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_name.clone(),
-                            duration_ms,
-                            is_error,
-                            output_summary: summary,
-                            results,
-                        });
+                    let _ =
+                        kernel_handle_for_cb
+                            .infra
+                            .publish(KernelEvent::ToolExecutionFinished {
+                                session_id: sid.clone(),
+                                tool_call_id: tool_call_id.clone(),
+                                tool_name: tool_name.clone(),
+                                duration_ms,
+                                is_error,
+                                output_summary: summary,
+                                results,
+                            });
                 }
             }
             AgentEvent::AgentEnd {
@@ -1381,9 +1395,10 @@ async fn run_agent(
                     result.summary.clone(),
                     session_id_for_callback.clone(),
                     brain_for_callback.clone(),
+                    brain_space_for_callback.clone(),
                 );
                 // RFC-015: compaction is a form of reasoning — expose it.
-                if let Some(ref sid) = transparency_session {
+                if let Some(sid) = &transparency_session {
                     let _ = kernel_handle_for_cb
                         .infra
                         .publish(KernelEvent::ReasoningFragment {
@@ -1760,6 +1775,7 @@ fn handle_compaction(
     summary: String,
     session_id: String,
     brain: Option<Arc<crate::brain::BrainSession>>,
+    brain_space: Option<String>,
 ) {
     let content = if session_id.is_empty() {
         summary
@@ -1767,8 +1783,13 @@ fn handle_compaction(
         format!("[session {session_id}] {summary}")
     };
     tokio::spawn(async move {
-        if let Some(brain) = brain
-            && brain.remember(&content, "compaction").await.is_none()
+        // Skip-unless-bound: without a chat-scoped space there is no space
+        // to store the summary in (the boot-time space is gone).
+        if let (Some(brain), Some(space)) = (brain.as_ref(), brain_space.as_deref())
+            && brain
+                .remember(space, &content, "compaction")
+                .await
+                .is_none()
         {
             tracing::debug!("brain unavailable — compaction summary not stored");
         }

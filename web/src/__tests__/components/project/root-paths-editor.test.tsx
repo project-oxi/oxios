@@ -74,7 +74,7 @@ describe('RootPathsEditor', () => {
     const onChange = vi.fn()
     render(<RootPathsEditor value={[]} onChange={onChange} />)
 
-    await user.type(screen.getByLabelText('projects.chooseFolder'), '/tmp/manual')
+    await user.type(screen.getByLabelText('projects.pathInputLabel'), '/tmp/manual')
     await user.click(screen.getByRole('button', { name: 'common.add' }))
     expect(onChange).toHaveBeenCalledWith(['/tmp/manual'])
   })

@@ -733,7 +733,8 @@
     "fri": "Fri",
     "sat": "Sat",
     "tasks": "Tasks",
-    "brain": "Brain"
+    "brain": "Brain",
+    "add": "Add"
   },
   "cost": {
     "title": "Cost & Spend",
@@ -1455,7 +1456,6 @@
     "sessionPersonaHint": "Pick a per-session persona from the chat composer"
   },
   "projects": {
-    "apply": "Apply",
     "create": "Create",
     "createDesc": "Register a new work context.",
     "createError": "Failed to create project: {{error}}",
@@ -1499,7 +1499,8 @@
     "folderPickerLocalOnly": "Folder picking is only available on the local host",
     "folderPickerUnavailable": "Folder picking is not supported on this platform",
     "folderPickerFailed": "Folder picker failed. Try again.",
-    "duplicateFolder": "Folder already added"
+    "duplicateFolder": "Folder already added",
+    "pathInputLabel": "Folder path"
   },
   "questionnaire": {
     "additionalThoughts": "Additional thoughts (optional)",

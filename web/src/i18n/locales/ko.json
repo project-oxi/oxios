@@ -733,7 +733,8 @@
     "fri": "금",
     "sat": "토",
     "tasks": "작업",
-    "brain": "브레인"
+    "brain": "브레인",
+    "add": "추가"
   },
   "cost": {
     "title": "비용 및 지출",
@@ -1455,7 +1456,6 @@
     "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다"
   },
   "projects": {
-    "apply": "적용",
     "create": "생성",
     "createDesc": "새 작업 컨텍스트를 등록합니다.",
     "createError": "프로젝트 생성 실패: {{error}}",
@@ -1499,7 +1499,8 @@
     "folderPickerLocalOnly": "폴더 선택은 로컬 호스트에서만 사용할 수 있습니다",
     "folderPickerUnavailable": "이 플랫폼에서는 폴더 선택을 지원하지 않습니다",
     "folderPickerFailed": "폴더 선택에 실패했습니다. 다시 시도해 주세요.",
-    "duplicateFolder": "이미 추가된 폴더입니다"
+    "duplicateFolder": "이미 추가된 폴더입니다",
+    "pathInputLabel": "폴더 경로"
   },
   "questionnaire": {
     "additionalThoughts": "추가 의견 (선택)",

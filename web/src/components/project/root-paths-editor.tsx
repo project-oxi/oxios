@@ -116,7 +116,7 @@ export function RootPathsEditor({ value, onChange, disabled }: RootPathsEditorPr
             placeholder="/absolute/path/to/folder"
             disabled={disabled}
             className="h-8 text-xs font-mono"
-            aria-label={t('projects.chooseFolder')}
+            aria-label={t('projects.pathInputLabel')}
           />
           <Button
             type="button"

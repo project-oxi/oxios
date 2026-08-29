@@ -428,9 +428,7 @@ impl AgentRuntime {
                     let mut results = retriever.retrieve(&query_vec, 8);
                     // Unbound chats have no brain: the `brain` skill must not
                     // surface in the capability index (design §4.3).
-                    if brain_space.is_none() {
-                        results.retain(|scored| scored.entry.name != "brain");
-                    }
+                    filter_brain_capabilities(&mut results, brain_space);
                     if results.is_empty() {
                         None
                     } else {
@@ -1807,6 +1805,10 @@ fn handle_compaction(
             {
                 tracing::debug!("brain unavailable — compaction summary not stored");
             }
+        } else if brain_space.is_some() {
+            // Space bound but the kernel brain is absent — a different
+            // failure from an unbound chat, so it gets its own log line.
+            tracing::debug!("brain unavailable — compaction summary not stored (space bound)");
         } else {
             tracing::debug!("brain unbound — compaction summary not stored");
         }
@@ -1866,6 +1868,20 @@ const ARTIFACT_PROTOCOL: &str = "\n\n\
     short snippets that are part of an explanation belong in a normal fenced\n\
     code block. Use an artifact only for content the user would open to view,\n\
     not copy-and-paste. Limit one artifact per self-contained piece.\n";
+/// Drop the brain skill from retrieved capabilities when the chat is unbound.
+///
+/// Installed skills are indexed as `skill:{name}` (see `build_tool_retriever`
+/// in the binary crate), so the brain skill's entry name is `skill:brain` —
+/// builtin OS tools carry bare names, none of them "brain".
+fn filter_brain_capabilities(
+    results: &mut Vec<crate::tools::retrieval::ScoredTool>,
+    brain_space: Option<&str>,
+) {
+    if brain_space.is_none() {
+        results.retain(|scored| scored.entry.name != "skill:brain");
+    }
+}
+
 /// The `Memory` bullet suffix naming the chat's connected brain space, or
 /// `None` when unbound (bullet omitted entirely — the skill stays hidden).
 fn brain_space_line(brain_space: Option<&str>) -> Option<String> {
@@ -2212,5 +2228,48 @@ mod tests {
         assert!(prompt.contains(
             "- **Memory**: the `brain` skill — the connected oxibrain CLI. Connected brain space: `work`."
         ));
+    }
+    #[tokio::test]
+    async fn test_capability_filter_removes_indexed_brain_skill_when_unbound() {
+        use crate::embedding::TfIdfEmbeddingProvider;
+        use crate::tools::retrieval::{ToolEntry, ToolRetriever};
+
+        // Mirror the production index shape: installed skills are indexed as
+        // `skill:{name}` (src/kernel.rs build_tool_retriever).
+        let mut retriever = ToolRetriever::new(Arc::new(TfIdfEmbeddingProvider));
+        for (name, desc) in [
+            ("skill:brain", "remember and recall personal memories"),
+            ("skill:deploy", "deploy the project to production"),
+            ("exec", "run shell commands"),
+        ] {
+            retriever
+                .index_tool(ToolEntry {
+                    name: name.into(),
+                    category: "skill".into(),
+                    description: desc.into(),
+                    skill_path: None,
+                    command: None,
+                })
+                .await;
+        }
+        let query = retriever
+            .embedder()
+            .embed("remember this fact for me")
+            .await
+            .expect("tfidf embed");
+
+        // Unbound: the indexed brain skill must be filtered out.
+        let mut unbound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut unbound, None);
+        assert!(
+            unbound.iter().all(|s| s.entry.name != "skill:brain"),
+            "unbound chats must not see the indexed `skill:brain` capability"
+        );
+        assert!(unbound.iter().any(|s| s.entry.name == "skill:deploy"));
+
+        // Bound: the brain skill survives.
+        let mut bound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut bound, Some("work"));
+        assert!(bound.iter().any(|s| s.entry.name == "skill:brain"));
     }
 }

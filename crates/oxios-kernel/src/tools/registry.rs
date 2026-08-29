@@ -84,6 +84,8 @@ const TOOL_CATALOG: &[ToolMeta] = &[
     ToolMeta::new("ls", "tools.ls", "fs"),
     ToolMeta::new("web_search", "tools.webSearch", "comms"),
     ToolMeta::new("get_search_results", "tools.getSearchResults", "comms"),
+    ToolMeta::new("todo", "tools.todo", "system"),
+    ToolMeta::new("issue", "tools.issue", "system"),
     // ── Kernel domain tools (CSpace-driven) ───────────────────────
     ToolMeta::new("exec", "tools.exec", "exec").with_intervention(HumanIntervention::Required),
     ToolMeta::new("browse", "tools.browse", "comms"),

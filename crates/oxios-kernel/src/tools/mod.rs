@@ -9,6 +9,7 @@ pub mod browse;
 pub mod builtin;
 pub mod exec_tool;
 pub mod gated_tool;
+pub mod issue_tool;
 pub mod kernel_bridge;
 pub mod mcp_tool;
 pub mod pending_path_access;
@@ -30,6 +31,7 @@ pub use builtin::{
 pub use exec_tool::ExecTool;
 pub use mcp_tool::McpToolWrapper;
 
+pub use issue_tool::IssueTool;
 pub use kernel_bridge::OxiosKernelBridge;
 pub use pending_path_access::{PathAccessResult, PendingPathAccess};
 pub use pending_tool_approvals::{PendingToolApprovals, ToolApprovalResult};

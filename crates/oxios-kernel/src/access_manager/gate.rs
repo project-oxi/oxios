@@ -310,6 +310,31 @@ fn exec_arg_path_with_home(arg: &str, home: Option<&Path>) -> Option<PathBuf> {
 ///   stored keys via `read`/`grep`)
 pub const OXI_HOME_DENY_ROOTS: &[&str] = &[".oxi", ".oxicode"];
 
+/// Tools exempt from the Layer-0 CSpace `EXECUTE` check.
+///
+/// These are the always-on tier — registered unconditionally for every agent
+/// by `tools::registration::register_always_on` — so Layer 0 must not gate
+/// them. Without an entry here a registered tool hits a catch-22: the LLM
+/// calls it because it is registered, but no capability template grants the
+/// matching right, so Layer 0 hard-denies. That shipped once for `web_search`
+/// (RFC-017 Q3). `registration::tests::always_on_tools_are_all_exempt_from_layer_zero`
+/// keeps this list and the registered tier from drifting apart.
+///
+/// CSpace-driven tools (exec, knowledge, browse*, a2a, persona, …) still
+/// require an explicit EXECUTE capability and are denied here when absent.
+pub const LAYER0_EXEMPT_TOOLS: &[&str] = &[
+    "read",
+    "write",
+    "edit",
+    "grep",
+    "find",
+    "ls",
+    "web_search",
+    "get_search_results",
+    // Session-scoped planning: in-process state, no file and no network.
+    "todo",
+];
+
 /// Default deny-subpath entries for `~/.oxios` (T18 R3).
 ///
 /// Single source of truth — `agent_runtime.rs` and the parity test
@@ -582,16 +607,7 @@ impl AccessGate {
             // absent. RFC-017 covers the per-session escalation flow
             // (GatedTool → PendingToolApprovals → user dialog) for that
             // case.
-            let always_on = [
-                "read",
-                "write",
-                "edit",
-                "grep",
-                "find",
-                "ls",
-                "web_search",
-                "get_search_results",
-            ];
+            let always_on = LAYER0_EXEMPT_TOOLS;
             if !always_on.contains(&tool) {
                 return Err(AccessDenied {
                     agent: ctx.agent_name.clone(),

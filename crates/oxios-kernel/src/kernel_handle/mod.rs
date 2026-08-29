@@ -177,6 +177,9 @@ pub struct KernelHandle {
     /// assembler so the store cache and the ownership `flock` guards are
     /// common — two instances would not see each other's claims.
     pub issues: Arc<issue_api::IssueApi>,
+    /// Session-scoped todo plans. Shared across handles by the assembler so
+    /// a plan created on one turn is found again on the next.
+    pub todos: Arc<crate::tools::TodoRegistry>,
 }
 
 impl KernelHandle {
@@ -236,6 +239,7 @@ impl KernelHandle {
             // Per-handle by default; the assembler injects a shared instance
             // via `with_issues` so ownership guards are observed everywhere.
             issues: Arc::new(issue_api::IssueApi::new()),
+            todos: Arc::new(crate::tools::TodoRegistry::new()),
             turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
@@ -362,6 +366,13 @@ impl KernelHandle {
     /// each believe the other's claims belong to a dead session.
     pub fn with_issues(mut self, issues: Arc<issue_api::IssueApi>) -> Self {
         self.issues = issues;
+        self
+    }
+
+    /// Share one [`crate::tools::TodoRegistry`] across handles, so a plan
+    /// created on one turn is found again on the next.
+    pub fn with_todos(mut self, todos: Arc<crate::tools::TodoRegistry>) -> Self {
+        self.todos = todos;
         self
     }
 

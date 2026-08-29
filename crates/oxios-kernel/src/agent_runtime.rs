@@ -1026,6 +1026,7 @@ async fn run_agent(
         Some(approval_pending),
         Some(path_access_pending),
         tool_profile != ToolProfile::Control,
+        project_id,
     );
 
     tracing::info!(
@@ -1064,7 +1065,17 @@ async fn run_agent(
         workspace_dir: Some(workspace.clone()),
         output_mode: None,
         provider_options: config.provider_options.clone(),
-        session_id: None,
+        // Carries into `ToolContext.session_id`. The `issue` tool derives
+        // its ownership identity from this, and the SDK's assignment lock is
+        // only meaningful when that identity is non-empty and backed by a
+        // flock this process holds (see `IssueApi`). Leaving it `None` — the
+        // prior value — made every claim instantly reclaimable.
+        session_id: session_id.clone(),
+        // Session-scoped todo state, so a plan survives across the turns of
+        // one conversation instead of resetting every message.
+        todo: session_id.as_deref().map(|sid| {
+            kernel_handle.todos.for_session(sid) as Arc<dyn oxicode_sdk::TodoStateProvider>
+        }),
         // RFC-035 Phase B/C: pass through gap 1/3 config to oxicode-sdk 0.54.0+.
         max_tool_result_bytes: config.max_tool_result_bytes,
         // subagent_depth = CURRENT depth (0 = top-level). The in-process

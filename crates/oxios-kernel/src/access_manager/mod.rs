@@ -20,7 +20,7 @@ pub use audit_sink::NoOpAuditSink;
 pub use audit_sink::{AuditEvent, AuditSink, TracingAuditSink, TrailAuditSink};
 pub use context::AgentContext;
 pub use gate::{
-    AccessDenied, AccessGate, CheckRequest, DenyLayer, OXI_HOME_DENY_ROOTS,
+    AccessDenied, AccessGate, CheckRequest, DenyLayer, LAYER0_EXEMPT_TOOLS, OXI_HOME_DENY_ROOTS,
     OXIOS_HOME_DENY_SUBPATHS, PathMode,
 };
 pub use permissions::{AgentPermissions, AuditEntry, PermissionUpdate};

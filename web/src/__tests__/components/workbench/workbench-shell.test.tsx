@@ -23,6 +23,7 @@ import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import type { ReactNode } from 'react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ProjectSelectorPopover } from '@/components/workbench/ProjectSelectorPopover'
 import { WorkbenchShell } from '@/components/workbench/WorkbenchShell'
 import { useChatStore } from '@/stores/chat'
 import { useWorkbenchStore } from '@/stores/workbench'
@@ -101,7 +102,11 @@ function setupServer() {
       HttpResponse.json({ branch: 'main', dirty_count: 0 }),
     ),
     http.get('/api/project/workspace/tree', () =>
-      HttpResponse.json({ roots: ['/tmp/proj-root'], path: '/tmp/proj-root', entries: [] }),
+      HttpResponse.json({
+        roots: ['/tmp/proj-root'],
+        path: '/tmp/proj-root',
+        entries: [{ name: 'README.md', path: '/tmp/proj-root/README.md', is_dir: false, size: 11 }],
+      }),
     ),
     http.get('/api/project/workspace/file', () =>
       HttpResponse.json({
@@ -138,6 +143,8 @@ beforeAll(() => {
       disconnect() {}
     },
   )
+  // cmdk scrolls the selected item into view; jsdom lacks the API.
+  Element.prototype.scrollIntoView ??= () => {}
   for (const proto of [Text.prototype, Range.prototype] as unknown as Array<{
     getClientRects?: unknown
     getBoundingClientRect?: unknown
@@ -265,29 +272,116 @@ describe('WorkbenchShell — affordance gating', () => {
   })
 })
 
-describe('WorkbenchShell — emergence: stage opens on edit-style tool call', () => {
-  it("openStage('changes') flips stageOpen=true with activeRail=changes", async () => {
+describe('WorkbenchShell — §7.2 emergence (event-driven from the transcript)', () => {
+  it('a new file-change tool call opens the changes stage pinned', async () => {
     setProfile(CODE_ROOTS)
-    renderShell()
-    await waitFor(() => expect(screen.queryByTestId('project-bar')).not.toBeNull())
+    // Seed the transcript BEFORE render — the observer must fire on it.
     act(() => {
-      useWorkbenchStore.getState().openStage('changes', { pinIfChanges: true, changesPending: 1 })
+      useChatStore.setState({
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            blocks: [
+              {
+                type: 'tool',
+                id: 't1',
+                identifier: 'kernel',
+                apiName: 'edit',
+                arguments: { path: '/repo/a.ts', old_text: 'a', new_text: 'b' },
+                status: 'success',
+              },
+            ],
+          },
+        ],
+      })
     })
-    expect(useWorkbenchStore.getState().stageOpen).toBe(true)
-    expect(useWorkbenchStore.getState().activeRail).toBe('changes')
-    expect(useWorkbenchStore.getState().stagePinned).toBe(true)
+    renderShell()
+    await waitFor(() => expect(useWorkbenchStore.getState().stageOpen).toBe(true))
+    const s = useWorkbenchStore.getState()
+    expect(s.activeRail).toBe('changes')
+    expect(s.stagePinned).toBe(true) // pendingCount 1 > 0
+    // The diff stage is actually rendered in the slide-over.
+    expect(screen.queryByTestId('diff-stage')).not.toBeNull()
   })
 
-  it("openStage('terminal') renders the terminal drawer header", async () => {
+  it('a terminal-alias tool running >5s opens the terminal stage', async () => {
     setProfile(CODE_ROOTS)
-    renderShell()
-    await waitFor(() => expect(screen.queryByTestId('project-bar')).not.toBeNull())
     act(() => {
-      useWorkbenchStore.getState().openStage('terminal', { pinIfChanges: false })
+      useChatStore.setState({
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            blocks: [
+              {
+                type: 'tool',
+                id: 'b1',
+                identifier: 'kernel',
+                apiName: 'Bash',
+                arguments: { command: 'sleep 30' },
+                status: 'loading',
+                startedAt: Date.now() - 6_000,
+              },
+            ],
+          },
+        ],
+      })
     })
-    expect(useWorkbenchStore.getState().activeRail).toBe('terminal')
-    // The drawer header text is rendered for the terminal rail.
-    expect(screen.getByText(/stage\.terminal/)).toBeTruthy()
+    renderShell()
+    await waitFor(
+      () => {
+        const s = useWorkbenchStore.getState()
+        expect(s.stageOpen && s.activeRail === 'terminal').toBe(true)
+      },
+      { timeout: 4000 },
+    )
+    expect(screen.queryByTestId('terminal-stage')).not.toBeNull()
+  })
+
+  it('a completed artifact opens the preview stage; the next one auto-dismisses unless pinned', async () => {
+    setProfile(CODE_ROOTS)
+    const artifact = (id: string, mark: string) => ({
+      id,
+      role: 'assistant' as const,
+      generating: false,
+      content: `\`\`\`svg\n<svg xmlns="http://www.w3.org/2000/svg"><text>${mark}</text></svg>\n\`\`\``,
+    })
+    act(() => {
+      useChatStore.setState({ messages: [artifact('a1', 'ONE')] })
+    })
+    renderShell()
+    await waitFor(() => {
+      const s = useWorkbenchStore.getState()
+      expect(s.stageOpen && s.activeRail === 'preview').toBe(true)
+    })
+    // The renderer output is in the stage.
+    expect(screen.queryByTestId('preview-stage-artifact')).not.toBeNull()
+
+    // Second completed artifact auto-dismisses the unpinned preview stage.
+    act(() => {
+      useChatStore.setState({
+        messages: [artifact('a1', 'ONE'), artifact('a2', 'TWO')],
+      })
+    })
+    await waitFor(() => expect(useWorkbenchStore.getState().stageOpen).toBe(false))
+
+    // Pinned variant: reopen preview, pin it, then a third artifact keeps it open.
+    act(() => {
+      useWorkbenchStore.getState().openStage('preview')
+      useWorkbenchStore.getState().togglePin()
+    })
+    act(() => {
+      useChatStore.setState({
+        messages: [artifact('a1', 'ONE'), artifact('a2', 'TWO'), artifact('a3', 'THREE')],
+      })
+    })
+    await waitFor(() => {
+      const s = useWorkbenchStore.getState()
+      expect(s.stageOpen && s.activeRail === 'preview' && s.stagePinned).toBe(true)
+    })
   })
 })
 
@@ -308,14 +402,30 @@ describe('WorkbenchShell — quick open', () => {
       cancelable: true,
     })
     // MDN: dispatchEvent returns false when a cancelable event's listener
-    // called preventDefault — exactly what the shell must do for ⌘P so the
-    // browser print dialog never opens.
+    // called preventDefault — exactly what the shell must do for ⌘P.
     expect(window.dispatchEvent(evt)).toBe(false)
     expect(evt.defaultPrevented).toBe(true)
     await waitFor(() => expect(useWorkbenchStore.getState().quickOpenOpen).toBe(true))
   })
 
-  it('quick-open → file select opens the editor modal bound to /api/project/workspace/file', async () => {
+  it('⌘P is inert for a non-coding persona (browser print untouched)', async () => {
+    setProfile(MINIMAL)
+    renderShell()
+    await waitFor(() => expect(screen.queryByTestId('project-bar')).toBeNull())
+    const evt = new KeyboardEvent('keydown', {
+      key: 'p',
+      code: 'KeyP',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    // No listener consumed the event: not prevented, no dialog.
+    expect(window.dispatchEvent(evt)).toBe(true)
+    expect(evt.defaultPrevented).toBe(false)
+    expect(useWorkbenchStore.getState().quickOpenOpen).toBe(false)
+  })
+
+  it('quick-open lists the MSW tree entry and selecting it opens the editor modal', async () => {
     setProfile(CODE_ROOTS)
     renderShell()
     await waitFor(() => expect(screen.queryByTestId('project-bar')).not.toBeNull())
@@ -323,13 +433,44 @@ describe('WorkbenchShell — quick open', () => {
       useWorkbenchStore.getState().setQuickOpen(true)
     })
     await waitFor(() => expect(screen.queryByTestId('quick-open-input')).not.toBeNull())
-    // Pick a file directly via the store API (covers the same codepath as
-    // clicking an entry) — this asserts the modal binding without driving
-    // cmdk's virtualised list, which is heavy in jsdom.
-    act(() => {
-      useWorkbenchStore.getState().openEditor('/tmp/proj-root/README.md')
+    // The rendered ENTRY comes from the MSW workspace tree data…
+    const item = await screen.findByText('README.md')
+    await userEvent.click(item)
+    // …and completing list → select opens the editor modal for that path.
+    await waitFor(() =>
+      expect(useWorkbenchStore.getState().editingPath).toBe('/tmp/proj-root/README.md'),
+    )
+    await waitFor(() => expect(screen.queryByTestId('file-editor-modal')).not.toBeNull())
+  })
+})
+
+describe('ProjectSelectorPopover — project binding (fix F2)', () => {
+  it('clicking a project entry binds it via setActiveProject', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    useChatStore.setState({ activeProjectId: null })
+    render(<ProjectSelectorPopover activeProject={null} onSelect={() => {}} />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
     })
-    expect(useWorkbenchStore.getState().editingPath).toBe('/tmp/proj-root/README.md')
-    expect(screen.queryByTestId('file-editor-modal')).not.toBeNull()
+    // Open the dropdown.
+    await userEvent.click(screen.getByRole('button', { name: 'workbench.projectSelector.label' }))
+    // Click the rendered project entry (from MSW /api/projects).
+    await userEvent.click(await screen.findByText(PROJECT.name))
+    await waitFor(() => expect(useChatStore.getState().activeProjectId).toBe(PROJECT.id))
+  })
+
+  it('clicking "No project" detaches the session', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    useChatStore.setState({ activeProjectId: PROJECT.id, activeSessionId: 'sess-shell' })
+    render(<ProjectSelectorPopover activeProject={PROJECT} onSelect={() => {}} />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      ),
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'workbench.projectSelector.label' }))
+    await userEvent.click(await screen.findByText('workbench.noProject'))
+    await waitFor(() => expect(useChatStore.getState().activeProjectId).toBeNull())
+    expect(useChatStore.getState().activeSessionId).toBeNull()
   })
 })

@@ -162,14 +162,39 @@ describe('useSessionChanges — alias matching + aggregation', () => {
     expect(result.current[0]?.status).toBe('reverted')
   })
 
-  it('orders changes chronologically by message id then tool id', () => {
+  it('preserves transcript insertion order (messages[] is chronological)', () => {
+    setTranscript([
+      msg('m1', [
+        toolBlock({ id: 't1', apiName: 'edit', arguments: { path: '/a' } }),
+        toolBlock({ id: 't0', apiName: 'edit', arguments: { path: '/a0' } }),
+      ]),
+      msg('m2', [toolBlock({ id: 't2', apiName: 'edit', arguments: { path: '/b' } })]),
+    ])
+    const { result } = renderHook(() => useSessionChanges())
+    expect(result.current.map((c) => c.id)).toEqual(['m1::t1', 'm1::t0', 'm2::t2'])
+  })
+
+  it('sorts by timestamp only when every message carries a parseable one', () => {
     setTranscript([
       msg('m2', [toolBlock({ id: 't2', apiName: 'edit', arguments: { path: '/b' } })]),
       msg('m1', [toolBlock({ id: 't1', apiName: 'edit', arguments: { path: '/a' } })]),
-      msg('m1', [toolBlock({ id: 't0', apiName: 'edit', arguments: { path: '/a0' } })]),
     ])
+    // Stamp timestamps out of insertion order; the stable timestamp sort
+    // must reorder them (m1 earlier than m2).
+    useChatStore.setState({
+      messages: [
+        {
+          ...msg('m2', [toolBlock({ id: 't2', apiName: 'edit', arguments: { path: '/b' } })]),
+          timestamp: '2026-08-29T10:00:00Z',
+        },
+        {
+          ...msg('m1', [toolBlock({ id: 't1', apiName: 'edit', arguments: { path: '/a' } })]),
+          timestamp: '2026-08-29T09:00:00Z',
+        },
+      ] as ChatMessage[],
+    })
     const { result } = renderHook(() => useSessionChanges())
-    expect(result.current.map((c) => c.id)).toEqual(['m1::t0', 'm1::t1', 'm2::t2'])
+    expect(result.current.map((c) => c.id)).toEqual(['m1::t1', 'm2::t2'])
   })
 
   it('falls back to message metadata tool_calls when blocks are absent', () => {

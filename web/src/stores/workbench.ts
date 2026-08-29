@@ -58,11 +58,18 @@ export interface WorkbenchState {
   openStage: (r: Rail, opts?: OpenStageOptions) => void
   dismissStage: () => void
   togglePin: () => void
+  /** Explicit user override from the ActivityRail: selects the rail and
+   *  opens its stage unpinned, clearing any stale pin left by emergence
+   *  (the user's click outranks the auto-pin contract). */
+  userSelectRail: (r: Rail) => void
   setQuickOpen: (open: boolean) => void
   openEditor: (path: string) => void
   closeEditor: () => void
-  markReviewed: (id: string) => void
-  revertChange: (id: string) => void
+  /** Mark a change reviewed. `pendingRemaining` is the count of still-
+   *  pending changes AFTER this action; when it reaches 0 the stage pin
+   *  releases (the stage stays open until the user dismisses/navigates). */
+  markReviewed: (id: string, pendingRemaining?: number) => void
+  revertChange: (id: string, pendingRemaining?: number) => void
   reset: () => void
 }
 
@@ -104,26 +111,45 @@ export const useWorkbenchStore = create<WorkbenchState>()((set) => ({
 
   togglePin: () => set((s) => ({ stagePinned: !s.stagePinned })),
 
+  userSelectRail: (r) =>
+    set({
+      activeRail: r,
+      // Rail click is an explicit override: open the target stage fresh and
+      // unpinned — a pin left over from emergence must not reattach here.
+      stageOpen: true,
+      stagePinned: false,
+    }),
+
   setQuickOpen: (open) => set({ quickOpenOpen: open }),
 
   openEditor: (path) => set({ editingPath: path }),
   closeEditor: () => set({ editingPath: null }),
 
-  markReviewed: (id) =>
+  markReviewed: (id, pendingRemaining) =>
     set((s) => {
-      if (s.reviewedChangeIds.has(id)) return s
       const next = new Set(s.reviewedChangeIds)
       next.add(id)
-      return { reviewedChangeIds: next }
+      const settled = pendingRemaining === 0
+      return {
+        reviewedChangeIds: next,
+        // Pin releases when the last pending change is resolved; the stage
+        // itself stays open until the user dismisses or navigates.
+        stagePinned: settled ? false : s.stagePinned,
+      }
     }),
 
-  revertChange: (id) =>
+  revertChange: (id, pendingRemaining) =>
     set((s) => {
       const nextReviewed = new Set(s.reviewedChangeIds)
       nextReviewed.delete(id)
       const nextReverted = new Set(s.revertedChangeIds)
       nextReverted.add(id)
-      return { reviewedChangeIds: nextReviewed, revertedChangeIds: nextReverted }
+      const settled = pendingRemaining === 0
+      return {
+        reviewedChangeIds: nextReviewed,
+        revertedChangeIds: nextReverted,
+        stagePinned: settled ? false : s.stagePinned,
+      }
     }),
 
   reset: () =>

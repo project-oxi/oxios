@@ -59,20 +59,20 @@ export function ActivityRail({ profile }: ActivityRailProps) {
   const activeRail = useWorkbenchStore((s) => s.activeRail)
   const stageOpen = useWorkbenchStore((s) => s.stageOpen)
   const setActiveRail = useWorkbenchStore((s) => s.setActiveRail)
-  const openStage = useWorkbenchStore((s) => s.openStage)
+  const userSelectRail = useWorkbenchStore((s) => s.userSelectRail)
   const dismissStage = useWorkbenchStore((s) => s.dismissStage)
 
   const handleClick = (rail: Rail) => {
     if (rail === 'conversation') {
+      // The conversation rail is the chat itself — select it and drop the
+      // stage so the transcript regains full width.
       setActiveRail('conversation')
       dismissStage()
       return
     }
-    setActiveRail(rail)
-    // Open the stage if it isn't already open.
-    if (!stageOpen || activeRail !== rail) {
-      openStage(rail)
-    }
+    // Explicit user override: fresh, unpinned stage for the target rail
+    // (a stale emergence pin must not reattach — fix F5).
+    userSelectRail(rail)
   }
 
   return (

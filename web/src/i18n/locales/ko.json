@@ -2683,7 +2683,8 @@
     },
     "quickOpen": {
       "placeholder": "검색할 파일 입력…",
-      "empty": "일치 항목 없음"
+      "empty": "일치 항목 없음",
+      "roots": "루트"
     },
     "editor": {
       "save": "저장",
@@ -2697,6 +2698,8 @@
       "reviewPending": "검토 대기 {{count}}건",
       "reviewed": "검토됨",
       "revert": "되돌리기",
+      "pending": "대기 중",
+      "reverted": "되돌려짐",
       "empty": "아직 파일 변경이 없습니다"
     },
     "terminal": {
@@ -2704,7 +2707,8 @@
     },
     "preview": {
       "empty": "미리보기가 없습니다",
-      "recentCount": "최근 변경 {{count}}건"
+      "recentCount": "최근 변경 {{count}}건",
+      "openInPanel": "패널에서 열기"
     }
   }
 }

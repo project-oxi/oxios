@@ -2683,7 +2683,8 @@
     },
     "quickOpen": {
       "placeholder": "Type to search files…",
-      "empty": "No matches"
+      "empty": "No matches",
+      "roots": "Roots"
     },
     "editor": {
       "save": "Save",
@@ -2697,6 +2698,8 @@
       "reviewPending": "{{count}} pending review",
       "reviewed": "Reviewed",
       "revert": "Revert",
+      "pending": "Pending",
+      "reverted": "Reverted",
       "empty": "No file changes yet"
     },
     "terminal": {
@@ -2704,7 +2707,8 @@
     },
     "preview": {
       "empty": "No preview yet",
-      "recentCount": "{{count}} recent changes"
+      "recentCount": "{{count}} recent changes",
+      "openInPanel": "Open in panel"
     }
   }
 }

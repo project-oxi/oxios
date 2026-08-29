@@ -49,12 +49,10 @@ export function ProjectSelectorPopover({ activeProject, onSelect }: ProjectSelec
   const detachSession = useChatStore((s) => s.setActiveProject)
 
   const handleSelect = (project: Project | null) => {
+    // Bind (or detach) the chat session's project via the chat store —
+    // this is the source of truth the next send reads (`project_id`).
+    detachSession(project ? project.id : null)
     onSelect(project)
-    if (project === null) {
-      // Detach the session: clears activeProjectId + activeSessionId so the
-      // next send runs without a project binding (project_id: '').
-      detachSession(null)
-    }
   }
 
   return (

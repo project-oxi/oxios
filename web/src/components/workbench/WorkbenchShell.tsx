@@ -33,6 +33,7 @@ import { PreviewStage } from '@/components/workbench/stages/PreviewStage'
 import { TerminalStage } from '@/components/workbench/stages/TerminalStage'
 import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useProject } from '@/hooks/use-projects'
+import { useStageEmergence } from '@/hooks/use-stage-emergence'
 import { isCodingFamily } from '@/lib/affordances'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
@@ -52,14 +53,25 @@ function StagePanel({ rail }: { rail: Rail }) {
   return null
 }
 
-/** Bind ⌘P on the chat route. preventDefault prevents the browser
- *  print dialog from opening. */
-function useWorkbenchShortcut(): void {
+/**
+ * Bind ⌘P on the chat route — CODING PROFILES ONLY (fix F4). A non-coding
+ * persona must never swallow browser print. Also clears a stale
+ * quickOpenOpen when the profile loses the coding family mid-flight.
+ */
+function useWorkbenchShortcut(active: boolean): void {
   const setQuickOpen = useWorkbenchStore((s) => s.setQuickOpen)
   useEffect(() => {
+    if (!active) {
+      // Losing the coding family closes the dialog and stops listening —
+      // ⌘P reverts to the browser's own binding (print).
+      setQuickOpen(false)
+      return
+    }
     // Read the current pathname from window.location so this hook works
     // outside a RouterProvider (tests, embedded routes). The chat route
-    // is the only legitimate activation context for ⌘P.
+    // is the only legitimate activation context for ⌘P. (The
+    // use-tab-shortcuts registry only covers ⌃1-3 route switching, so the
+    // bespoke listener stays; it is gated on `active` here.)
     const onKey = (e: KeyboardEvent) => {
       const onChat = window.location.pathname.startsWith('/chat')
       if (!onChat) return
@@ -71,14 +83,15 @@ function useWorkbenchShortcut(): void {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [setQuickOpen])
+  }, [active, setQuickOpen])
 }
 
 export function WorkbenchShell({ children }: WorkbenchShellProps) {
-  useWorkbenchShortcut()
   const { t } = useTranslation()
   const profile = useEffectiveProfile()
   const isCoding = isCodingFamily(profile)
+  useWorkbenchShortcut(isCoding)
+  useStageEmergence(profile)
   const activeProjectId = useChatStore((s) => s.activeProjectId)
   const { data: project } = useProject(activeProjectId)
   const stageOpen = useWorkbenchStore((s) => s.stageOpen)

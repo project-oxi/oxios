@@ -35,6 +35,18 @@ export function QuickOpen() {
   }, [open])
 
   const entries = useMemo(() => data?.entries ?? [], [data])
+  const roots = useMemo(() => data?.roots ?? [], [data])
+
+  /** Parent of the served dir, clamped to the nearest containing root
+   *  (fix F9): `..` from just inside a root must land ON the root, never
+   *  escape to a dir outside every root. */
+  const clampToRoot = (dir: string): string => {
+    const containing = roots.find((r) => dir === r) ?? roots.find((r) => dir.startsWith(`${r}/`))
+    const parent = dir.split('/').slice(0, -1).join('/')
+    if (!containing) return dir
+    if (parent === containing || parent.startsWith(`${containing}/`)) return parent
+    return containing
+  }
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
@@ -46,13 +58,22 @@ export function QuickOpen() {
         <CommandEmpty>
           {isLoading ? t('common.loading') : t('workbench.quickOpen.empty')}
         </CommandEmpty>
+        {roots.length > 1 && (
+          <CommandGroup heading={t('workbench.quickOpen.roots')}>
+            {roots.map((r) => (
+              <CommandItem key={r} value={`root ${r}`} onSelect={() => setPath(r)}>
+                <Folder className="mr-2 h-3.5 w-3.5" />
+                {r.split('/').filter(Boolean).pop() || r}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
         {data?.path && data.path !== data.roots[0] && (
           <CommandGroup heading="..">
             <CommandItem
               value=".."
               onSelect={() => {
-                const parent = data.path.split('/').slice(0, -1).join('/') || '/'
-                setPath(parent)
+                setPath(clampToRoot(data.path))
               }}
             >
               <Folder className="mr-2 h-3.5 w-3.5" />

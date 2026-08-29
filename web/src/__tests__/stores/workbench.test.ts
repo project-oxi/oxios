@@ -158,3 +158,47 @@ describe('reviewedChangeIds set semantics', () => {
     expect(s.activeRail).toBe('conversation')
   })
 })
+
+describe('userSelectRail — explicit rail override (fix F5)', () => {
+  it('opens the target rail unpinned, clearing a stale emergence pin', () => {
+    const store = useWorkbenchStore.getState()
+    // Emergence left the changes stage open AND pinned.
+    store.openStage('changes', { pinIfChanges: true, changesPending: 2 })
+    expect(useWorkbenchStore.getState().stagePinned).toBe(true)
+    // User clicks the preview rail → fresh unpinned stage.
+    store.userSelectRail('preview')
+    const s = useWorkbenchStore.getState()
+    expect(s.activeRail).toBe('preview')
+    expect(s.stageOpen).toBe(true)
+    expect(s.stagePinned).toBe(false)
+  })
+})
+
+describe('pin release when pending hits zero (fix F6)', () => {
+  it('markReviewed with pendingRemaining=0 releases the pin (stage stays open)', () => {
+    const store = useWorkbenchStore.getState()
+    store.openStage('changes', { pinIfChanges: true, changesPending: 1 })
+    expect(useWorkbenchStore.getState().stagePinned).toBe(true)
+    store.markReviewed('a', 0)
+    const s = useWorkbenchStore.getState()
+    expect(s.stagePinned).toBe(false)
+    expect(s.stageOpen).toBe(true)
+    expect(s.reviewedChangeIds.has('a')).toBe(true)
+  })
+
+  it('markReviewed with pendingRemaining>0 keeps the pin', () => {
+    const store = useWorkbenchStore.getState()
+    store.openStage('changes', { pinIfChanges: true, changesPending: 2 })
+    store.markReviewed('a', 1)
+    expect(useWorkbenchStore.getState().stagePinned).toBe(true)
+  })
+
+  it('revertChange with pendingRemaining=0 releases the pin', () => {
+    const store = useWorkbenchStore.getState()
+    store.openStage('changes', { pinIfChanges: true, changesPending: 1 })
+    store.revertChange('a', 0)
+    const s = useWorkbenchStore.getState()
+    expect(s.stagePinned).toBe(false)
+    expect(s.revertedChangeIds.has('a')).toBe(true)
+  })
+})

@@ -5,16 +5,9 @@
 
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isTerminalToolName } from '@/components/workbench/terminal-aliases'
 import { useChatStore } from '@/stores/chat'
 import type { ChatBlock } from '@/types'
-
-const TERMINAL_ALIASES = ['bash', 'exec', 'terminal', 'command', 'shell']
-
-function isTerminalTool(name: string | undefined): boolean {
-  if (!name) return false
-  const lower = name.toLowerCase()
-  return TERMINAL_ALIASES.some((alias) => lower.includes(alias))
-}
 
 function extractText(result: unknown): string {
   if (!result) return ''
@@ -50,7 +43,7 @@ export function TerminalStage() {
           arguments?: Record<string, unknown>
           result?: unknown
         }
-        if (!isTerminalTool(tool.apiName)) continue
+        if (!isTerminalToolName(tool.apiName)) continue
         const cmd =
           (typeof tool.arguments?.command === 'string' && tool.arguments.command) ||
           (typeof tool.arguments?.cmd === 'string' && tool.arguments.cmd) ||

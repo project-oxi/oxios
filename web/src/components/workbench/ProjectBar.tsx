@@ -100,7 +100,13 @@ export function ProjectBar({ isCoding }: ProjectBarProps) {
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        {activeModelId && <span className="text-2xs text-muted-foreground">{activeModelId}</span>}
+        {activeModelId && (
+          <span className="text-2xs text-muted-foreground" title={activeModelId}>
+            {/* F10: short display id (model-picker's shortModelId is private
+                to that component; basename() is the identical one-liner). */}
+            {basename(activeModelId)}
+          </span>
+        )}
         <span className="text-2xs text-muted-foreground">
           <kbd className="rounded border bg-muted px-1 py-0.5 text-2xs">⌘K</kbd>{' '}
           {t('workbench.commandHint')}

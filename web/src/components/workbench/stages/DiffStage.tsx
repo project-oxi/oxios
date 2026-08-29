@@ -37,39 +37,50 @@ export function DiffStage() {
           <div className="p-3 text-2xs text-muted-foreground">{t('workbench.changes.empty')}</div>
         ) : (
           <ul className="divide-y">
-            {changes.map((c) => (
-              <li key={c.id} className="flex flex-col gap-1 px-3 py-2">
-                <div className="flex items-center justify-between gap-2 text-2xs">
-                  <span className="truncate font-mono">{c.path}</span>
-                  <span className="shrink-0 text-muted-foreground">{c.status}</span>
-                </div>
-                <pre className="max-h-32 overflow-auto rounded bg-muted/40 p-2 text-2xs font-mono">
-                  {c.diff}
-                </pre>
-                <div className="flex gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={reviewedChangeIds.has(c.id) || revertedChangeIds.has(c.id)}
-                    onClick={() => markReviewed(c.id)}
-                    className="h-6 px-2 text-2xs"
-                  >
-                    {t('workbench.changes.reviewed')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={revertedChangeIds.has(c.id)}
-                    onClick={() => revertChange(c.id)}
-                    className="h-6 px-2 text-2xs"
-                  >
-                    {t('workbench.changes.revert')}
-                  </Button>
-                </div>
-              </li>
-            ))}
+            {changes.map((c) => {
+              // F6: pass the post-action pending count so the store can
+              // release the pin when the last pending change is resolved.
+              const pendingAfter = c.status === 'pending' ? pendingCount - 1 : pendingCount
+              const statusLabel =
+                c.status === 'reviewed'
+                  ? t('workbench.changes.reviewed')
+                  : c.status === 'reverted'
+                    ? t('workbench.changes.reverted')
+                    : t('workbench.changes.pending')
+              return (
+                <li key={c.id} className="flex flex-col gap-1 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 text-2xs">
+                    <span className="truncate font-mono">{c.path}</span>
+                    <span className="shrink-0 text-muted-foreground">{statusLabel}</span>
+                  </div>
+                  <pre className="max-h-32 overflow-auto rounded bg-muted/40 p-2 text-2xs font-mono">
+                    {c.diff}
+                  </pre>
+                  <div className="flex gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={reviewedChangeIds.has(c.id) || revertedChangeIds.has(c.id)}
+                      onClick={() => markReviewed(c.id, pendingAfter)}
+                      className="h-6 px-2 text-2xs"
+                    >
+                      {t('workbench.changes.reviewed')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={revertedChangeIds.has(c.id)}
+                      onClick={() => revertChange(c.id, pendingAfter)}
+                      className="h-6 px-2 text-2xs"
+                    >
+                      {t('workbench.changes.revert')}
+                    </Button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>

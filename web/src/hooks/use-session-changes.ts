@@ -163,13 +163,12 @@ export function useSessionChanges(): ChangeItem[] {
         })
       }
     }
-    // Sort chronologically by message id (lexicographic on the timestamp
-    // suffix is stable enough for the uuids we emit) so a fresh assistant
-    // turn can never drop its older sibling change out of order.
-    items.sort((a, b) => {
-      if (a.at !== b.at) return a.at - b.at
-      return a.id.localeCompare(b.id)
-    })
+    // messages[] is already chronological — preserve insertion order.
+    // Sort by timestamp only when every item carries a parseable one
+    // (Array.sort is stable, so ties keep insertion order).
+    if (items.length > 0 && items.every((i) => i.at > 0)) {
+      items.sort((a, b) => a.at - b.at)
+    }
     return items
   }, [messages, reviewed, revertedIds])
 }

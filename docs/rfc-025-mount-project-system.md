@@ -1,6 +1,9 @@
 # RFC-025: Mount + Project System
 
-> **Status:** Fully implemented (Phase 1–5)
+> **Status:** SUPERSEDED — the mount-facing sections below are historical
+> record. The mount subsystem was removed on 2026-08-29; project roots are
+> the sole filesystem scope. See
+> `docs/designs/2026-08-29-project-roots-persona-workbench-design.md`.
 > **Date:** 2026-06-15
 > **Replaces:** RFC-011 (project-system) — evolves the single `Project` concept into two distinct concepts (`Mount` + `Project`)
 > **Related:** RFC-008 (memory consolidation — Dream integration), RFC-011 Phase 1–4

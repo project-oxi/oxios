@@ -244,6 +244,46 @@ oxios doctor --cleanup --yes
 
 ---
 
+## Projects & workspace
+
+A **project** is Oxios's unit of workspace context: a name, the folders it
+spans, and optional instructions injected into the system prompt while the
+project is active. There are no mounts — project roots are the only
+filesystem scope a session gets.
+
+### Creating a project
+
+1. Open **Projects** in the sidebar and click **New Project**.
+2. Enter a name (unique) and optional instructions.
+3. Add folders:
+   - **Choose folder…** uses the native folder picker (local host only).
+     Cancelling the picker changes nothing.
+   - On remote/unavailable-picker platforms, type an absolute path instead.
+4. Folders are optional: a **folderless project** (chat/writing/research
+   contexts) is valid and gets a conversational shell without file rails.
+
+Every folder must already exist and be a directory; duplicates are
+de-duplicated. The **first folder becomes the working directory**.
+
+### Editing and stale folders
+
+Open a project → **Edit** to add or remove folders. If a registered folder
+was deleted or replaced on disk, the project page shows a **Missing**
+badge on that row — Oxios never silently swaps it for a generic workspace.
+Fix the path or remove the row to clear it.
+
+### Where projects show up
+
+- The chat header has a project selector; a session remembers its project.
+- The coding workbench (`/chat`) derives its surfaces from the active
+  persona's server-side **effective profile**: diff view, file rail,
+  terminal, and worktree fan-out appear only when the profile allows them
+  (file affordances additionally require project folders).
+- Removing a project detaches its sessions; later turns simply run without
+  project filesystem context.
+
+---
+
 ## Uninstalling
 
 ```bash

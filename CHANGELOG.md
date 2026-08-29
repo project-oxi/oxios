@@ -78,6 +78,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING: mount subsystem deleted — project roots are the sole
+  filesystem scope** (`docs/designs/2026-08-29-project-roots-persona-workbench-design.md`).
+  Projects are now a reduced record `{ name, root_paths, instructions }`:
+  roots are validated (absolute, existing directory, canonicalized,
+  de-duplicated) before persistence, `root_paths[0]` is the working
+  directory, and an empty list is a first-class **folderless project**.
+  Sessions bind by `project_id` (legacy `metadata.project_id(s)` still
+  read); every turn's execution scope comes from the project's roots
+  alone — a deleted project detaches its sessions, and nothing ever falls
+  back to an ambient workspace. Session-detail responses gain a
+  server-derived `effective_profile` (`{ persona_id, tool_profile,
+  affordances }`) that is the single source for conditional chat/workbench
+  affordances. The web ships a conversation-first coding workbench
+  (project bar, activity rail, artifact cards) and a native-folder-picker
+  project create/edit flow with stale-root surfacing
+  (`GET /api/projects/{id}/roots/status`). Project workspace HTTP moves
+  to `/api/project/workspace/{tree,file,status}` (session-scoped), and
+  `POST /api/system/pick-folders` exposes the local folder picker.
+  **Release note:** this cutover resets on-disk state — existing
+  `~/.oxios` data may be deleted on upgrade; back up before updating.
+
 - **Daemonless brain cutover (oxibrain 0.8).** oxibrain 0.8 deleted the
   resident daemon, the listening socket, the vault watcher, and the
   background extraction queue; Oxios now consumes it the way its ecosystem
@@ -127,6 +148,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo install` could not detect.
 
 ### Removed
+
+- **Mount subsystem** — `crates/oxios-kernel/src/mount/`, `MountApi`,
+  the `mounts` SQLite table, mount UI/routes/navigation, and every mount
+  contract are removed in the same change that introduces project roots
+  (design §10 step 2: no implementation may preserve a mount fallback).
+  `MountApi`'s facade slot is absorbed by `ProjectApi`.
 
 - **`memory_{write,read,search}` kernel tools** — replaced by the `brain`
   skill + allowlisted `oxibrain` CLI (daemonless brain cutover).

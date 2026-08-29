@@ -480,13 +480,22 @@ Full REST API on **port 4200** with 150+ endpoints. Auth middleware on all `/api
 | `PUT` | `/api/config` | Update configuration |
 | `GET` | `/api/metrics` | Prometheus metrics |
 
-### Workspace
+### Workspace & Projects
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/workspace/tree` | File tree |
-| `GET` | `/api/workspace/file/{path}` | Read file |
-| `PUT` | `/api/workspace/file/{path}` | Write file |
+| `GET` | `/api/workspace/tree` | State-workspace file tree |
+| `GET` | `/api/workspace/file/{path}` | Read state-workspace file |
+| `PUT` | `/api/workspace/file/{path}` | Write state-workspace file |
+| `GET` | `/api/project/workspace/tree` | Session project workspace tree |
+| `GET` | `/api/project/workspace/file` | Read project workspace file |
+| `PUT` | `/api/project/workspace/file` | Write project workspace file |
+| `GET` | `/api/project/workspace/status` | Git status for a project root |
+| `GET` | `/api/projects` | List projects |
+| `POST` | `/api/projects` | Create a project (native picker in UI) |
+| `GET/PUT/DELETE` | `/api/projects/{id}` | Manage a project |
+| `GET` | `/api/projects/{id}/roots/status` | Per-root exists/is_dir status |
+| `POST` | `/api/system/pick-folders` | Native folder picker (local host) |
 
 ### Memory
 

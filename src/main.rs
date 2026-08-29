@@ -1591,10 +1591,9 @@ fn main() {
     }
 }
 
-/// `oxios brain` — manage the daemonless oxibrain integration.
+/// `oxios brain` — manage the oxibrain integration (one process per
+/// operation; oxibrain 0.10 agent-first CLI).
 async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
-    use oxibrain_client::{BrainClient, LocalProcessEndpoint};
-
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let installer = oxios_kernel::BrainInstaller::from_brain_section(&home, &config.brain);
     let dir = oxios_kernel::brain::resolved_brain_dir(
@@ -1621,24 +1620,17 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             println!("dir: {}", dir.display());
             println!("space: {space}");
             if let Some(b) = binary {
-                let ep = LocalProcessEndpoint::new(b, &dir);
-                match BrainClient::spawn_local(ep).await {
-                    Ok(mut client) => {
-                        match client.stats(&space).await {
-                            Ok(stats) => println!(
-                                "episodes: {}",
-                                stats.get("episodes").and_then(|e| e.as_i64()).unwrap_or(0)
-                            ),
-                            Err(e) => println!("stats: unavailable ({e})"),
-                        }
-                        match client.pending_stats().await {
-                            Ok(p) => println!("pending extraction: {}", p.count),
-                            Err(e) => println!("pending: unavailable ({e})"),
-                        }
+                // Store stats come from the one-shot `admin stats` verb —
+                // no session child, matching the kernel's per-op transport.
+                match oxios_kernel::brain::run_cli(&b, &dir, &["admin", "stats"]).await {
+                    Ok(out) if out.status.success() => {
+                        print!("{}", String::from_utf8_lossy(&out.stdout));
                     }
-                    Err(_) => {
-                        println!("session: spawn failed (store locked or dir missing)");
-                    }
+                    Ok(out) => println!(
+                        "stats: unavailable (exit {})",
+                        out.status.code().unwrap_or(-1)
+                    ),
+                    Err(e) => println!("stats: unavailable ({e})"),
                 }
             }
             Ok(())
@@ -1666,24 +1658,30 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             {
                 println!("documents.toml: seeded vault root");
             }
-            // `--embed` is best-effort (spec §5.4: boot degrades the same
-            // way). Stock oxibrain 0.8.0 never attaches an embedder in the
-            // CLI, so the embed step reports "no embedding port configured"
-            // even though the lexical reconcile above it already committed.
-            // Degrade exactly that case: rerun without `--embed` so the
-            // reconcile report prints and the verb exits 0. Any other
-            // failure propagates (exit-status contract, Task 8).
-            let out =
-                oxios_kernel::brain::run_cli(&bin, &dir, &["index", "--documents", "--embed"])
-                    .await?;
+            // `--embed` is best-effort (boot degrades the same way). Stock
+            // oxibrain never attaches an embedder in the CLI, so the embed
+            // step reports "no embedding port configured" even though the
+            // lexical reconcile above it already committed. Degrade exactly
+            // that case: rerun without `--embed` so the reconcile report
+            // prints and the verb exits 0. Any other failure propagates.
+            let out = oxios_kernel::brain::run_cli(
+                &bin,
+                &dir,
+                &["admin", "index", "--documents", "--embed"],
+            )
+            .await?;
             if !out.status.success() {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 if oxios_kernel::brain::embed_gap(&stderr) {
-                    let retry =
-                        oxios_kernel::brain::run_cli(&bin, &dir, &["index", "--documents"]).await?;
+                    let retry = oxios_kernel::brain::run_cli(
+                        &bin,
+                        &dir,
+                        &["admin", "index", "--documents"],
+                    )
+                    .await?;
                     if !retry.status.success() {
                         anyhow::bail!(
-                            "`oxibrain index --documents` exited with status {}: {}",
+                            "`oxibrain admin index --documents` exited with status {}: {}",
                             retry.status,
                             String::from_utf8_lossy(&retry.stderr).trim_end()
                         );
@@ -1693,7 +1691,7 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
                     return Ok(());
                 }
                 anyhow::bail!(
-                    "`oxibrain index --documents --embed` exited with status {}: {}",
+                    "`oxibrain admin index --documents --embed` exited with status {}: {}",
                     out.status,
                     stderr.trim_end()
                 );
@@ -1705,11 +1703,12 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let bin = installer
                 .locate_binary()
                 .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
-            let out = oxios_kernel::brain::run_cli(&bin, &dir, &["extract", "--pending"]).await?;
+            let out = oxios_kernel::brain::run_cli(&bin, &dir, &["admin", "extract", "--pending"])
+                .await?;
             if !out.status.success() {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 anyhow::bail!(
-                    "`oxibrain extract --pending` exited with status {}: {}",
+                    "`oxibrain admin extract --pending` exited with status {}: {}",
                     out.status,
                     stderr.trim_end()
                 );
@@ -1728,7 +1727,7 @@ async fn cmd_foundation(
 ) -> Result<()> {
     use oxios_kernel::foundation;
     use oxios_kernel::foundation::bootstrap::{
-        BootstrapConfig, bootstrap, brain_endpoint, quick_probe,
+        BootstrapConfig, bootstrap, brain_executable, quick_probe,
     };
     use oxios_kernel::foundation::migrate::InMemoryKeychain;
     use oxios_kernel::foundation::profile::ProfileRegistry;
@@ -1758,8 +1757,8 @@ async fn cmd_foundation(
                 Some(binary) => println!("brain binary:   {}", binary.display()),
                 None => println!("brain binary:   (missing — run `oxios brain install`)"),
             }
-            let endpoint = brain_endpoint(home, dir.clone(), Some(&installer));
-            let state = quick_probe(&endpoint.executable);
+            let exe = brain_executable(home, Some(&installer));
+            let state = quick_probe(&exe);
             println!("brain state:    {state:?}");
             if registry_path.exists() {
                 match std::fs::read_to_string(&registry_path) {

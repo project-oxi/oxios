@@ -168,9 +168,7 @@ pub use mcp::{
     McpBridge, McpCapabilities, McpServer, McpTool, McpToolCallResult as CallToolResult,
 };
 
-pub use brain::{
-    BrainConfig, BrainInstaller, BrainSession, ChildSpawn, Spawn, SpawnBackoff, resolve_space,
-};
+pub use brain::{BrainConfig, BrainInstaller, BrainSession, Spawn, StdioChild, resolve_space};
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
 pub use kernel_handle::brain_api::BrainStatusSnapshot;
 pub use memory_agent::sona::{

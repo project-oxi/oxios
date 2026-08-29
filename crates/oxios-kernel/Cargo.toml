@@ -35,7 +35,7 @@ oxios-markdown = { version = "1.44.0", path = "../oxios-markdown" }
 oxios-calendar = { version = "1.44.0", path = "../oxios-calendar" }
 oxios-mcp = { version = "1.44.0", path = "../oxios-mcp" }
 oxicode-sdk = { workspace = true }
-# oxibrain daemon client (RFC-047).
+# oxibrain client (RFC-047): per-call `serve --stdio` child for console RPCs.
 oxibrain-client = { workspace = true }
 # 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
 # BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser

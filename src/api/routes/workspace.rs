@@ -1376,7 +1376,14 @@ mod tests {
                 locator: "notes/a.md".into(),
                 revision: "r1".into(),
                 ordinal: 0,
-                text: "body".into(),
+                text: oxibrain_client::UntrustedContentDto {
+                    kind: "untrusted_content".into(),
+                    text: "body".into(),
+                    provenance: oxibrain_client::ContentProvenanceDto {
+                        reference: "doc://vault/notes/a.md".into(),
+                        trust: "unverified".into(),
+                    },
+                },
                 modified_at_ms: 1700000000,
                 score: 0.5,
             }],
@@ -1401,6 +1408,16 @@ mod tests {
         assert_eq!(
             v["documents"][0]["modified_at"],
             serde_json::json!(1700000000)
+        );
+        // v2.13 §4: retrieved text is typed untrusted content, never a
+        // bare string.
+        assert_eq!(
+            v["documents"][0]["text"]["kind"],
+            serde_json::json!("untrusted_content")
+        );
+        assert_eq!(
+            v["documents"][0]["text"]["provenance"]["ref"],
+            serde_json::json!("doc://vault/notes/a.md")
         );
     }
 }

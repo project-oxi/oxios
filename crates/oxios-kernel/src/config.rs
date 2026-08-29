@@ -79,11 +79,13 @@ fn default_true_inline() -> bool {
     true
 }
 
-/// Brain integration configuration (oxibrain 0.8 daemonless).
+/// Brain integration configuration (oxibrain 0.10 agent-first CLI).
 ///
-/// oxios spawns a caller-owned `oxibrain serve --stdio` child against an
-/// explicit data directory. When the binary is unavailable the kernel
-/// degrades (memory ops return empty) and agent turns complete normally.
+/// oxios drives `oxibrain <op>` one-shot processes for the agent path and
+/// a per-call `serve --stdio` child for console-only native RPCs, always
+/// against an explicit data directory. When the binary is unavailable the
+/// kernel degrades (memory ops return empty) and agent turns complete
+/// normally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrainSection {

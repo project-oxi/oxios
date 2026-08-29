@@ -1,350 +1,472 @@
-//! Kernel-owned `oxibrain serve --stdio` session (oxibrain 0.8 daemonless).
+//! One-process-per-operation brain transport (oxibrain 0.10 agent-first CLI).
 //!
-//! One lazily-spawned caller-owned child per oxios process for all
-//! interactive brain surfaces. Nothing spawns until the first brain call;
-//! a dead child is respawned on the next call under a capped backoff; a
-//! missing binary optionally triggers one install (30 s rate-limit).
-//! Degradation contract: every method returns `None` when the child cannot
-//! be spawned or a call fails (RFC-047 §4).
+//! Nothing resident — every interaction spawns a short-lived process:
+//!
+//! - **Agent-facing ops** ([`BrainSession::recall`], [`BrainSession::remember`],
+//!   [`BrainSession::search`], [`BrainSession::brief`], [`BrainSession::traverse`],
+//!   [`BrainSession::why`], [`BrainSession::contradictions`]) run as one-shot
+//!   `oxibrain --dir <dir> <op> --json -` subprocesses. The payload goes over
+//!   stdin (spec `agent-first-cli-v1` §2: prose bodies never travel as argv)
+//!   and stdout carries the stable envelope `{api, ok, op, space?, data, meta}`
+//!   with machine-meaningful exit codes (§3).
+//! - **Console-only reads** that the 14-op CLI surface does not expose
+//!   (native `stats`, `document_history`, `pending_stats`, `spaces/list`,
+//!   and the `entity://` / `timeline://` / `space://` resources) speak
+//!   JSON-RPC over a caller-owned `serve --stdio` child that is spawned
+//!   per call and reaped when the call returns.
+//!
+//! Degradation contract (RFC-047 §4): every method returns `None` when the
+//! binary is missing, a process fails, or an op errors — the agent turn
+//! continues normally. A well-formed envelope proves the transport is alive
+//! even when the op itself failed, so availability tracks the transport.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    #[derive(Debug)]
-    struct FakeSpawn {
-        spawns: AtomicUsize,
-        fail_spawn: AtomicBool,
-        /// Shared across spawns so toggling is observed by the in-flight
-        /// task and any subsequent respawn (matches the brief's respawn
-        /// scenario where the test flips `fail_calls` back to false
-        /// before the respawned call).
-        fail_calls: Arc<AtomicBool>,
-    }
-
-    #[async_trait::async_trait]
-    impl Spawn for FakeSpawn {
-        async fn spawn(&self, _dir: &Path) -> anyhow::Result<BrainClient> {
-            self.spawns.fetch_add(1, Ordering::SeqCst);
-            if self.fail_spawn.load(Ordering::SeqCst) {
-                anyhow::bail!("no binary");
-            }
-            let (c_req, s_req) = tokio::io::duplex(8192);
-            let (mut s_resp, c_resp) = tokio::io::duplex(8192);
-            // Share the live `fail_calls` AtomicBool with the spawned
-            // task. The brief says "fail_calls is read per spawn"; we
-            // satisfy that by re-reading self.fail_calls here AND
-            // handing the live handle to the task so toggles between
-            // spawns are visible to in-flight calls.
-            let fail_w = Arc::clone(&self.fail_calls);
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(s_req);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
-                        break;
-                    }
-                    let v: serde_json::Value = match serde_json::from_str(&line) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let id = v["id"].clone();
-                    let method = v["method"].as_str().unwrap_or_default().to_string();
-                    let resp = if fail_w.load(Ordering::SeqCst) && method == "tools/call" {
-                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":"boom"}})
-                    } else {
-                        respond(&method, &v)
-                    };
-                    let mut out = serde_json::to_string(&resp).unwrap();
-                    out.push('\n');
-                    if s_resp.write_all(out.as_bytes()).await.is_err() {
-                        break;
-                    }
-                }
-            });
-            Ok(BrainClient::from_io(c_resp, c_req))
-        }
-    }
-
-    fn respond(method: &str, v: &serde_json::Value) -> serde_json::Value {
-        let id = v["id"].clone();
-        match method {
-            "tools/call" => {
-                let name = v["params"]["name"].as_str().unwrap_or_default();
-                let text = match name {
-                    "recall" => json!({
-                        "layers":[{"kind":"profile","text":"remembered: test",
-                                   "estimated_tokens":5,"provenance":[]}],
-                        "total_tokens":5,"budget":3000,"truncated":false
-                    })
-                    .to_string(),
-                    "ingest" => "ep_1".to_string(),
-                    "brief" => "# brief".to_string(),
-                    "search" => json!({
-                        "memory":[{"entity_id":"e1","entity_surface":"Alice",
-                                   "entity_type":"Person","score":0.9,"snippet":"s"}],
-                        "documents":[{"document_id":"d1","root":"vault",
-                                      "locator":"notes/a.md","revision":"r1",
-                                      "ordinal":0,"text":"doc text",
-                                      "modified_at":1700000000,"score":0.5}],
-                        "freshness":{"reconciled_roots":["vault"],
-                                     "skipped_roots":[],"skipped_files":0,
-                                     "stale_after_retry":[],"dense_coverage":null}
-                    })
-                    .to_string(),
-                    "traverse" | "review_merges" | "why" | "contradictions" | "stats"
-                    | "get_entity" | "timeline" => json!({"ok":true}).to_string(),
-                    _ => "{}".to_string(),
-                };
-                json!({"jsonrpc":"2.0","id":id,
-                       "result":{"content":[{"type":"text","text":text}]}})
-            }
-            "spaces/list" => json!({"jsonrpc":"2.0","id":id,
-                "result":{"spaces":[{"id":"sp1","name":"personal","created_at":1,
-                                     "episode_count":2,"entity_count":3}]}}),
-            "document_history" => json!({"jsonrpc":"2.0","id":id,
-                "result":[{"revision":"abc","committed_at_ms":1,"content":"v1"}]}),
-            "pending_stats" => json!({"jsonrpc":"2.0","id":id,
-                "result":{"count":4,"oldest_seq":9}}),
-            "resources/read" => json!({"jsonrpc":"2.0","id":id,
-                "result":{"contents":[{"text":"{\"ok\":true}"}]}}),
-            _ => json!({"jsonrpc":"2.0","id":id,"result":{}}),
-        }
-    }
-
-    fn session(fake: Arc<FakeSpawn>) -> BrainSession {
-        BrainSession::new(
-            Arc::new(BrainInstaller::from_brain_section(
-                Path::new("/nonexistent"),
-                &crate::config::BrainSection::default(),
-            )),
-            false,
-            BrainConfig::new("/tmp/brain", "personal"),
-        )
-        .with_spawner(fake)
-    }
-
-    #[tokio::test]
-    async fn spawns_lazily_and_reuses_client() {
-        let fake = Arc::new(FakeSpawn {
-            spawns: AtomicUsize::new(0),
-            fail_spawn: AtomicBool::new(false),
-            fail_calls: Arc::new(AtomicBool::new(false)),
-        });
-        let s = session(fake.clone());
-        assert!(!s.is_available());
-        let a = s.recall("query", 3000).await;
-        let b = s.recall("query", 3000).await;
-        assert!(a.is_some() && b.is_some());
-        assert_eq!(fake.spawns.load(Ordering::SeqCst), 1, "one child, reused");
-        assert!(s.is_available());
-        assert_eq!(s.space(), "personal");
-    }
-
-    #[tokio::test]
-    async fn spawn_failure_degrades_with_backoff() {
-        let fake = Arc::new(FakeSpawn {
-            spawns: AtomicUsize::new(0),
-            fail_spawn: AtomicBool::new(true),
-            fail_calls: Arc::new(AtomicBool::new(false)),
-        });
-        let s = session(fake.clone());
-        assert!(s.recall("q", 100).await.is_none());
-        assert!(!s.is_available());
-        assert_eq!(fake.spawns.load(Ordering::SeqCst), 1);
-        // Within the 1s backoff window: no new spawn attempt.
-        assert!(s.recall("q", 100).await.is_none());
-        assert_eq!(fake.spawns.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            SpawnBackoff::delay_for(3),
-            std::time::Duration::from_secs(30)
-        );
-    }
-
-    #[tokio::test]
-    async fn call_error_drops_client_and_respawns() {
-        let fake = Arc::new(FakeSpawn {
-            spawns: AtomicUsize::new(0),
-            fail_spawn: AtomicBool::new(false),
-            fail_calls: Arc::new(AtomicBool::new(false)),
-        });
-        let s = session(fake.clone());
-        assert!(s.remember("fact", "agent").await.is_some());
-        fake.fail_calls.store(true, Ordering::SeqCst);
-        // Failing call → degraded + client dropped.
-        assert!(s.remember("fact", "agent").await.is_none());
-        assert!(!s.is_available());
-        // Next call respawns (fresh FakeSpawn read of fail_calls = true per
-        // spawn… the toggle is read at spawn time, so flip it back first).
-        fake.fail_calls.store(false, Ordering::SeqCst);
-        assert!(s.remember("fact", "agent").await.is_some());
-        assert_eq!(fake.spawns.load(Ordering::SeqCst), 2, "respawned once");
-    }
-
-    #[tokio::test]
-    async fn search_returns_two_plane_envelope() {
-        let fake = Arc::new(FakeSpawn {
-            spawns: AtomicUsize::new(0),
-            fail_spawn: AtomicBool::new(false),
-            fail_calls: Arc::new(AtomicBool::new(false)),
-        });
-        let s = session(fake);
-        let r = s.search("alice", "hybrid", 20, None).await.unwrap();
-        assert_eq!(r.memory.len(), 1);
-        assert_eq!(r.documents.len(), 1);
-        assert_eq!(r.documents[0].root, "vault");
-        assert_eq!(r.freshness.reconciled_roots, vec!["vault".to_string()]);
-        let mem_only = s.search("alice", "hybrid", 20, Some(&["memory"])).await;
-        assert!(mem_only.is_some());
-    }
-
-    #[tokio::test]
-    async fn native_methods_work() {
-        let fake = Arc::new(FakeSpawn {
-            spawns: AtomicUsize::new(0),
-            fail_spawn: AtomicBool::new(false),
-            fail_calls: Arc::new(AtomicBool::new(false)),
-        });
-        let s = session(fake);
-        let hist = s.document_history("vault", "notes/a.md", 10).await.unwrap();
-        assert!(hist.is_array());
-        let pending = s.pending_stats().await.unwrap();
-        assert_eq!(pending.count, 4);
-        assert!(s.spaces().await.is_some());
-        assert!(s.space_overview().await.is_some());
-    }
-
-    #[tokio::test]
-    async fn disabled_session_never_spawns_and_returns_none() {
-        // Build from the disabled constructor — no installer, no auto_install,
-        // just a config + NoopSpawn behind the scenes.
-        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain", "personal"));
-        assert!(!s.is_available());
-        // Every method must degrade without ever touching the installer.
-        assert!(s.recall("q", 100).await.is_none());
-        assert!(s.remember("fact", "agent").await.is_none());
-        assert!(s.search("q", "hybrid", 5, None).await.is_none());
-        assert!(s.pending_stats().await.is_none());
-        // Backoff was never armed (the NoopSpawn error is the only path),
-        // so the session stays available=false but also stays cheap to
-        // re-call — no installer attempt fires.
-        assert!(!s.is_available());
-    }
-
-    #[test]
-    fn assemble_context_joins_layers() {
-        let value = serde_json::json!({
-            "layers": [
-                {"kind": "high_salience_beliefs", "text": "Bob likes coffee", "estimated_tokens": 4},
-                {"kind": "recent_episodes", "text": "We discussed Rust", "estimated_tokens": 5}
-            ],
-            "total_tokens": 9,
-            "truncated": false
-        });
-        let text = super::assemble_context_text(&value).unwrap();
-        assert!(text.contains("## high_salience_beliefs"));
-        assert!(text.contains("Bob likes coffee"));
-        assert!(text.contains("## recent_episodes"));
-        assert!(text.contains("We discussed Rust"));
-    }
-
-    #[test]
-    fn assemble_context_empty_layers_is_none() {
-        let value = serde_json::json!({ "layers": [], "total_tokens": 0 });
-        assert!(super::assemble_context_text(&value).is_none());
-    }
-
-    #[test]
-    fn parse_resource_json_extracts_first_content_block() {
-        let value = serde_json::json!({
-            "contents": [
-                {"mimeType": "application/json", "text": "[{\"statement\": \"s1\"}]"}
-            ]
-        });
-        let parsed = super::parse_resource_json(&value).expect("parses");
-        assert_eq!(parsed[0]["statement"], "s1");
-    }
-
-    #[test]
-    fn parse_resource_json_degrades_on_malformed_payload() {
-        // No contents key.
-        assert!(super::parse_resource_json(&serde_json::json!({})).is_none());
-        // Contents without text.
-        assert!(super::parse_resource_json(&serde_json::json!({"contents": [{}]})).is_none());
-        // Text that is not JSON.
-        assert!(
-            super::parse_resource_json(&serde_json::json!({"contents": [{"text": "nope"}]}))
-                .is_none()
-        );
-    }
-}
 use futures::future::BoxFuture;
 use oxibrain_client::{
-    BrainClient, ClientHello, PendingStatsDto, SearchResponseDto, default_client_hello,
+    BrainClient, ClientHello, LocalProcessEndpoint, PendingStatsDto, SearchResponseDto,
+    default_client_hello,
 };
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tokio::time::Instant;
 
 use super::config::BrainConfig;
 use super::installer::BrainInstaller;
 
-/// How the session obtains a client. Production spawns a stdio child;
-/// tests attach `BrainClient::from_io` to a scripted responder.
+/// Upper bound on one CLI op process. Agent ops are local SQLite work and
+/// inline extraction is opt-in (`extract: true`), so 90 s only bites on
+/// pathological lock contention or a wedged binary.
+const OP_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How the console path obtains a client. Production spawns a `serve
+/// --stdio` child per call; tests attach [`BrainClient::from_io`] to a
+/// scripted responder.
 #[async_trait::async_trait]
 pub trait Spawn: Send + Sync + std::fmt::Debug {
-    /// Build a ready client serving the store at `dir`.
-    async fn spawn(&self, dir: &Path) -> anyhow::Result<BrainClient>;
+    /// Build a ready client for the store at `dir`. The executable has
+    /// already been resolved (and installed when allowed).
+    async fn spawn(&self, exe: &Path, dir: &Path) -> anyhow::Result<BrainClient>;
 }
 
-/// Spawner stub that always errors. Used when `[brain] enabled = false` so
-/// every brain call degrades without ever invoking the installer or the
-/// auto-install rate-limiter (RFC-047 §4, kernel config docs).
+/// Production child transport: `spawn_local` + capability handshake, one
+/// child per call. `kill_on_drop` semantics apply — the child dies with the
+/// returned client.
 #[derive(Debug)]
-pub(crate) struct NoopSpawn;
+pub struct StdioChild;
 
 #[async_trait::async_trait]
-impl Spawn for NoopSpawn {
-    async fn spawn(&self, _dir: &Path) -> anyhow::Result<BrainClient> {
-        anyhow::bail!("brain disabled — set `[brain] enabled = true` to enable")
+impl Spawn for StdioChild {
+    async fn spawn(&self, exe: &Path, dir: &Path) -> anyhow::Result<BrainClient> {
+        let endpoint = LocalProcessEndpoint::new(exe, dir);
+        let mut client = BrainClient::spawn_local(endpoint).await?;
+        let hello: ClientHello = default_client_hello(env!("CARGO_PKG_NAME"));
+        client.bring_up(None, hello).await?;
+        Ok(client)
     }
 }
 
-/// Production spawner: resolve the binary (installing once per 30 s when
-/// `auto_install`), `spawn_local`, then `bring_up` (capability handshake).
-pub struct ChildSpawn {
+/// A degraded-or-live brain connection built entirely from short-lived
+/// processes. Cheap to clone via [`Arc`]; no background tasks, no respawn
+/// bookkeeping.
+#[derive(Debug)]
+pub struct BrainSession {
     installer: Arc<BrainInstaller>,
     auto_install: bool,
+    /// `false` when `[brain] enabled = false` — every call degrades without
+    /// touching the installer or spawning anything (RFC-047 §4, kernel docs).
+    enabled: bool,
+    available: AtomicBool,
+    config: BrainConfig,
+    /// One managed install attempt per 30 s when `auto_install` is set.
     last_install: Mutex<Option<Instant>>,
+    child: Arc<dyn Spawn>,
 }
 
-impl std::fmt::Debug for ChildSpawn {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChildSpawn")
-            .field("installer", &self.installer)
-            .field("auto_install", &self.auto_install)
-            .finish_non_exhaustive()
+impl BrainSession {
+    /// Build a session with the production transports. Nothing spawns yet.
+    pub fn new(installer: Arc<BrainInstaller>, auto_install: bool, config: BrainConfig) -> Self {
+        Self::with_child_arc(Arc::new(StdioChild), installer, auto_install, config)
     }
-}
 
-impl ChildSpawn {
-    /// Build a production spawner.
-    pub fn new(installer: Arc<BrainInstaller>, auto_install: bool) -> Self {
+    /// Build a disabled session. Every brain call degrades to `None`
+    /// without invoking the installer or spawning a process — used when
+    /// `[brain] enabled = false` (kernel boot).
+    pub fn disabled(config: BrainConfig) -> Self {
+        Self::with_child_arc(Arc::new(StdioChild), disabled_installer(), false, config).disable()
+    }
+
+    fn with_child_arc(
+        child: Arc<dyn Spawn>,
+        installer: Arc<BrainInstaller>,
+        auto_install: bool,
+        config: BrainConfig,
+    ) -> Self {
         Self {
             installer,
             auto_install,
+            enabled: true,
+            available: AtomicBool::new(false),
+            config,
             last_install: Mutex::new(None),
+            child,
         }
     }
 
+    fn disable(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+
+    /// Replace the child transport (test injection). Builder style.
+    pub fn with_spawner(self, child: Arc<dyn Spawn>) -> Self {
+        Self { child, ..self }
+    }
+
+    /// Whether the last transport interaction succeeded. Cheap lock-free read.
+    pub fn is_available(&self) -> bool {
+        self.available.load(Ordering::Relaxed)
+    }
+
+    /// The configured space name.
+    pub fn space(&self) -> &str {
+        &self.config.space
+    }
+
+    /// The brain data directory.
+    pub fn dir(&self) -> &Path {
+        &self.config.dir
+    }
+
+    // ── Agent-runtime methods (CLI op dispatch) ───────────────────────
+
+    /// Assemble recall context for an agent turn within `budget` tokens.
+    pub async fn recall(&self, query: &str, budget: usize) -> Option<String> {
+        let data = self
+            .run_op(
+                "recall",
+                json!({
+                    "query": query,
+                    "space": self.config.space,
+                    "token_budget": budget,
+                }),
+            )
+            .await?;
+        let text = assemble_context_text(&data);
+        if text.is_some() {
+            crate::metrics::get_metrics().oxibrain_recall_total.inc();
+        }
+        text
+    }
+
+    /// Remember content as an episode; returns the episode id. Extraction
+    /// is deferred to the backlog drain (`admin extract --pending`, the
+    /// kernel's 600 s timer) — the CLI one-shot has no sampling client
+    /// (spec §8: `extraction: "pending"` is success, not completion).
+    pub async fn remember(&self, content: &str, source: &str) -> Option<String> {
+        let data = self
+            .run_op(
+                "ingest",
+                json!({
+                    "content": content,
+                    "space": self.config.space,
+                    "source_path": source,
+                    // Ride a short writer lock instead of failing the write
+                    // on first contention; still bounded (spec §6).
+                    "wait_lock_ms": 2_000,
+                }),
+            )
+            .await?;
+        episode_id_from_ingest(&data)
+    }
+
+    /// Two-plane search (`memory` + `documents`); `planes=None` → both.
+    pub async fn search(
+        &self,
+        query: &str,
+        mode: &str,
+        limit: usize,
+        planes: Option<&[&str]>,
+    ) -> Option<SearchResponseDto> {
+        let mut payload = json!({
+            "query": query,
+            "space": self.config.space,
+            "mode": mode,
+            "limit": limit,
+        });
+        if let Some(planes) = planes {
+            payload["planes"] = json!(planes);
+        }
+        let data = self.run_op("search", payload).await?;
+        serde_json::from_value(data).ok()
+    }
+
+    /// Render a readable page as Markdown (`entity` / `space` / `topic`).
+    pub async fn brief(
+        &self,
+        target_kind: &str,
+        entity_id: Option<&str>,
+        topic: Option<&str>,
+    ) -> Option<String> {
+        let mut payload = json!({ "target_kind": target_kind, "space": self.config.space });
+        if let Some(id) = entity_id {
+            payload["entity_id"] = json!(id);
+        }
+        if let Some(topic) = topic {
+            payload["topic"] = json!(topic);
+        }
+        let data = self.run_op("brief", payload).await?;
+        data.as_str().map(str::to_string)
+    }
+
+    /// Bounded belief-filtered subgraph traversal.
+    pub async fn traverse(
+        &self,
+        start: &[String],
+        depth: usize,
+        max_nodes: usize,
+        direction: &str,
+    ) -> Option<Value> {
+        self.run_op(
+            "traverse",
+            json!({
+                "start": start,
+                "depth": depth,
+                "max_nodes": max_nodes,
+                "direction": direction,
+                "space": self.config.space,
+            }),
+        )
+        .await
+    }
+
+    /// Provenance and confidence breakdown for a statement.
+    pub async fn why(&self, statement_id: &str) -> Option<Value> {
+        self.run_op(
+            "why",
+            json!({ "statement_id": statement_id, "space": self.config.space }),
+        )
+        .await
+    }
+
+    /// List contradicted statements in the space.
+    pub async fn contradictions(&self) -> Option<Value> {
+        self.run_op("contradictions", json!({ "space": self.config.space }))
+            .await
+    }
+
+    // ── Web console methods (per-call stdio child) ────────────────────
+
+    /// An entity's current beliefs (`entity://` resource — the CLI op set
+    /// has no entity-detail op by design; ids are never guessed).
+    pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
+        let uri = format!("entity://{}?space={}", entity_id, self.config.space);
+        self.read_resource_json(&uri).await
+    }
+
+    /// Belief intervals for an entity over a time range (epoch ms).
+    pub async fn timeline(
+        &self,
+        entity_id: &str,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Option<Value> {
+        let mut uri = format!("timeline://{}?space={}", entity_id, self.config.space);
+        if let Some(from) = from {
+            uri.push_str(&format!("&from={from}"));
+        }
+        if let Some(to) = to {
+            uri.push_str(&format!("&to={to}"));
+        }
+        self.read_resource_json(&uri).await
+    }
+
+    /// Aggregate counts for the space (native JSON-RPC `stats` — the tool
+    /// moved off the MCP surface in v2.13; console data stays native).
+    pub async fn stats(&self) -> Option<Value> {
+        self.with_child_client(|c| {
+            let space = self.config.space.clone();
+            Box::pin(async move { c.call_rpc_json("stats", json!({ "space": space })).await })
+        })
+        .await
+    }
+
+    /// Spaces the server exposes (name, counts, created_at).
+    pub async fn spaces(&self) -> Option<Value> {
+        let list = self
+            .with_child_client(|c| Box::pin(async move { c.list_spaces().await }))
+            .await?;
+        serde_json::to_value(list).ok()
+    }
+
+    /// Overview of the configured space (`space://{name}` resource).
+    pub async fn space_overview(&self) -> Option<Value> {
+        let uri = format!("space://{}", self.config.space);
+        self.read_resource_json(&uri).await
+    }
+
+    /// gix-backed revision history of one tracked document.
+    pub async fn document_history(
+        &self,
+        alias: &str,
+        locator: &str,
+        limit: usize,
+    ) -> Option<Value> {
+        let list = self
+            .with_child_client(|c| {
+                let space = self.config.space.clone();
+                let alias = alias.to_string();
+                let locator = locator.to_string();
+                Box::pin(async move { c.document_history(&space, &alias, &locator, limit).await })
+            })
+            .await?;
+        serde_json::to_value(list).ok()
+    }
+
+    /// Memory-plane extraction backlog stats.
+    pub async fn pending_stats(&self) -> Option<PendingStatsDto> {
+        self.with_child_client(|c| Box::pin(async move { c.pending_stats().await }))
+            .await
+    }
+
+    /// Console merges/failures/sources panels. oxibrain 0.10 removed the
+    /// `review_merges` tool (v2.13 slot accounting) and its `admin review`
+    /// replacement is not shipped yet — degrade to `None` (the web console
+    /// renders empty panels) until upstream lands it (spec agent-first-cli
+    /// §10). Revisit on the next oxibrain bump.
+    pub async fn review_merges(&self, _section: &str) -> Option<Value> {
+        None
+    }
+
+    // ── Plumbing ──────────────────────────────────────────────────────
+
+    /// Run one op end to end: resolve the binary (installing once per 30 s
+    /// when `auto_install`), spawn `oxibrain --dir D <op> --json -`, feed
+    /// the payload over stdin, and parse the response envelope. `None` on
+    /// any transport failure or op error.
+    async fn run_op(&self, op: &str, payload: Value) -> Option<Value> {
+        if !self.enabled {
+            return None;
+        }
+        let Some(exe) = self.executable().await else {
+            self.set_available(false);
+            return None;
+        };
+        let mut child = match tokio::process::Command::new(&exe)
+            .arg("--dir")
+            .arg(self.config.dir.clone())
+            .arg(op)
+            .args(["--json", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(op, error = %e, "brain op spawn failed — degraded");
+                self.set_available(false);
+                return None;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(payload.to_string().as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        }
+        let out = match tokio::time::timeout(OP_TIMEOUT, child.wait_with_output()).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                tracing::warn!(op, error = %e, "brain op process failed — degraded");
+                self.set_available(false);
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(op, timeout = ?OP_TIMEOUT, "brain op timed out — degraded");
+                return None; // kill_on_drop reaps the child
+            }
+        };
+        let envelope: serde_json::Value = match serde_json::from_slice(&out.stdout) {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::warn!(
+                    op,
+                    stdout = %String::from_utf8_lossy(&out.stdout),
+                    stderr = %String::from_utf8_lossy(&out.stderr),
+                    "brain op printed no envelope — degraded"
+                );
+                self.set_available(false);
+                return None;
+            }
+        };
+        // A well-formed envelope proves the transport works, even when the
+        // op itself failed (not_found, locked, …).
+        self.set_available(true);
+        if envelope.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            return Some(unwrap_tool_data(
+                envelope.get("data").cloned().unwrap_or(Value::Null),
+            ));
+        }
+        let error = envelope.get("error").cloned().unwrap_or(Value::Null);
+        let code = error.get("code").and_then(Value::as_str).unwrap_or("?");
+        let message = error.get("message").and_then(Value::as_str).unwrap_or("?");
+        tracing::warn!(op, code, message, "brain op failed");
+        None
+    }
+
+    /// Run `f` against a fresh `serve --stdio` child: spawn, handshake,
+    /// call, reap. No respawn logic — a failed call simply degrades and
+    /// the next call starts a new child.
+    async fn with_child_client<F, T>(&self, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut BrainClient) -> BoxFuture<'_, anyhow::Result<T>>,
+    {
+        if !self.enabled {
+            return None;
+        }
+        let Some(exe) = self.executable().await else {
+            self.set_available(false);
+            return None;
+        };
+        let mut client = match self.child.spawn(&exe, &self.config.dir).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "brain child spawn failed — degraded");
+                self.set_available(false);
+                return None;
+            }
+        };
+        match f(&mut client).await {
+            Ok(v) => {
+                self.set_available(true);
+                Some(v)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "brain child call failed — degraded");
+                self.set_available(false);
+                None
+            }
+        }
+    }
+
+    /// Read one MCP resource and parse its first content block as JSON.
+    async fn read_resource_json(&self, uri: &str) -> Option<Value> {
+        let value = self
+            .with_child_client(|c| {
+                let uri = uri.to_string();
+                Box::pin(async move {
+                    c.call_rpc_json("resources/read", json!({ "uri": uri }))
+                        .await
+                })
+            })
+            .await?;
+        parse_resource_json(&value)
+    }
+
+    /// Resolve the binary, installing once per 30 s when `auto_install`.
     async fn executable(&self) -> Option<PathBuf> {
         if let Some(b) = self.installer.locate_binary() {
             return Some(b);
@@ -375,343 +497,22 @@ impl ChildSpawn {
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl Spawn for ChildSpawn {
-    async fn spawn(&self, dir: &Path) -> anyhow::Result<BrainClient> {
-        let exe = self.executable().await.ok_or_else(|| {
-            anyhow::anyhow!("oxibrain binary not found — run `oxios brain install`")
-        })?;
-        let endpoint = oxibrain_client::LocalProcessEndpoint::new(exe, dir);
-        let mut client = BrainClient::spawn_local(endpoint).await?;
-        let hello: ClientHello = default_client_hello(env!("CARGO_PKG_NAME"));
-        client.bring_up(None, hello).await?;
-        Ok(client)
+    fn set_available(&self, up: bool) {
+        self.available.store(up, Ordering::Relaxed);
+        crate::metrics::get_metrics()
+            .oxibrain_available
+            .set(if up { 1.0 } else { 0.0 });
     }
 }
 
-/// Capped spawn-backoff schedule: [0, 1s, 5s, 30s…].
-pub struct SpawnBackoff;
-
-impl SpawnBackoff {
-    /// Delay before spawn attempt number `consecutive_failures + 1`.
-    pub fn delay_for(consecutive_failures: u32) -> Duration {
-        match consecutive_failures {
-            0 => Duration::ZERO,
-            1 => Duration::from_secs(1),
-            2 => Duration::from_secs(5),
-            _ => Duration::from_secs(30),
-        }
-    }
-}
-
-/// A live (or degraded) session with the oxibrain stdio child.
-#[derive(Debug)]
-pub struct BrainSession {
-    client: Mutex<Option<BrainClient>>,
-    config: BrainConfig,
-    available: AtomicBool,
-    spawner: Arc<dyn Spawn>,
-    failures: AtomicU32,
-    next_retry: Mutex<Option<Instant>>,
-}
-
-impl BrainSession {
-    /// Build a session with the production spawner. Nothing spawns yet.
-    pub fn new(installer: Arc<BrainInstaller>, auto_install: bool, config: BrainConfig) -> Self {
-        Self::with_spawner_arc(Arc::new(ChildSpawn::new(installer, auto_install)), config)
-    }
-
-    /// Build a session whose spawner is `NoopSpawn`. Every brain call
-    /// degrades to `None` without invoking the installer or spawning a
-    /// child — used when `[brain] enabled = false` (kernel boot).
-    pub fn disabled(config: BrainConfig) -> Self {
-        Self::with_spawner_arc(Arc::new(NoopSpawn), config)
-    }
-
-    fn with_spawner_arc(spawner: Arc<dyn Spawn>, config: BrainConfig) -> Self {
-        Self {
-            client: Mutex::new(None),
-            config,
-            available: AtomicBool::new(false),
-            spawner,
-            failures: AtomicU32::new(0),
-            next_retry: Mutex::new(None),
-        }
-    }
-
-    /// Replace the spawner (test injection). Builder style.
-    pub fn with_spawner(self, spawner: Arc<dyn Spawn>) -> Self {
-        Self::with_spawner_arc(spawner, self.config)
-    }
-
-    /// Whether a child is currently connected. Cheap lock-free read.
-    pub fn is_available(&self) -> bool {
-        self.available.load(Ordering::Relaxed)
-    }
-
-    /// The configured space name.
-    pub fn space(&self) -> &str {
-        &self.config.space
-    }
-
-    /// The brain data directory.
-    pub fn dir(&self) -> &Path {
-        &self.config.dir
-    }
-
-    // ── Agent-runtime methods ─────────────────────────────────────────
-
-    /// Assemble recall context for an agent turn within `budget` tokens.
-    pub async fn recall(&self, query: &str, budget: usize) -> Option<String> {
-        let query = query.to_string();
-        let space = self.config.space.clone();
-        let value = self
-            .call(move |c| Box::pin(async move { c.recall(&query, &space, budget).await }))
-            .await?;
-        let text = assemble_context_text(&value);
-        if text.is_some() {
-            crate::metrics::get_metrics().oxibrain_recall_total.inc();
-        }
-        text
-    }
-
-    /// Remember content as an episode; returns the episode id. Extraction
-    /// is deferred to the backlog drain (the MCP surface cannot extract
-    /// inline without a sampling session).
-    pub async fn remember(&self, content: &str, source: &str) -> Option<String> {
-        let content = content.to_string();
-        let source = source.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.ingest(&content, &space, &source).await }))
-            .await
-    }
-
-    // ── Web API methods ───────────────────────────────────────────────
-
-    /// Two-plane search (`memory` + `documents`); `planes=None` → both.
-    pub async fn search(
-        &self,
-        query: &str,
-        mode: &str,
-        limit: usize,
-        planes: Option<&[&str]>,
-    ) -> Option<SearchResponseDto> {
-        let query = query.to_string();
-        let mode = mode.to_string();
-        let space = self.config.space.clone();
-        let planes = planes.map(|p| p.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        self.call(move |c| {
-            Box::pin(async move {
-                match planes {
-                    Some(p) => {
-                        let refs: Vec<&str> = p.iter().map(String::as_str).collect();
-                        c.search_planes(&query, &space, &mode, limit, &refs).await
-                    }
-                    None => c.search(&query, &space, &mode, limit).await,
-                }
-            })
-        })
-        .await
-    }
-
-    /// An entity's current beliefs.
-    pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
-        let id = entity_id.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.get_entity(&id, &space).await }))
-            .await
-    }
-
-    /// Belief intervals for an entity over a time range (epoch ms).
-    pub async fn timeline(
-        &self,
-        entity_id: &str,
-        from: Option<i64>,
-        to: Option<i64>,
-    ) -> Option<Value> {
-        let id = entity_id.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.timeline(&id, &space, from, to).await }))
-            .await
-    }
-
-    /// Provenance and confidence breakdown for a statement.
-    pub async fn why(&self, statement_id: &str) -> Option<Value> {
-        let id = statement_id.to_string();
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.why(&id, &space).await }))
-            .await
-    }
-
-    /// List contradicted statements in the space.
-    pub async fn contradictions(&self) -> Option<Value> {
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.contradictions(&space).await }))
-            .await
-    }
-
-    /// Aggregate counts for the space.
-    pub async fn stats(&self) -> Option<Value> {
-        let space = self.config.space.clone();
-        self.call(move |c| Box::pin(async move { c.stats(&space).await }))
-            .await
-    }
-
-    // ── Web console methods (passthrough) ─────────────────────────────
-
-    /// Render a readable page as Markdown (`entity` / `space` / `topic`).
-    pub async fn brief(
-        &self,
-        target_kind: &str,
-        entity_id: Option<&str>,
-        topic: Option<&str>,
-    ) -> Option<String> {
-        let args = json!({
-            "target_kind": target_kind,
-            "entity_id": entity_id,
-            "topic": topic,
-            "space": self.config.space,
-        });
-        self.call(move |c| Box::pin(async move { c.call_tool("brief", args).await }))
-            .await
-    }
-
-    /// Bounded belief-filtered subgraph traversal.
-    pub async fn traverse(
-        &self,
-        start: &[String],
-        depth: usize,
-        max_nodes: usize,
-        direction: &str,
-    ) -> Option<Value> {
-        let args = json!({
-            "start": start,
-            "depth": depth,
-            "max_nodes": max_nodes,
-            "direction": direction,
-            "space": self.config.space,
-        });
-        self.call(move |c| Box::pin(async move { c.call_tool_json("traverse", args).await }))
-            .await
-    }
-
-    /// Console data: `merges`, `failures`, or `sources`.
-    pub async fn review_merges(&self, section: &str) -> Option<Value> {
-        let args = json!({ "section": section, "space": self.config.space });
-        self.call(move |c| Box::pin(async move { c.call_tool_json("review_merges", args).await }))
-            .await
-    }
-
-    /// Spaces the server exposes (name, counts, created_at).
-    pub async fn spaces(&self) -> Option<Value> {
-        let list = self
-            .call(move |c| Box::pin(async move { c.list_spaces().await }))
-            .await?;
-        Some(serde_json::to_value(list).unwrap_or(Value::Null))
-    }
-
-    /// Overview of the configured space (`space://{name}` resource).
-    pub async fn space_overview(&self) -> Option<Value> {
-        let uri = format!("space://{}", self.config.space);
-        self.read_resource_json(&uri).await
-    }
-
-    /// gix-backed revision history of one tracked document.
-    pub async fn document_history(
-        &self,
-        alias: &str,
-        locator: &str,
-        limit: usize,
-    ) -> Option<Value> {
-        let alias = alias.to_string();
-        let locator = locator.to_string();
-        let space = self.config.space.clone();
-        let list = self
-            .call(move |c| {
-                Box::pin(async move { c.document_history(&space, &alias, &locator, limit).await })
-            })
-            .await?;
-        Some(serde_json::to_value(list).unwrap_or(Value::Null))
-    }
-
-    /// Memory-plane extraction backlog stats.
-    pub async fn pending_stats(&self) -> Option<PendingStatsDto> {
-        self.call(move |c| Box::pin(async move { c.pending_stats().await }))
-            .await
-    }
-
-    /// Read one MCP resource and parse its first content block as JSON.
-    async fn read_resource_json(&self, uri: &str) -> Option<Value> {
-        let uri = uri.to_string();
-        let value = self
-            .call(move |c| {
-                Box::pin(async move {
-                    c.call_rpc_json("resources/read", json!({ "uri": uri }))
-                        .await
-                })
-            })
-            .await?;
-        parse_resource_json(&value)
-    }
-
-    // ── Plumbing ──────────────────────────────────────────────────────
-
-    /// Run `f` against the session child: spawn when absent (subject to
-    /// backoff), degrade to `None` when the spawn fails; on a call error
-    /// drop the client (`kill_on_drop` reaps the child) so the next call
-    /// respawns.
-    async fn call<F, T>(&self, f: F) -> Option<T>
-    where
-        F: FnOnce(&mut BrainClient) -> BoxFuture<'_, anyhow::Result<T>>,
-    {
-        let mut guard = self.client.lock().await;
-        if guard.is_none() && !self.try_spawn(&mut guard).await {
-            return None;
-        }
-        let client = guard.as_mut()?;
-        match f(client).await {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!(error = %e, "brain call failed — dropping session child");
-                *guard = None;
-                self.available.store(false, Ordering::Relaxed);
-                crate::metrics::get_metrics().oxibrain_available.set(0.0);
-                None
-            }
-        }
-    }
-
-    /// Single spawn attempt inside a held lock. `true` when a client exists.
-    async fn try_spawn(&self, guard: &mut Option<BrainClient>) -> bool {
-        if let Some(next) = *self.next_retry.lock().await
-            && tokio::time::Instant::now() < next
-        {
-            return false; // inside a backoff window
-        }
-        match self.spawner.spawn(&self.config.dir).await {
-            Ok(c) => {
-                tracing::info!(dir = %self.config.dir.display(), "oxibrain session child up");
-                *guard = Some(c);
-                self.available.store(true, Ordering::Relaxed);
-                self.failures.store(0, Ordering::Relaxed);
-                *self.next_retry.lock().await = None;
-                crate::metrics::get_metrics().oxibrain_available.set(1.0);
-                true
-            }
-            Err(e) => {
-                let n = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
-                let delay = SpawnBackoff::delay_for(n);
-                *self.next_retry.lock().await = Some(tokio::time::Instant::now() + delay);
-                tracing::warn!(error = %e, fails = n, ?delay,
-                    "brain session spawn failed — degraded");
-                self.available.store(false, Ordering::Relaxed);
-                crate::metrics::get_metrics().oxibrain_available.set(0.0);
-                false
-            }
-        }
-    }
+/// Installer stand-in for [`BrainSession::disabled`] — never consulted,
+/// because `enabled = false` short-circuits before `executable()`.
+fn disabled_installer() -> Arc<BrainInstaller> {
+    Arc::new(BrainInstaller::from_brain_section(
+        Path::new("/nonexistent"),
+        &crate::config::BrainSection::default(),
+    ))
 }
 
 /// Join a `recall` (ContextResult) payload into a single text block.
@@ -731,6 +532,31 @@ fn assemble_context_text(value: &Value) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
+/// Extract the episode id from an `ingest` response. The 0.10 CLI answers
+/// in prose ("Ingested as episode: <id> (…)"); prefer a structured
+/// `episode_id` field when upstream starts returning one.
+fn episode_id_from_ingest(data: &Value) -> Option<String> {
+    if let Some(id) = data.get("episode_id").and_then(Value::as_str) {
+        return (!id.is_empty()).then(|| id.to_string());
+    }
+    let text = data.as_str()?;
+    let rest = text.strip_prefix("Ingested as episode: ")?;
+    let id = rest.split(" (").next().unwrap_or(rest).trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
+/// Unwrap the tool-result envelope. Structured tools (search, recall, …)
+/// answer `{data, meta}` (mirroring the MCP `call_tool_data` contract);
+/// plain-text tools (ingest prose, brief markdown) surface as bare
+/// strings. An object carrying both keys is unwrapped; anything else is
+/// the payload itself.
+fn unwrap_tool_data(data: Value) -> Value {
+    if let (Some(_), Some(_)) = (data.get("data"), data.get("meta")) {
+        return data["data"].clone();
+    }
+    data
+}
+
 /// Parse a `resources/read` result: `{contents: [{text: "<json>"}]}`.
 fn parse_resource_json(value: &Value) -> Option<Value> {
     let text = value
@@ -740,4 +566,326 @@ fn parse_resource_json(value: &Value) -> Option<Value> {
         .get("text")?
         .as_str()?;
     serde_json::from_str(text).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    // ── op transport: a stub `oxibrain` binary emitting canned envelopes ──
+
+    /// Write a stub binary that consumes stdin and prints `stdout_body`.
+    fn stub_binary(body: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "oxios-brain-op-stub-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s' '{body}'\n"),
+        )
+        .unwrap();
+        let mut perm = std::fs::metadata(&path).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&path, perm).unwrap();
+        path
+    }
+
+    fn op_session(body: &str) -> (BrainSession, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut section = crate::config::BrainSection::default();
+        section.binary_path = stub_binary(body).display().to_string();
+        let session = BrainSession::new(
+            Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
+            false,
+            BrainConfig::new(tmp.path().join("brain"), "personal"),
+        );
+        (session, tmp)
+    }
+
+    fn ok_envelope(data: &Value) -> String {
+        json!({ "api": 1, "ok": true, "op": "op", "data": data, "meta": {} }).to_string()
+    }
+
+    #[tokio::test]
+    async fn recall_assembles_envelope_layers() {
+        let data = json!({
+            "layers": [{"kind": "profile", "text": "remembered: test",
+                        "estimated_tokens": 5, "provenance": []}]
+        });
+        let (s, _tmp) = op_session(&ok_envelope(&data));
+        let text = s.recall("query", 3000).await.unwrap();
+        assert!(text.contains("## profile"));
+        assert!(text.contains("remembered: test"));
+        assert!(s.is_available());
+    }
+
+    #[tokio::test]
+    async fn remember_reads_prose_and_structured_ids() {
+        let prose = ok_envelope(&json!(
+            "Ingested as episode: ep_1 (extraction skipped: no sampling session)"
+        ));
+        let (s, _tmp) = op_session(&prose);
+        assert_eq!(s.remember("fact", "agent").await.as_deref(), Some("ep_1"));
+
+        let structured = ok_envelope(&json!({ "episode_id": "ep_9" }));
+        let (s, _tmp) = op_session(&structured);
+        assert_eq!(s.remember("fact", "agent").await.as_deref(), Some("ep_9"));
+    }
+
+    #[tokio::test]
+    async fn search_parses_two_plane_envelope() {
+        let data = json!({
+            "memory": [{"entity_id": "e1", "entity_surface": "Alice",
+                        "entity_type": "Person", "score": 0.9, "snippet": "s"}],
+            "documents": [{"document_id": "d1", "root": "vault",
+                           "locator": "notes/a.md", "revision": "r1",
+                           "ordinal": 0,
+                           "text": {"kind": "untrusted_content", "text": "doc text",
+                                    "provenance": {"ref": "doc://x", "trust": "unverified"}},
+                           "modified_at": 1700000000, "score": 0.5}],
+            "freshness": {"reconciled_roots": ["vault"], "skipped_roots": [],
+                          "skipped_files": 0, "stale_after_retry": [],
+                          "dense_coverage": null}
+        });
+        let (s, _tmp) = op_session(&ok_envelope(&data));
+        let hit = s.search("q", "hybrid", 5, None).await.unwrap();
+        assert_eq!(hit.memory.len(), 1);
+        assert_eq!(hit.documents.len(), 1);
+        assert_eq!(hit.freshness.reconciled_roots, vec!["vault".to_string()]);
+    }
+
+    /// Real 0.10 shape (verified against the stock binary): structured
+    /// tools nest the payload as `data.data` next to a `meta` block.
+    #[tokio::test]
+    async fn search_unwraps_nested_tool_envelope() {
+        let body = json!({
+            "api": 1, "ok": true, "op": "search", "space": "personal",
+            "data": {
+                "data": {
+                    "memory": [],
+                    "documents": [],
+                    "freshness": {"reconciled_roots": [], "skipped_roots": [],
+                                  "skipped_files": 0, "stale_after_retry": [],
+                                  "dense_coverage": null}
+                },
+                "meta": {"dropped": [{"count": 0, "reason": "below_confidence_or_truncated"}]}
+            },
+            "meta": {"elapsed_ms": 10}
+        })
+        .to_string();
+        let (s, _tmp) = op_session(&body);
+        let hit = s.search("q", "hybrid", 5, None).await.unwrap();
+        assert_eq!(hit.memory.len(), 0);
+        assert_eq!(hit.freshness.skipped_files, 0);
+    }
+
+    #[tokio::test]
+    async fn error_envelope_degrades_but_transport_stays_up() {
+        let body = json!({
+            "api": 1, "ok": false, "op": "ingest",
+            "error": {"code": "locked", "message": "store locked", "retryable": true}
+        })
+        .to_string();
+        let (s, _tmp) = op_session(&body);
+        assert!(s.remember("fact", "agent").await.is_none());
+        // The envelope came back: the binary works, the op did not.
+        assert!(s.is_available());
+    }
+
+    #[tokio::test]
+    async fn garbage_stdout_degrades() {
+        let (s, _tmp) = op_session("not json at all");
+        assert!(s.contradictions().await.is_none());
+        assert!(!s.is_available());
+    }
+
+    #[tokio::test]
+    async fn missing_binary_degrades_fast() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = BrainSession::new(
+            Arc::new(BrainInstaller::from_brain_section(
+                tmp.path(),
+                &crate::config::BrainSection::default(),
+            )),
+            false,
+            BrainConfig::new(tmp.path().join("brain"), "personal"),
+        );
+        assert!(s.recall("q", 10).await.is_none());
+        assert!(s.stats().await.is_none());
+        assert!(!s.is_available());
+    }
+
+    #[tokio::test]
+    async fn why_and_traverse_pass_data_through() {
+        let (s, _tmp) = op_session(&ok_envelope(&json!({ "statement_id": "st1" })));
+        assert_eq!(s.why("st1").await.unwrap()["statement_id"], "st1");
+        let (s, _tmp) = op_session(&ok_envelope(&json!({ "nodes": [], "edges": [] })));
+        assert!(s.traverse(&["e1".into()], 2, 64, "both").await.is_some());
+        let (s, _tmp) = op_session(&ok_envelope(&json!("# page")));
+        assert_eq!(
+            s.brief("entity", Some("e1"), None).await.as_deref(),
+            Some("# page")
+        );
+    }
+
+    // ── console path: scripted JSON-RPC responder over in-memory pipes ──
+
+    #[derive(Debug)]
+    struct FakeSpawn {
+        spawns: AtomicUsize,
+        fail_spawn: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl Spawn for FakeSpawn {
+        async fn spawn(&self, _exe: &Path, _dir: &Path) -> anyhow::Result<BrainClient> {
+            self.spawns.fetch_add(1, Ordering::SeqCst);
+            if self.fail_spawn.load(Ordering::SeqCst) {
+                anyhow::bail!("no binary");
+            }
+            let (c_req, s_req) = tokio::io::duplex(8192);
+            let (mut s_resp, c_resp) = tokio::io::duplex(8192);
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(s_req);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                        continue;
+                    };
+                    let mut out = serde_json::to_string(&respond(&v)).expect("serialize response");
+                    out.push('\n');
+                    if s_resp.write_all(out.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Ok(BrainClient::from_io(c_resp, c_req))
+        }
+    }
+
+    fn respond(v: &serde_json::Value) -> serde_json::Value {
+        let id = v["id"].clone();
+        let method = v["method"].as_str().unwrap_or_default();
+        match method {
+            "stats" => json!({"jsonrpc":"2.0","id":id,
+                "result":{"episodes":7,"entities":3,"statements":12}}),
+            "spaces/list" => json!({"jsonrpc":"2.0","id":id,
+                "result":{"spaces":[{"id":"sp1","name":"personal","created_at":1,
+                                     "episode_count":2,"entity_count":3}]}}),
+            "document_history" => json!({"jsonrpc":"2.0","id":id,
+                "result":[{"revision":"abc","committed_at_ms":1,"content":"v1"}]}),
+            "pending_stats" => json!({"jsonrpc":"2.0","id":id,
+                "result":{"count":4,"oldest_seq":9}}),
+            "resources/read" => {
+                let uri = v["params"]["uri"].as_str().unwrap_or_default();
+                let text = if uri.starts_with("entity://") {
+                    json!([{"statement":"s1","confidence":0.9}]).to_string()
+                } else if uri.starts_with("timeline://") {
+                    json!([{"statement_id":"s1","valid_from":1}]).to_string()
+                } else {
+                    json!({"space":"personal","entity_count":3}).to_string()
+                };
+                json!({"jsonrpc":"2.0","id":id,
+                       "result":{"contents":[{"text":text}]}})
+            }
+            _ => json!({"jsonrpc":"2.0","id":id,"result":{}}),
+        }
+    }
+
+    /// A dummy explicit binary so `executable()` resolves; the fake child
+    /// transport never actually runs it.
+    fn dummy_binary() -> PathBuf {
+        let path = std::env::temp_dir().join("oxios-brain-child-stub");
+        if !path.exists() {
+            std::fs::write(&path, b"").unwrap();
+        }
+        path
+    }
+
+    fn child_session(fail_spawn: bool) -> (BrainSession, Arc<FakeSpawn>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut section = crate::config::BrainSection::default();
+        section.binary_path = dummy_binary().display().to_string();
+        let fake = Arc::new(FakeSpawn {
+            spawns: AtomicUsize::new(0),
+            fail_spawn: AtomicBool::new(fail_spawn),
+        });
+        let s = BrainSession::new(
+            Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
+            false,
+            BrainConfig::new(tmp.path().join("brain"), "personal"),
+        )
+        .with_spawner(Arc::clone(&fake) as Arc<dyn Spawn>);
+        (s, fake)
+    }
+
+    #[tokio::test]
+    async fn console_native_surfaces_answer_over_per_call_child() {
+        let (s, fake) = child_session(false);
+        assert_eq!(fake.spawns.load(Ordering::SeqCst), 0, "nothing resident");
+
+        let stats = s.stats().await.unwrap();
+        assert_eq!(stats["episodes"], 7);
+        let hist = s.document_history("vault", "notes/a.md", 10).await.unwrap();
+        assert!(
+            hist.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["revision"] == "abc")
+        );
+        let pending = s.pending_stats().await.unwrap();
+        assert_eq!(pending.count, 4);
+        assert!(s.spaces().await.is_some());
+        assert!(s.space_overview().await.is_some());
+        let beliefs = s.get_entity("e1").await.unwrap();
+        assert!(beliefs.as_array().unwrap().first().unwrap()["statement"] == "s1");
+        let timeline = s.timeline("e1", Some(1), Some(2)).await.unwrap();
+        assert!(timeline.as_array().unwrap().first().unwrap()["statement_id"] == "s1");
+
+        // Each call spawned its own child; nothing stayed connected.
+        let spawns = fake.spawns.load(Ordering::SeqCst);
+        assert_eq!(spawns, 7, "one child per console call");
+        assert!(s.is_available());
+    }
+
+    #[tokio::test]
+    async fn spawn_failure_degrades_without_retry_logic() {
+        let (s, _fake) = child_session(true);
+        assert!(s.stats().await.is_none());
+        assert!(!s.is_available());
+        // The next call starts fresh — no backoff bookkeeping to reset.
+        let (s2, _f) = child_session(false);
+        assert!(s2.pending_stats().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn review_merges_degrades_until_admin_review_ships() {
+        let (s, _fake) = child_session(false);
+        assert!(s.review_merges("merges").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn disabled_session_degrades_without_touching_anything() {
+        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain", "personal"));
+        assert!(!s.is_available());
+        assert!(s.recall("q", 100).await.is_none());
+        assert!(s.remember("fact", "agent").await.is_none());
+        assert!(s.search("q", "hybrid", 5, None).await.is_none());
+        assert!(s.stats().await.is_none());
+        assert!(s.pending_stats().await.is_none());
+        assert!(s.review_merges("merges").await.is_none());
+    }
 }

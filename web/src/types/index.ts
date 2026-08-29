@@ -432,6 +432,8 @@ export interface StreamChunk {
   status?: 'started' | 'completed'
   summary?: string
   output_summary?: string
+  /** Structured web-search results (RFC-015 Phase E): [{title,url,snippet,source}]. */
+  results?: unknown
   is_error?: boolean
   /// Human-readable progress text (RFC-015 v0.12).
   progress?: string

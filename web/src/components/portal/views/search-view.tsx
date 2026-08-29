@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { domainOf as domain, faviconUrl } from '@/lib/favicon'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
 import { type SearchResultItem, useSearchPanelStore } from '@/stores/search-panel'
@@ -21,23 +22,6 @@ import { KnowledgeBrowser } from './knowledge-browser'
 interface SearchViewProps {
   query?: string
   messageId?: string
-}
-
-function domain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
-
-function faviconUrl(url: string): string {
-  try {
-    const host = new URL(url).hostname
-    return `https://www.google.com/s2/favicons?domain=${host}&sz=32`
-  } catch {
-    return ''
-  }
 }
 
 export function SearchView({ query: propQuery, messageId }: SearchViewProps) {

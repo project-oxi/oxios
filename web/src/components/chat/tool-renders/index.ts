@@ -14,9 +14,11 @@ import { FileReadRender } from './FileRead'
 import { GlobRender } from './Glob'
 import { GrepRender } from './Grep'
 import { ImageGenerationRender } from './ImageGeneration'
+import { IssueRender } from './Issue'
 import { ListFilesRender } from './ListFiles'
 import { registerToolRender } from './registry'
 import { SendEmailRender } from './SendEmail'
+import { TodoRender } from './Todo'
 import { WebFetchRender } from './WebFetch'
 import { WebSearchRender } from './WebSearch'
 
@@ -80,6 +82,10 @@ registerToolRender('a2aQuery', A2aQueryRender)
 
 // ── Calendar ──
 registerToolRender('calendar', CalendarRender)
+
+// ── Planning + issue tracking (structured payloads on tool_end.results) ──
+registerToolRender('todo', TodoRender)
+registerToolRender('issue', IssueRender)
 
 // ── Action-based kernel tools (generic renderer) ──
 registerToolRender('knowledge', ActionToolRender)

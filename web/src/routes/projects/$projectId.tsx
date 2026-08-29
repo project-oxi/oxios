@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { DeleteProjectDialog } from '@/components/project/delete-project-dialog'
 import { EditProjectDialog } from '@/components/project/edit-project-dialog'
+import { ProjectIssuesTab } from '@/components/project/project-issues-tab'
+import { ProjectMilestonesTab } from '@/components/project/project-milestones-tab'
 import { ErrorState } from '@/components/shared/error-state'
 import { LoadingCards } from '@/components/shared/loading'
 import { Badge } from '@/components/ui/badge'
@@ -241,6 +243,8 @@ function ProjectDetailPage() {
       <Tabs defaultValue="details" className="space-y-4">
         <TabsList>
           <TabsTrigger value="details">{t('projects.tabs.details')}</TabsTrigger>
+          <TabsTrigger value="issues">{t('projects.tabs.issues')}</TabsTrigger>
+          <TabsTrigger value="milestones">{t('projects.tabs.milestones')}</TabsTrigger>
           <TabsTrigger value="paths">{t('projects.tabs.paths')}</TabsTrigger>
           <TabsTrigger value="memories">{t('projects.tabs.memories')}</TabsTrigger>
           <TabsTrigger value="activity">{t('projects.tabs.activity')}</TabsTrigger>
@@ -248,6 +252,14 @@ function ProjectDetailPage() {
 
         <TabsContent value="details">
           <ProjectDetailsCard project={project} />
+        </TabsContent>
+
+        <TabsContent value="issues">
+          <ProjectIssuesTab projectId={projectId} />
+        </TabsContent>
+
+        <TabsContent value="milestones">
+          <ProjectMilestonesTab projectId={projectId} />
         </TabsContent>
 
         <TabsContent value="paths">

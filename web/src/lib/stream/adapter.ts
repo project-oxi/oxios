@@ -125,9 +125,11 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
             severity: 'error',
           }
         : undefined
-      // Backend may send `results` (structured web-search array), `tool_result`
-      // (structured) or `output_summary` (pre-formatted string). Prefer the
-      // structured web-search array — WebSearchRender renders it as a card.
+      // Backend may send `results` (a structured payload from the kernel's
+      // StructuredResultBus — web-search hits, a todo snapshot, an issue),
+      // `tool_result` (structured) or `output_summary` (pre-formatted
+      // string). Prefer `results`: the matching tool render draws a card
+      // from it, and falls back to the text only when it is absent.
       const result = raw.results ?? raw.tool_result ?? raw.output_summary
       return {
         events: [

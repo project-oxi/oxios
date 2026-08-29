@@ -550,6 +550,22 @@
         "essay": "에세이",
         "blog": "블로그"
       }
+    },
+    "todo": {
+      "progress": "{{total}}개 중 {{completed}}개 완료",
+      "updating": "계획 갱신 중…",
+      "empty": "아직 계획이 없습니다",
+      "blocked": "대기: {{reason}}",
+      "showMore": "… {{count}}개 더",
+      "showLess": "접기",
+      "revealHint": "계획으로 이동"
+    },
+    "issue": {
+      "working": "이슈 {{action}} 실행 중…",
+      "done": "이슈 {{action}} 완료",
+      "count": "이슈 {{count}}개",
+      "count_other": "이슈 {{count}}개",
+      "claimed": "활성 세션이 작업 중"
     }
   },
   "commandPalette": {
@@ -1549,7 +1565,9 @@
       "activity": "활동",
       "details": "상세",
       "memories": "메모리",
-      "paths": "경로"
+      "paths": "경로",
+      "issues": "이슈",
+      "milestones": "마일스톤"
     },
     "tags": "태그",
     "tagsHint": "쉼표로 구분",
@@ -2712,5 +2730,34 @@
     "showHistory": "기록 보기",
     "hideHistory": "기록 닫기",
     "noHistory": "아직 기록된 리비전이 없습니다."
+  },
+  "issues": {
+    "new": "새 이슈",
+    "create": "생성",
+    "close": "닫기",
+    "reopen": "다시 열기",
+    "release": "해제",
+    "empty": "이슈 없음",
+    "emptyDesc": "이 프로젝트에 등록된 이슈가 없습니다.",
+    "titlePlaceholder": "무엇을 해야 하나요?",
+    "searchPlaceholder": "제목 검색…",
+    "noMilestone": "마일스톤 없음",
+    "claimedBy": "{{session}} 세션이 작업 중",
+    "staleClaim": "종료된 세션이 남긴 점유",
+    "filter": {
+      "open": "열림",
+      "closed": "닫힘",
+      "all": "전체"
+    }
+  },
+  "milestones": {
+    "new": "새 마일스톤",
+    "create": "생성",
+    "closed": "닫힘",
+    "empty": "마일스톤 없음",
+    "emptyDesc": "이슈를 마일스톤으로 묶어 진행도를 추적하세요.",
+    "titlePlaceholder": "마일스톤 이름",
+    "progress": "{{total}}개 중 {{closed}}개 닫힘",
+    "due": "마감 {{date}}"
   }
 }

@@ -550,6 +550,22 @@
         "essay": "Essay",
         "blog": "Blog"
       }
+    },
+    "todo": {
+      "progress": "{{completed}} of {{total}} done",
+      "updating": "Updating the plan…",
+      "empty": "No plan yet",
+      "blocked": "blocked: {{reason}}",
+      "showMore": "… {{count}} more",
+      "showLess": "Show less",
+      "revealHint": "Jump to the plan"
+    },
+    "issue": {
+      "working": "Running issue {{action}}…",
+      "done": "issue {{action}} finished",
+      "count": "{{count}} issue",
+      "count_other": "{{count}} issues",
+      "claimed": "Claimed by a live session"
     }
   },
   "commandPalette": {
@@ -1549,7 +1565,9 @@
       "activity": "Activity",
       "details": "Details",
       "memories": "Memories",
-      "paths": "Paths"
+      "paths": "Paths",
+      "issues": "Issues",
+      "milestones": "Milestones"
     },
     "tags": "Tags",
     "tagsHint": "Comma-separated",
@@ -2712,5 +2730,34 @@
     "showHistory": "Show history",
     "hideHistory": "Hide history",
     "noHistory": "No revisions recorded yet."
+  },
+  "issues": {
+    "new": "New issue",
+    "create": "Create",
+    "close": "Close",
+    "reopen": "Reopen",
+    "release": "Release",
+    "empty": "No issues",
+    "emptyDesc": "Nothing tracked in this project yet.",
+    "titlePlaceholder": "What needs doing?",
+    "searchPlaceholder": "Search titles…",
+    "noMilestone": "No milestone",
+    "claimedBy": "Being worked on by {{session}}",
+    "staleClaim": "claim left by a session that is gone",
+    "filter": {
+      "open": "Open",
+      "closed": "Closed",
+      "all": "All"
+    }
+  },
+  "milestones": {
+    "new": "New milestone",
+    "create": "Create",
+    "closed": "Closed",
+    "empty": "No milestones",
+    "emptyDesc": "Group issues into milestones to track progress.",
+    "titlePlaceholder": "Milestone name",
+    "progress": "{{closed}} of {{total}} closed",
+    "due": "due {{date}}"
   }
 }

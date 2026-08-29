@@ -15,6 +15,7 @@ import { PathAccessCard } from '@/components/chat/path-access-card'
 import { SessionSkeleton } from '@/components/chat/session-skeleton'
 import { TerminalToggle } from '@/components/chat/TerminalToggle'
 import { TextSelectionBar } from '@/components/chat/text-selection-bar'
+import { TodoProgressBar } from '@/components/chat/todo-progress-bar'
 import { ToolApprovalCard } from '@/components/chat/tool-approval-card'
 import { WorktreeComparePanel } from '@/components/chat/WorktreeComparePanel'
 import { MountDetectionBadge } from '@/components/mount/mount-detection-badge'
@@ -565,6 +566,9 @@ function ChatPage() {
         )}
         {!activeInterview && (
           <div className="bg-background/95 backdrop-blur-sm shrink-0">
+            {/* Live plan progress. Renders nothing unless a todo plan with
+                outstanding work exists in this session's transcript. */}
+            <TodoProgressBar messages={messages} onReveal={scrollToBottom} />
             <ChatInput
               value={input}
               onChange={setInput}

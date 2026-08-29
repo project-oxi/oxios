@@ -89,8 +89,14 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
     }
 
     fn register_tools(&self, registry: &ToolRegistry, context: &SdkKernelToolContext) {
-        // 1. Always-on file tools + web search
-        register_always_on(registry, Arc::clone(&self.search_cache));
+        // 1. Always-on file tools + web search (kernel wrappers: managed
+        //    provider preference + structured-results bus for RFC-015).
+        register_always_on(
+            registry,
+            Arc::clone(&self.search_cache),
+            Arc::clone(&self.kernel_handle.search_results),
+            self.kernel_handle.engine.search_config(),
+        );
 
         // 2. Kernel domain tools via KernelHandle
         crate::tools::builtin::register_all_kernel_tools(

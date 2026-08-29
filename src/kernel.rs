@@ -1267,7 +1267,7 @@ impl KernelBuilder {
                     ),
                 }
                 if let Some(bin) = inst.locate_binary() {
-                    // Stock oxibrain 0.8.0 `index --embed` always reports
+                    // Stock oxibrain `admin index --embed` always reports
                     // "no embedding port configured" — no non-test caller
                     // attaches an embedder. Degrade exactly that case by
                     // retrying without `--embed` so the lexical reconcile
@@ -1277,7 +1277,7 @@ impl KernelBuilder {
                     match oxios_kernel::brain::run_cli(
                         &bin,
                         &dir,
-                        &["index", "--documents", "--embed"],
+                        &["admin", "index", "--documents", "--embed"],
                     )
                     .await
                     {
@@ -1290,7 +1290,7 @@ impl KernelBuilder {
                                 match oxios_kernel::brain::run_cli(
                                     &bin,
                                     &dir,
-                                    &["index", "--documents"],
+                                    &["admin", "index", "--documents"],
                                 )
                                 .await
                                 {
@@ -1342,8 +1342,11 @@ impl KernelBuilder {
                         // Bound the drain so a stuck child never wedges the
                         // 600 s tick. 30 min is generous for any realistic
                         // backlog; longer means the run is hung, not slow.
-                        let extract_fut =
-                            oxios_kernel::brain::run_cli(&bin, &dir, &["extract", "--pending"]);
+                        let extract_fut = oxios_kernel::brain::run_cli(
+                            &bin,
+                            &dir,
+                            &["admin", "extract", "--pending"],
+                        );
                         match tokio::time::timeout(
                             std::time::Duration::from_secs(1800),
                             extract_fut,
@@ -1355,13 +1358,18 @@ impl KernelBuilder {
                             }
                             Ok(Ok(out)) => tracing::warn!(
                                 stderr = %String::from_utf8_lossy(&out.stderr),
-                                "brain extract --pending exited non-zero"
+                                "brain admin extract --pending exited non-zero"
                             ),
                             Ok(Err(e)) => {
-                                tracing::warn!(error = %e, "brain extract --pending spawn failed")
+                                tracing::warn!(
+                                    error = %e,
+                                    "brain admin extract --pending spawn failed"
+                                )
                             }
                             Err(_) => {
-                                tracing::warn!("brain extract --pending timed out after 30 min")
+                                tracing::warn!(
+                                    "brain admin extract --pending timed out after 30 min"
+                                )
                             }
                         }
                     }

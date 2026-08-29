@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use oxicode_sdk::{
     EditTool, FindTool, GetSearchResultsTool, GrepTool, LsTool, ReadTool, SearchCache,
-    ToolRegistry, WebSearchTool, WriteTool,
+    ToolRegistry, WriteTool,
 };
 
 use crate::KernelHandle;
@@ -43,19 +43,31 @@ use crate::types::AgentId;
 ///
 /// Every agent receives these tools regardless of its capability space.
 /// This consists of file-system tools (read, write, edit, grep, find, ls)
-/// and web search tools.
-///
-/// This helper is also useful for unit tests that need a basic tool set
-/// without constructing a full CSpace.
-pub fn register_always_on(registry: &ToolRegistry, search_cache: Arc<SearchCache>) {
+/// and web search tools. The web-search tools are the kernel wrappers
+/// ([`KernelWebSearchTool`] / [`KernelGetSearchResultsTool`]) which stash
+/// structured results into `bus` for the RFC-015 transparency stream and
+/// prefer a managed provider per the `[search]` config snapshot.
+pub fn register_always_on(
+    registry: &ToolRegistry,
+    search_cache: Arc<SearchCache>,
+    bus: Arc<crate::tools::SearchResultBus>,
+    search: crate::config::SearchConfig,
+) {
     registry.register(ReadTool::new());
     registry.register(WriteTool::new());
     registry.register(EditTool::new());
     registry.register(GrepTool::new());
     registry.register(FindTool::new());
     registry.register(LsTool::new());
-    registry.register(WebSearchTool::new(search_cache.clone()));
-    registry.register(GetSearchResultsTool::new(search_cache));
+    registry.register(crate::tools::KernelWebSearchTool::new(
+        search_cache.clone(),
+        bus.clone(),
+        search,
+    ));
+    registry.register(crate::tools::KernelGetSearchResultsTool::new(
+        GetSearchResultsTool::new(search_cache),
+        bus,
+    ));
 }
 
 /// Register the headless-browser browse tools when the engine is available.
@@ -84,15 +96,13 @@ fn register_browser_tools(_kernel: &KernelHandle, _registry: &ToolRegistry) {}
 /// Register always-on tools with access gate and (RFC-035) approval wrapping.
 ///
 /// Same as [`register_always_on`] but wraps each tool in [`GatedTool`] so that
-/// all file operations pass through the access gate and approval gate.
-///
-/// `approval_gate`, `event_bus`, and `pending_approvals` may all be `None`
-/// for headless / test paths; the gated tool still honors the access gate
-/// but skips the approval step.
+/// all operations pass through the access gate and approval gate.
 #[allow(clippy::too_many_arguments)]
 pub fn register_always_on_gated(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
+    bus: Arc<crate::tools::SearchResultBus>,
+    search: crate::config::SearchConfig,
     gate: Arc<AccessGate>,
     context: AgentContext,
     approval_gate: Option<Arc<crate::approval::ApprovalGate>>,
@@ -155,7 +165,11 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        WebSearchTool::new(search_cache.clone()),
+        crate::tools::KernelWebSearchTool::new(
+            search_cache.clone(),
+            bus.clone(),
+            search,
+        ),
         gate.clone(),
         context.clone(),
         approval_gate.clone(),
@@ -164,7 +178,10 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        GetSearchResultsTool::new(search_cache),
+        crate::tools::KernelGetSearchResultsTool::new(
+            GetSearchResultsTool::new(search_cache),
+            bus,
+        ),
         gate,
         context,
         approval_gate,
@@ -212,7 +229,12 @@ pub fn register_tools_from_cspace(
     agent_id: AgentId,
 ) {
     // ── Tier 1: Always-on tools ─────────────────────────────────────
-    register_always_on(registry, search_cache);
+    register_always_on(
+        registry,
+        search_cache,
+        Arc::clone(&kernel.search_results),
+        kernel.engine.search_config(),
+    );
 
     // ── Tier 2: CSpace-driven tools ─────────────────────────────────
     for cap in cspace.iter() {
@@ -340,6 +362,8 @@ pub fn register_tools_from_cspace_gated(
         register_always_on_gated(
             registry,
             search_cache,
+            Arc::clone(&kernel.search_results),
+            kernel.engine.search_config(),
             gate.clone(),
             context.clone(),
             approval_gate.clone(),
@@ -439,7 +463,12 @@ mod tests {
     fn register_always_on_registers_eight_tools() {
         let registry = ToolRegistry::new();
         let cache = Arc::new(SearchCache::new());
-        register_always_on(&registry, cache);
+        register_always_on(
+            &registry,
+            cache,
+            Arc::new(crate::tools::SearchResultBus::new()),
+            crate::config::SearchConfig::default(),
+        );
 
         // The always-on set is: read, write, edit, grep, find, ls, web_search, get_search_results
         // ToolRegistry doesn't expose a count, but we can verify individual tool names.

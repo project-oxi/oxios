@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Brain cutover to the oxibrain 0.10 agent-first CLI contract** —
+  one process per operation, nothing resident. Agent-facing ops
+  (`recall`, `ingest`, `search`, `brief`, `traverse`, `why`,
+  `contradictions`) run as one-shot `oxibrain --dir <dir> <op> --json -`
+  subprocesses: payload on stdin, stable response envelope, exit-code-
+  aware degradation, 90 s per-op timeout. Console-only reads the 14-op
+  CLI surface does not expose (`stats`, `pending_stats`,
+  `document_history`, `spaces/list`, `entity://` / `timeline://`
+  resources) speak JSON-RPC over a `serve --stdio` child spawned per
+  call (`oxibrain-client` 0.8 → 0.10). Deleted: the persistent session
+  child, spawn backoff machinery, the Foundation JSON-RPC handshake
+  (now a one-shot `describe` probe), and the binary crate's production
+  `oxibrain-client` usage (`oxios brain status` reads `admin stats`;
+  the dep moved to dev-dependencies). Admin verbs renamed
+  (`admin index`, `admin extract --pending`) across the boot warm-up,
+  the 600 s drain timer, and `oxios brain reindex|extract`.
+  `review_merges` degrades until upstream ships `admin review`.
+  The `brain` skill now teaches the op contract. Design:
+  `docs/designs/2026-08-29-brain-cli-op-cutover-design.md`.
+
 ### Added
 
 - **Managed install (rustup-model updater)** — Oxios now ships a

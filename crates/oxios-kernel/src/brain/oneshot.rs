@@ -1,6 +1,7 @@
-//! One-shot `oxibrain` CLI invocations (admin verbs: index, extract,
-//! probes). Kernel-constructed argv — the trusted host_tools/provisioner
-//! pattern, NOT the agent `ExecTool` sandbox path.
+//! One-shot `oxibrain` CLI invocations — the `admin` namespace (machine
+//! lifecycle: `admin index`, `admin extract --pending`), NOT the 14-op
+//! agent surface. Kernel-constructed argv — the trusted host
+//! tools/provisioner pattern, NOT the agent `ExecTool` sandbox path.
 //!
 //! [`run_cli`] is used by the boot path (document index warm-up) and the
 //! 600 s extraction-drain timer; both log-and-continue on failure.
@@ -23,12 +24,12 @@ pub async fn run_cli(binary: &Path, dir: &Path, args: &[&str]) -> Result<Output>
         .with_context(|| format!("run {} {:?}", binary.display(), args))
 }
 
-/// Stock oxibrain 0.8.0's CLI `index --embed` reports this even when the
+/// oxibrain's stock CLI `admin index --embed` reports this even when the
 /// lexical reconcile above it has already committed — no non-test caller
 /// attaches an embedder port. The boot path and the `brain reindex` arm
 /// both degrade exactly this case: retry without `--embed` and continue.
 /// Revisit when oxibrain ships a built-in dense embedder or a stable flag
-/// to disable the embed step (tracked in docs/designs/2026-08-27-daemonless-brain-design.md).
+/// to disable the embed step.
 pub fn embed_gap(stderr: &str) -> bool {
     stderr.contains("no embedding port configured")
 }
@@ -46,7 +47,7 @@ mod tests {
         std::fs::write(&bin, "#!/bin/sh\necho \"$@\"\n").unwrap();
         make_executable(&bin);
         let dir = tmp.path().join("brain");
-        let out = run_cli(&bin, &dir, &["index", "--documents", "--embed"])
+        let out = run_cli(&bin, &dir, &["admin", "index", "--documents", "--embed"])
             .await
             .unwrap();
         assert!(out.status.success());

@@ -1,12 +1,15 @@
-//! Brain transport — caller-owned stdio child (oxibrain 0.8 daemonless).
+//! Brain transport — one process per operation (oxibrain 0.10 agent-first
+//! CLI contract).
 //!
 //! Five modules cooperate:
 //! - [`config`] — `BrainConfig` (dir + space) and `resolved_brain_dir`.
 //! - [`documents`] — seed the vault root into `documents.toml`.
 //! - [`installer`] — `BrainInstaller`: locate/install the `oxibrain` binary.
-//! - [`oneshot`] — one-shot admin CLI invocations (`index`, `extract`).
-//! - [`session`] — `BrainSession`: lazily-spawned stdio child, lazily
-//!   respawned under backoff when the child dies or the call fails.
+//! - [`oneshot`] — one-shot admin CLI invocations (`admin index`, `admin
+//!   extract --pending`).
+//! - [`session`] — `BrainSession`: agent ops as one-shot `oxibrain <op>`
+//!   subprocesses (stdin payload, response envelope); console-only native
+//!   RPCs over a `serve --stdio` child spawned per call and reaped at once.
 //!
 //! Every operation degrades gracefully: absent binary or dead child
 //! returns `None`/empty and the agent turn completes normally
@@ -21,7 +24,7 @@ pub use config::{BrainConfig, resolved_brain_dir};
 pub use documents::ensure_vault_root;
 pub use installer::{ASSET_TAR, BrainInstaller, LEGACY_LAUNCHD_LABEL, RELEASES_LATEST_URL};
 pub use oneshot::{embed_gap, run_cli};
-pub use session::{BrainSession, ChildSpawn, Spawn, SpawnBackoff};
+pub use session::{BrainSession, Spawn, StdioChild};
 
 /// Resolve the brain space with documented precedence.
 ///

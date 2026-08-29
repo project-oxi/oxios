@@ -1269,19 +1269,24 @@ async fn run_agent(
                     }
                 }
                 s.tool_error_map.insert(tool_call_id.clone(), is_error);
-                // RFC-015: broadcast tool completion.
+                // RFC-015: broadcast tool completion. Structured results
+                // (e.g. web_search result arrays) ride the kernel search
+                // side-channel bus — the SDK event boundary drops
+                // AgentToolResult metadata, so tools stash payloads keyed
+                // by tool_call_id and we take them here.
                 if let Some(ref sid) = transparency_session {
-                    let _ =
-                        kernel_handle_for_cb
-                            .infra
-                            .publish(KernelEvent::ToolExecutionFinished {
-                                session_id: sid.clone(),
-                                tool_call_id: tool_call_id.clone(),
-                                tool_name: tool_name.clone(),
-                                duration_ms,
-                                is_error,
-                                output_summary: summary,
-                            });
+                    let results = kernel_handle_for_cb.search_results.take(&tool_call_id);
+                    let _ = kernel_handle_for_cb
+                        .infra
+                        .publish(KernelEvent::ToolExecutionFinished {
+                            session_id: sid.clone(),
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            duration_ms,
+                            is_error,
+                            output_summary: summary,
+                            results,
+                        });
                 }
             }
             AgentEvent::AgentEnd {

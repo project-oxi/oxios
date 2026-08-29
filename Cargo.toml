@@ -123,10 +123,11 @@ parking_lot = "0.12"
 arc-swap = "1.7"
 
 
-# Vault-unification (T17): `sync_run` was added in oxibrain v0.6.0; the
-# daemon-side pull-source registration is the single ingestion path. Git
-# tag until crates.io catches up.
-oxibrain-client = "0.8"
+# oxibrain 0.10 agent-first CLI contract (ADR-012/013): the kernel drives
+# `oxibrain <op>` one-shot processes for the agent path and uses the client's
+# caller-owned `serve --stdio` child per call for console-only native RPCs
+# (stats, document_history, pending_stats, entity/timeline resources).
+oxibrain-client = "0.10"
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
@@ -275,7 +276,6 @@ include_dir = "0.7"
 # in oxios-kernel's `browser` feature via the direct oxibrowser-core 0.21 dep.
 # 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa_engine bridge).
 oxibrowser = "0.21"
-oxibrain-client = { workspace = true }
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
@@ -286,7 +286,7 @@ hostname = { workspace = true, optional = true }
 
 [dev-dependencies]
 oxios-ouroboros = { version = "1.44.0", path = "crates/oxios-ouroboros" }
-chrono = { workspace = true }
+oxibrain-client = { workspace = true }  # DTO shape-guard tests (workspace.rs)
 tokio = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

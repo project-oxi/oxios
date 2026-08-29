@@ -6394,9 +6394,9 @@ dependencies = [
 
 [[package]]
 name = "oxibrain-client"
-version = "0.8.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67d710262079446218aa91f85661bdcf137a75effd4bfa31cdc62b7dc6115f25"
+checksum = "7b1876945f14ae0431ba9010dd58876bbc725780c1371a20f3fd956f0510c9ec"
 dependencies = [
  "anyhow",
  "serde",

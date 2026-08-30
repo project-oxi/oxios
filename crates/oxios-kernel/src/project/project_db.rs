@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS projects (
     instructions    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL,
-    last_active_at  TEXT NOT NULL
+    last_active_at  TEXT NOT NULL,
+    default_brain_space TEXT     -- brain space inherited by new chats (NULL = none)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
@@ -67,6 +68,24 @@ pub fn ensure_project_schema(conn: &rusqlite::Connection) -> Result<()> {
     }
 
     conn.execute_batch(PROJECT_SCHEMA)?;
+    migrate_default_brain_space(conn)?;
+    Ok(())
+}
+
+/// Migration: add the `default_brain_space` column (brain-chat binding) to
+/// `projects`. Idempotent — checks `PRAGMA table_info` first. The current
+/// DDL always creates the column, so this only fires for databases written
+/// by an intermediate build whose table predates it.
+pub fn migrate_default_brain_space(conn: &rusqlite::Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(projects)")?;
+    let cols: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !cols.iter().any(|c| c == "default_brain_space") {
+        conn.execute_batch("ALTER TABLE projects ADD COLUMN default_brain_space TEXT;")?;
+    }
     Ok(())
 }
 
@@ -79,17 +98,21 @@ pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> rusqlite:
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "INSERT INTO projects
-         (id, name, root_paths, instructions, created_at, updated_at, last_active_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         (id, name, root_paths, instructions, default_brain_space,
+          created_at, updated_at, last_active_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, root_paths=excluded.root_paths,
-            instructions=excluded.instructions, updated_at=excluded.updated_at,
+            instructions=excluded.instructions,
+            default_brain_space=excluded.default_brain_space,
+            updated_at=excluded.updated_at,
             last_active_at=excluded.last_active_at",
         rusqlite::params![
             project.id.to_string(),
             project.name,
             root_paths,
             project.instructions,
+            project.default_brain_space,
             rfc3339(project.created_at),
             rfc3339(project.updated_at),
             rfc3339(project.last_active_at),
@@ -101,7 +124,8 @@ pub fn save_project(conn: &rusqlite::Connection, project: &Project) -> rusqlite:
 /// List all projects.
 pub fn list_projects(conn: &rusqlite::Connection) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, root_paths, instructions, created_at, updated_at, last_active_at
+        "SELECT id, name, root_paths, instructions, default_brain_space,
+                created_at, updated_at, last_active_at
          FROM projects ORDER BY name",
     )?;
     let rows = stmt.query_map([], row_to_project)?;
@@ -139,9 +163,10 @@ fn row_to_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
         .get::<_, Option<String>>(2)?
         .unwrap_or_else(|| "[]".to_string());
     let instructions: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-    let created_at: String = row.get(4)?;
-    let updated_at: String = row.get(5)?;
-    let last_active_at: String = row.get(6)?;
+    let default_brain_space: Option<String> = row.get(4)?;
+    let created_at: String = row.get(5)?;
+    let updated_at: String = row.get(6)?;
+    let last_active_at: String = row.get(7)?;
 
     let id = uuid::Uuid::parse_str(&id_str).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
@@ -153,6 +178,7 @@ fn row_to_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
         name,
         root_paths,
         instructions,
+        default_brain_space,
         created_at: parse_rfc3339(&created_at),
         updated_at: parse_rfc3339(&updated_at),
         last_active_at: parse_rfc3339(&last_active_at),
@@ -239,5 +265,63 @@ mod tests {
             ),
             "expected constraint violation, got {err:?}"
         );
+    }
+
+    /// `default_brain_space` survives a save/load round trip in all three
+    /// states on the reduced schema: set, cleared (stored as NULL, not
+    /// skipped), and re-pointed at a different brain.
+    #[test]
+    fn default_brain_space_round_trip() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory sqlite");
+        ensure_project_schema(&conn).expect("ensure schema");
+
+        let mut project = Project::new("brainy", vec![], "");
+        project.default_brain_space = Some("work".to_string());
+        save_project(&conn, &project).expect("save");
+
+        let loaded = list_projects(&conn).expect("list");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].default_brain_space.as_deref(), Some("work"));
+
+        // Clearing must persist as NULL.
+        project.default_brain_space = None;
+        save_project(&conn, &project).expect("save cleared");
+        let loaded = list_projects(&conn).expect("list cleared");
+        assert_eq!(loaded[0].default_brain_space, None);
+
+        // Re-point at a different brain.
+        project.default_brain_space = Some("personal".to_string());
+        save_project(&conn, &project).expect("save re-set");
+        let loaded = list_projects(&conn).expect("list re-set");
+        assert_eq!(loaded[0].default_brain_space.as_deref(), Some("personal"));
+    }
+
+    /// A reduced-schema table written before the brain-default column
+    /// existed gets it via the guarded ALTER TABLE; existing rows read
+    /// back with `default_brain_space: None`.
+    #[test]
+    fn default_brain_space_migration_adds_nullable_column() {
+        let conn = rusqlite::Connection::open_in_memory().expect("conn");
+        conn.execute_batch(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                root_paths TEXT NOT NULL DEFAULT '[]',
+                instructions TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                last_active_at TEXT NOT NULL
+            );
+            INSERT INTO projects VALUES (
+                '3f9d3b7a-8c4e-4f2a-9b1d-2e5c6a7d8e9f',
+                'legacy','[]','','a','a','a'
+            );",
+        )
+        .expect("seed pre-upgrade schema");
+
+        migrate_default_brain_space(&conn).expect("migrate");
+        migrate_default_brain_space(&conn).expect("migrate again (idempotent)");
+
+        let loaded = list_projects(&conn).expect("list");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].default_brain_space, None);
     }
 }

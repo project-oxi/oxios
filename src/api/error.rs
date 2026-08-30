@@ -35,6 +35,12 @@ pub enum AppError {
     /// targeted allow.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     NotImplemented(String),
+    /// The resource is claimed by a live owner (issue assignment).
+    ///
+    /// Distinct from [`Self::Conflict`]: a conflict is resolved by reloading
+    /// and reapplying, whereas a lock is resolved by waiting or releasing the
+    /// claim. The client shows different remedies, so the status differs.
+    Locked(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -53,6 +59,7 @@ impl std::fmt::Display for AppError {
             AppError::Conflict(m) => write!(f, "Conflict: {m}"),
             AppError::UnprocessableEntity(m) => write!(f, "Unprocessable Entity: {m}"),
             AppError::NotImplemented(m) => write!(f, "Not Implemented: {m}"),
+            AppError::Locked(m) => write!(f, "Locked: {m}"),
         }
     }
 }
@@ -75,6 +82,7 @@ impl IntoResponse for AppError {
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             AppError::UnprocessableEntity(m) => (StatusCode::UNPROCESSABLE_ENTITY, m.clone()),
             AppError::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.clone()),
+            AppError::Locked(m) => (StatusCode::LOCKED, m.clone()),
         };
         let body = json!({ "error": message });
         (status, axum::Json(body)).into_response()

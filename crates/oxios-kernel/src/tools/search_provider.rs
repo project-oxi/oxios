@@ -1,35 +1,28 @@
 //! Structured web-search bridge for the kernel tool registry.
 //!
-//! Two cooperating pieces:
-//!
-//! - [`SearchResultBus`] — a tool→runtime side channel carrying structured
-//!   web-search payloads keyed by `tool_call_id`. The SDK strips
-//!   `AgentToolResult::metadata` at the agent-loop event boundary
-//!   (`AgentEvent::ToolExecutionEnd` carries only the text `ToolResult`), so
-//!   the bus is how structured results (title / url / snippet) reach
-//!   `KernelEvent::ToolExecutionFinished` and the WS `tool_end` chunk that
-//!   the Web UI renders as search cards.
-//!
-//! - [`KernelWebSearchTool`] / [`KernelGetSearchResultsTool`] — drop-in
-//!   replacements for the SDK tools (same names, same schemas, same LLM-facing
-//!   output format) that stash their structured payload into the bus.
-//!   `KernelWebSearchTool` prefers a managed provider (Tavily / Brave per the
-//!   `[search]` config section) and falls back to the SDK scraping engines
-//!   (DuckDuckGo / Wikipedia / Bing) when no provider is configured or the
-//!   provider call fails.
+//! [`KernelWebSearchTool`] / [`KernelGetSearchResultsTool`] — drop-in
+//! replacements for the SDK tools (same names, same schemas, same LLM-facing
+//! output format) that stash their structured payload into the shared
+//! [`StructuredResultBus`], which is how title/url/snippet arrays reach the WS
+//! `tool_end` chunk the Web UI renders as search cards.
+//! `KernelWebSearchTool` prefers a managed provider (Tavily / Brave per the
+//! `[search]` config section) and falls back to the SDK scraping engines
+//! (DuckDuckGo / Wikipedia / Bing) when no provider is configured or the
+//! provider call fails.
 //!
 //! Note: provider results intentionally bypass [`oxicode_sdk::SearchCache`] —
 //! the `SearchResult` type it stores is not re-exported by `oxicode-sdk`.
 //! Provider responses already carry full snippets inline, so the
 //! `get_search_results` round-trip remains a scraping-path concern only.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use oxicode_sdk::{AgentTool, AgentToolResult, SearchCache, ToolContext, ToolError, WebSearchTool};
-use parking_lot::Mutex;
+
 use serde_json::{Value, json};
+
+use super::structured_results::StructuredResultBus;
 
 /// Maximum results a single search may request (mirrors the SDK tool).
 const MAX_RESULTS: usize = 30;
@@ -39,46 +32,13 @@ const DEFAULT_MAX_RESULTS: u64 = 10;
 const SNIPPET_MAX_CHARS: usize = 300;
 
 // ---------------------------------------------------------------------------
-// SearchResultBus
-// ---------------------------------------------------------------------------
-
-/// Tool→runtime side channel for structured search payloads.
-///
-/// Lifecycle: a search tool inserts under its `tool_call_id` right before
-/// returning; the agent-runtime completion callback takes (and removes) the
-/// entry when publishing `KernelEvent::ToolExecutionFinished`. Unclaimed
-/// entries (e.g. runtime crash between the two points) are bounded by the
-/// 30-result cap per entry and dropped on the next insert of the same id.
-#[derive(Default)]
-pub struct SearchResultBus {
-    entries: Mutex<HashMap<String, Value>>,
-}
-
-impl SearchResultBus {
-    /// Create an empty bus.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Store the structured payload for a tool call.
-    pub fn insert(&self, tool_call_id: impl Into<String>, payload: Value) {
-        self.entries.lock().insert(tool_call_id.into(), payload);
-    }
-
-    /// Take (remove) the payload for a tool call, if present.
-    pub fn take(&self, tool_call_id: &str) -> Option<Value> {
-        self.entries.lock().remove(tool_call_id)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // KernelWebSearchTool
 // ---------------------------------------------------------------------------
 
 /// `web_search` with managed-provider preference and bus stashing.
 pub struct KernelWebSearchTool {
     cache: Arc<SearchCache>,
-    bus: Arc<SearchResultBus>,
+    bus: Arc<StructuredResultBus>,
     /// `[search]` config snapshot taken at tool registration (per agent run).
     search: crate::config::SearchConfig,
 }
@@ -87,7 +47,7 @@ impl KernelWebSearchTool {
     /// Create a new tool with cache, bus, and a `[search]` config snapshot.
     pub fn new(
         cache: Arc<SearchCache>,
-        bus: Arc<SearchResultBus>,
+        bus: Arc<StructuredResultBus>,
         search: crate::config::SearchConfig,
     ) -> Self {
         Self { cache, bus, search }
@@ -351,12 +311,12 @@ impl AgentTool for KernelWebSearchTool {
 /// bus so retrieval round-trips render richly too.
 pub struct KernelGetSearchResultsTool {
     inner: oxicode_sdk::GetSearchResultsTool,
-    bus: Arc<SearchResultBus>,
+    bus: Arc<StructuredResultBus>,
 }
 
 impl KernelGetSearchResultsTool {
     /// Create a new wrapper around the SDK tool.
-    pub fn new(inner: oxicode_sdk::GetSearchResultsTool, bus: Arc<SearchResultBus>) -> Self {
+    pub fn new(inner: oxicode_sdk::GetSearchResultsTool, bus: Arc<StructuredResultBus>) -> Self {
         Self { inner, bus }
     }
 }
@@ -416,30 +376,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bus_insert_take_roundtrip() {
-        let bus = SearchResultBus::new();
-        assert!(bus.take("c1").is_none());
-        bus.insert("c1", json!({"results": []}));
-        assert!(bus.take("c1").is_some());
-        // Take removes: second read misses.
-        assert!(bus.take("c1").is_none());
-    }
-
-    #[test]
-    fn bus_last_write_wins_per_call_id() {
-        let bus = SearchResultBus::new();
-        bus.insert("c1", json!({"v": 1}));
-        bus.insert("c1", json!({"v": 2}));
-        assert_eq!(bus.take("c1").unwrap()["v"], 2);
-    }
-
-    #[test]
     fn truncate_handles_multibyte() {
         let s = "한글무시"; // 4 chars, 12 bytes
         assert_eq!(truncate_chars(s, 2), "한글");
         assert_eq!(truncate_chars(s, 10), s);
         assert_eq!(truncate_chars(s, 3).chars().count(), 3);
     }
+
+    #[test]
     fn format_results_matches_sdk_shape() {
         let items = vec![json!({
             "title": "T", "url": "https://x.example", "snippet": "s", "source": "Tavily"
@@ -455,7 +399,7 @@ mod tests {
         // registration tests). Here we only assert the provider layer errs.
         let tool = KernelWebSearchTool::new(
             Arc::new(SearchCache::new()),
-            Arc::new(SearchResultBus::new()),
+            Arc::new(StructuredResultBus::new()),
             crate::config::SearchConfig::default(),
         );
         assert!(tool.provider_search("q", 5).await.is_err());

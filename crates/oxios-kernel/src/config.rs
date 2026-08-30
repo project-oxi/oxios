@@ -93,8 +93,9 @@ pub struct BrainSection {
     pub enabled: bool,
     /// Brain data directory. Empty → `~/.oxi/brain` (`$OXI_BRAIN_DIR` honored).
     pub dir: String,
-    /// Space to operate in (fallback; `~/.oxi/config.toml [vault].space` wins).
-    pub space: String,
+    /// Default brain space offered to new chats that have no project binding. Empty = unconnected.
+    #[serde(default)]
+    pub default_space: String,
     /// Explicit binary path. Non-empty skips auto-install.
     pub binary_path: String,
     /// Install the binary from GitHub Releases when absent.
@@ -106,7 +107,7 @@ impl Default for BrainSection {
         Self {
             enabled: true,
             dir: String::new(),
-            space: "personal".to_string(),
+            default_space: String::new(),
             binary_path: String::new(),
             auto_install: true,
         }
@@ -264,7 +265,7 @@ pub struct SqliteMemoryConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Path to the SQLite database file.
-    /// Empty string means default: `~/.oxios/workspace/memory.db`
+    /// Empty string means default: `~/.oxi/oxios/workspace/memory.db`
     #[serde(default)]
     pub path: String,
     /// Embedding vector dimension.
@@ -1039,15 +1040,17 @@ pub struct DaemonConfig {
 }
 
 fn default_pid_file() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/oxios.pid", h.display()))
-        .unwrap_or_else(|| "./oxios.pid".into())
+    crate::oxi_home::oxios_home()
+        .join("oxios.pid")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn default_daemon_log_dir() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/logs", h.display()))
-        .unwrap_or_else(|| "./logs".into())
+    crate::oxi_home::oxios_home()
+        .join("logs")
+        .to_string_lossy()
+        .into_owned()
 }
 
 impl Default for DaemonConfig {
@@ -1468,7 +1471,7 @@ pub struct KernelConfig {
     /// 2. `~/.oxi/config.toml [vault].path` (ecosystem-canonical; default
     ///    reads the file via `OXIOS_OXI_CONFIG_PATH` env override if set,
     ///    else `~/.oxi/config.toml`).
-    /// 3. Fallback `~/.oxi/vault` (with `expand_home`).
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
     ///
     /// `None` ⇒ steps 2–3. The merged vault is shared by oxios and oximemo
     /// per ECOSYSTEM C5 v1.1.
@@ -1481,7 +1484,12 @@ fn default_workspace() -> String {
 }
 
 fn dirs_home() -> Option<String> {
-    dirs::home_dir().map(|h| format!("{}/.oxios/workspace", h.display()))
+    Some(
+        crate::oxi_home::oxios_home()
+            .join("workspace")
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn default_event_bus_capacity() -> usize {
@@ -1513,7 +1521,7 @@ impl KernelConfig {
     ///    ECOSYSTEM C5 v1.1. Tests can override the config path via the
     ///    `OXIOS_OXI_CONFIG_PATH` env var; production reads
     ///    `~/.oxi/config.toml`.
-    /// 3. Fallback `~/.oxi/vault` (with `expand_home`).
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
     ///
     /// A read failure or missing `[vault]` table falls through to step 3;
     /// resolution is best-effort so a malformed shared config never
@@ -1525,7 +1533,10 @@ impl KernelConfig {
         if let Some(p) = read_oxi_vault_path() {
             return expand_home(&p);
         }
-        expand_home("~/.oxi/vault")
+        crate::oxi_home::oxi_home()
+            .join("spaces")
+            .join("personal")
+            .join("vault")
     }
 }
 
@@ -2762,7 +2773,7 @@ mod tests {
         assert!(sec.enabled);
         assert!(sec.auto_install);
         assert_eq!(sec.dir, "");
-        assert_eq!(sec.space, "personal");
+        assert_eq!(sec.default_space, "");
         assert_eq!(sec.binary_path, "");
 
         let sec: BrainSection = toml::from_str(
@@ -2779,6 +2790,15 @@ mod tests {
             toml::from_str("socket_path = \"/tmp/s.sock\"\nauto_manage = true\n").unwrap();
         assert!(sec.enabled);
         assert!(sec.auto_install);
+    }
+
+    #[test]
+    fn brain_section_legacy_space_key_parses() {
+        // Pre-binding configs carried `[brain] space`; the field is gone but
+        // the key must parse harmlessly (serde ignores unknown fields).
+        let sec: BrainSection = toml::from_str("space = \"x\"\n").unwrap();
+        assert!(sec.enabled);
+        assert_eq!(sec.default_space, "");
     }
 
     #[test]
@@ -3271,9 +3291,13 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         assert_eq!(resolved, expand_home("~/from-ecosystem"));
 
         // Tier 3: explicit absent AND oxi config absent → fallback
+        // `<oxi_home>/spaces/personal/vault` — the approved design
+        // target (`spaces/<space>/vault`), NOT the flat legacy
         // `~/.oxi/vault`. Hermetic: the seam points at a NONEXISTENT path
         // inside the tempdir so no workstation's real `~/.oxi/config.toml`
-        // can leak into the assertion.
+        // can leak into the assertion, and the expectation goes through
+        // the resolver so an `OXI_HOME` override on the host cannot
+        // break it.
         let nonexistent = dir.join("oxi-config-absent.toml");
         // (Path does not exist — read returns NotFound → fallback.)
         unsafe {
@@ -3284,7 +3308,13 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         unsafe {
             std::env::remove_var("OXIOS_OXI_CONFIG_PATH");
         }
-        assert_eq!(resolved, expand_home("~/.oxi/vault"));
+        assert_eq!(
+            resolved,
+            crate::oxi_home::oxi_home()
+                .join("spaces")
+                .join("personal")
+                .join("vault")
+        );
     }
 
     // Test-only constructors/helpers for the knowledge_root test above.

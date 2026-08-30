@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { RootPathsEditor } from '@/components/project/root-paths-editor'
+import { ProjectBrainSelect } from '@/components/brain/space-select'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -39,6 +40,7 @@ export function EditProjectDialog({
 
   const [name, setName] = useState('')
   const [rootPaths, setRootPaths] = useState<string[]>([])
+  const [defaultBrainSpace, setDefaultBrainSpace] = useState<string | null>(null)
   const [instructions, setInstructions] = useState('')
 
   // Sync state when the project prop or open state changes.
@@ -47,6 +49,7 @@ export function EditProjectDialog({
       setName(project.name)
       setRootPaths(project.root_paths)
       setInstructions(project.instructions ?? '')
+      setDefaultBrainSpace(project.default_brain_space ?? null)
     }
   }, [project?.id, open])
 
@@ -61,6 +64,7 @@ export function EditProjectDialog({
         name: n,
         root_paths: rootPaths,
         instructions: instructions.trim() || undefined,
+        default_brain_space: defaultBrainSpace,
       },
       {
         onSuccess: () => {
@@ -109,6 +113,17 @@ export function EditProjectDialog({
               rows={4}
             />
           </div>
+
+          {/* Default brain — inherited by new chats in this project */}
+          <div className="space-y-2">
+            <Label>{t('projects.defaultBrain')}</Label>
+            <ProjectBrainSelect
+              value={defaultBrainSpace}
+              onValueChange={setDefaultBrainSpace}
+              className="w-full"
+            />
+          </div>
+
           <DialogFooter>
             <Button
               type="button"

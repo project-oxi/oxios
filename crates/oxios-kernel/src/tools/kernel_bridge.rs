@@ -51,10 +51,12 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
             "ls",
             "web_search",
             "get_search_results",
+            "todo",
             // Kernel domain tools (builtin::register_all_kernel_tools)
             "exec",
             "subagent",
             "project",
+            "issue",
             "kernel_agent",
             "persona",
             "cron",
@@ -94,7 +96,7 @@ impl SdkKernelToolProvider for OxiosKernelBridge {
         register_always_on(
             registry,
             Arc::clone(&self.search_cache),
-            Arc::clone(&self.kernel_handle.search_results),
+            Arc::clone(&self.kernel_handle.tool_results),
             self.kernel_handle.engine.search_config(),
         );
 
@@ -212,15 +214,15 @@ mod tests {
         let bridge = OxiosKernelBridge::new(kernel);
 
         let names = bridge.tool_names();
-        // 8 always-on (file ops + web_search/get_search_results)
-        // + 18 kernel domain (exec, subagent, project,
+        // 9 always-on (file ops + web_search/get_search_results + todo)
+        // + 19 kernel domain (exec, subagent, project, issue,
         //   kernel_agent, persona, cron, security, budget, resource, a2a×3,
         //   knowledge, ask_user, marketplace, skill_forge, calendar, send_email)
-        // = 26. MCP tools are dynamic (per-server) and excluded.
+        // = 28. MCP tools are dynamic (per-server) and excluded.
         // +5 tools when browser feature is enabled (browse, browse_extract,
         // browse_session, browse_script, browse_screenshot).
         #[allow(unused_mut)]
-        let mut expected = 26_usize;
+        let mut expected = 28_usize;
         #[cfg(feature = "browser")]
         {
             expected += 5;

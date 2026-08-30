@@ -706,11 +706,19 @@ consumes the binary through **three lanes** —
    boot): scratch-file JSON payloads (`--json @file`), required `space`,
    `--dir` before the op name.
 
-**Document plane:** vault ingestion is a declaration, not an RPC. At boot the
-kernel idempotently seeds `~/.oxi/brain/documents.toml` with a
-`[[root]]` row (`alias = "vault"`, path = resolved knowledge root, space);
-user-authored rows are preserved. `search`/`recall` auto-materialize
-unmaterialized roots, so a failed boot-time warm index never blocks.
+**Space binding is per-chat.** The chat request's `brain_space` becomes
+`ExecEnv.brain_space`: the system prompt carries a `## Connected Brain`
+section and every exec exports `$OXIOS_BRAIN_SPACE`. A chat with no binding
+has the brain surface fully off — `oxibrain` exec is denied and the `brain`
+skill is filtered from capabilities. `[brain].default_space` (global) and
+`Project.default_brain_space` (project) seed new chats; empty = unconnected.
+
+**Document plane:** vault ingestion is a declaration, not an RPC. oxios no
+longer writes `~/.oxi/brain/documents.toml` — the vault root is declared by
+the user (or oxibrain's typed document-root registration), and the boot warm
+index / `oxios brain reindex` reconcile whatever roots are declared.
+`search`/`recall` auto-materialize unmaterialized roots, so a failed
+boot-time warm index never blocks.
 
 **Extraction drain:** `remember` (op `ingest`) parks episodes in the
 extraction backlog — a CLI one-shot has no sampling client, so
@@ -720,7 +728,7 @@ one-shot `oxibrain admin extract --pending`. A backlog waiting while oxios
 is not running is the daemonless contract, not a bug.
 
 **Boot gating:** brain boot work (daemon-era legacy cleanup — launchd plist
-bootout, stale socket/pid — documents.toml seeding, warm index, drain timer)
+bootout, stale socket/pid — warm document index, drain timer)
 runs only on the long-lived daemon surface (`KernelBuilder.daemon`), exactly
 like the RFC-050 vault watcher. One-shot CLI commands never spawn overlapping
 index children.
@@ -737,7 +745,8 @@ were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite
 WAL) owns the project/session tables in `~/.oxios/workspace/kernel.db`.
 
 **Config:** `[brain]` section — `enabled` / `dir` (default `~/.oxi/brain`) /
-`space` (default `personal`) / `binary_path` / `auto_install` (renamed from
+`default_space` (default empty = unconnected; seeds new chats without a
+project binding) / `binary_path` / `auto_install` (renamed from
 `auto_manage`). `socket_path` and `auto_manage` are removed; old configs
 warn-and-ignore them.
 
@@ -746,10 +755,11 @@ succeeded), `oxibrain_recall_total` (counter, incremented on successful
 recall).
 
 **CLI:** `oxios brain status|install|uninstall|reindex|extract`;
-`/api/brain/status` reports transport/binary state + space + episode count +
-pending backlog.
+`/api/brain/status` reports transport/binary state + pending backlog;
+`/api/brain/spaces` and `/api/brain/space?space=` browse the space roster
+and one space's overview.
 
-**Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,documents,config}.rs`
+**Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,config}.rs`
 
 Design: `docs/designs/2026-08-29-brain-cli-op-cutover-design.md` (supersedes
 the transport half of `2026-08-27-daemonless-brain-design.md`, which
@@ -824,6 +834,55 @@ subsystem of RFC-025 was deleted in favor of project roots — see
 `project/mod.rs`, SQLite in `project/project_db.rs`)
 
 ---
+
+### 3.15.1 IssueApi — Project Issues, Milestones, and Session Todo
+
+Two related surfaces added with `oxicode-sdk` 0.77.
+
+**Issues and milestones** are scoped to a Project and stored as markdown
+documents under `~/.oxi/oxios/projects/<project-id>/`:
+
+```
+~/.oxi/oxios/projects/<uuid>/
+  issues/0001-fix-login.md     YAML frontmatter + markdown body
+  issues/.alive/<identity>     flock files (SDK-managed)
+  milestones.yaml              milestone definitions
+```
+
+One directory per project means one id space, so issue numbers (`#12`) are
+project-scoped and stable. `IssueApi` wraps `oxicode_sdk::FileIssueStore`,
+which supplies atomic writes, content-hash CAS, and process-liveness
+assignment; Oxios adds the project scoping, the ownership identity, and the
+milestone layer.
+
+**Oxios issues are deliberately separate from `oxicode`'s per-folder
+`.oxicode/issues/` store.** The two products track different scopes: a
+terminal agent tracks the folder it was launched in, Oxios tracks a Project
+that may span zero or many folders. We reuse the SDK implementation without
+sharing its data.
+
+The address is also the security boundary. `gate::OXI_HOME_DENY_ROOTS`
+already denies `~/.oxi` wholesale to the file tools, so issue files are
+unreachable through `read`/`write`/`edit`/`grep`/`find`/`ls`, while
+`IssueApi` reaches them via `std::fs` without passing `AccessGate`. The agent
+can therefore only mutate issues through the `issue` tool — which maintains
+the CAS check and the assignment lock that a raw `edit` would bypass.
+
+**Ownership** is `oxios-<pid>-<session>`, carried into
+`ToolContext.session_id` via `AgentConfig.session_id`, and backed by an
+`AliveGuard` (`flock`) held for the session's lifetime. Daemon exit releases
+every guard, so claims become reclaimable without a timeout or heartbeat.
+
+**Milestones** carry membership as a reserved `milestone:<slug>` issue label
+— `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write, so a
+field would not survive. Progress is derived by listing labelled issues, never
+stored.
+
+**Session todo** is separate and lives only in memory: `TodoRegistry` keys one
+`OxiosTodoState` per chat session and is wired to `AgentConfig.todo`, so a
+plan created on one turn is still there on the next. The kernel's `todo` tool
+wraps the SDK contract to publish a phase snapshot for the Web UI's live
+checklist.
 
 ### 3.16 McpBridge — Model Context Protocol
 

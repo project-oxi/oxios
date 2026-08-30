@@ -260,7 +260,6 @@
     "mentionHint": "Search knowledge, memory, and roles with @ — type to filter",
     "noMentionResults": "No matching items",
     "waitingForConnection": "Waiting for connection...",
-    "loadingSpaces": "Loading spaces...",
     "today": "Today",
     "yesterday": "Yesterday",
     "thisWeek": "This week",
@@ -283,11 +282,9 @@
     "manageSpaces": "Spaces management",
     "user": "User",
     "assistant": "Assistant",
-    "loadingSpacesShort": "Loading spaces...",
     "refreshing": "Refreshing",
     "sendMessage": "Send a message",
     "noMessagesYet": "No messages yet",
-    "spacesLabel": "Spaces",
     "sessionsLabel": "Sessions",
     "serverConnecting": "Connecting to server...",
     "sendHint": "Send a message to start a conversation.",
@@ -547,7 +544,30 @@
         "blog": "Blog"
       }
     },
-    "folderPickerLocalOnly": "Folder picking is only available on the local host — add a path manually"
+    "folderPickerLocalOnly": "Folder picking is only available on the local host — add a path manually",
+    "todo": {
+      "progress": "{{completed}} of {{total}} done",
+      "updating": "Updating the plan…",
+      "empty": "No plan yet",
+      "blocked": "blocked: {{reason}}",
+      "showMore": "… {{count}} more",
+      "showLess": "Show less",
+      "revealHint": "Jump to the plan"
+    },
+    "issue": {
+      "working": "Running issue {{action}}…",
+      "done": "issue {{action}} finished",
+      "count": "{{count}} issue",
+      "count_other": "{{count}} issues",
+      "claimed": "Claimed by a live session"
+    },
+    "brain": {
+      "label": "Brain",
+      "toolsOff": "Brain off",
+      "none": "No brain",
+      "connected": "Brain: {{name}}",
+      "defaultSuffix": "(default)"
+    }
   },
   "commandPalette": {
     "placeholder": "Search commands or type a memo…",
@@ -680,7 +700,6 @@
     "tokenMaxing": "Token Maxing",
     "git": "Git",
     "sessions": "Sessions",
-    "spaces": "Spaces",
     "workspace": "Workspace",
     "calendar": "Calendar",
     "cronJobs": "Cron Jobs",
@@ -1474,6 +1493,7 @@
     "deleteMemories": "Memories associated with this project",
     "deleteSuccess": "Project deleted",
     "deleteTitle": "Delete \"{{name}}\"?",
+    "defaultBrain": "Default brain",
     "desc": "Registered work contexts with paths and associated memories",
     "details": "Details",
     "editDesc": "Update \"{{name}}\"",
@@ -1493,6 +1513,16 @@
     "resultsCount": "{{count}} results",
     "staleRoot": "Missing",
     "staleRootHint": "This folder no longer exists on disk. Edit the project to fix or remove it.",
+    "tabs": {
+      "activity": "Activity",
+      "details": "Details",
+      "memories": "Memories",
+      "paths": "Paths",
+      "issues": "Issues",
+      "milestones": "Milestones"
+    },
+    "tags": "Tags",
+    "tagsHint": "Comma-separated",
     "title": "Projects",
     "undoWarning": "This action cannot be undone.",
     "updateError": "Failed to update: {{error}}",
@@ -2146,24 +2176,6 @@
     "skillsShNeedsKey": "skills.sh requires an API key",
     "skillsShNeedsKeyDesc": "Set api_key under [skills_sh] in config.toml (or export SKILLS_SH_TOKEN) and restart. Request a key from skills-api@vercel.com. ClawHub works without a key."
   },
-  "spaces": {
-    "title": "Spaces",
-    "newSpace": "New Space",
-    "spaceName": "Space Name",
-    "noSpaces": "No spaces yet",
-    "createFirstSpace": "Create your first space",
-    "paths": "Paths",
-    "status": "Status",
-    "created": "Created",
-    "archived": "Archived",
-    "activateSpace": "Activate space",
-    "archiveSpace": "Archive space",
-    "count": "{{count}} space(s)",
-    "description": "Spaces are created during agent interactions.",
-    "spaceDetail": "Space Detail",
-    "spaceInformation": "Space Information",
-    "notFound": "Space not found"
-  },
   "systemTools": {
     "title": "System Tools",
     "subtitle": "Diagnostics, audit, backup, and log management",
@@ -2652,6 +2664,8 @@
     "spaces": "Spaces",
     "spaceName": "Space",
     "spaceCurrent": "current",
+    "selectSpace": "Select space",
+    "defaultSpace": "Default brain",
     "notInstalled": "Brain binary not installed",
     "notInstalledHint": "Run `oxios brain install` to set up the bundled oxibrain CLI.",
     "documents": "Documents",
@@ -2716,5 +2730,34 @@
       "empty": "No preview yet",
       "openInPanel": "Open in panel"
     }
+  },
+  "issues": {
+    "new": "New issue",
+    "create": "Create",
+    "close": "Close",
+    "reopen": "Reopen",
+    "release": "Release",
+    "empty": "No issues",
+    "emptyDesc": "Nothing tracked in this project yet.",
+    "titlePlaceholder": "What needs doing?",
+    "searchPlaceholder": "Search titles…",
+    "noMilestone": "No milestone",
+    "claimedBy": "Being worked on by {{session}}",
+    "staleClaim": "claim left by a session that is gone",
+    "filter": {
+      "open": "Open",
+      "closed": "Closed",
+      "all": "All"
+    }
+  },
+  "milestones": {
+    "new": "New milestone",
+    "create": "Create",
+    "closed": "Closed",
+    "empty": "No milestones",
+    "emptyDesc": "Group issues into milestones to track progress.",
+    "titlePlaceholder": "Milestone name",
+    "progress": "{{closed}} of {{total}} closed",
+    "due": "due {{date}}"
   }
 }

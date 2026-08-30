@@ -141,6 +141,14 @@ impl ExecTool {
         self.context.as_ref().map(|c| c.agent_name.as_str())
     }
 
+    /// The chat-scoped brain binding of the attached agent context.
+    ///
+    /// `None` = no brain connected to this chat: every path to the
+    /// `oxibrain` CLI must be denied (design §4.3).
+    fn brain_space(&self) -> Option<&str> {
+        self.context.as_ref().and_then(|c| c.brain_space.as_deref())
+    }
+
     /// Execute a raw command string via `bash -c <cmd>`.
     ///
     /// Primary shell execution path.
@@ -191,13 +199,21 @@ impl ExecTool {
             );
         }
 
+        // Brain gating: `oxibrain` is the only channel to the memory store,
+        // and an unbound chat has no store to talk to (design §4.3).
+        if command.contains("oxibrain") && self.brain_space().is_none() {
+            return Err(
+                "shell_exec: 'oxibrain' is denied — no brain connected to this chat.".into(),
+            );
+        }
+
         let effective_timeout = timeout_ms.clamp(1_000, cfg.max_timeout_secs * 1_000);
 
         let start = std::time::Instant::now();
 
         // Spawn the child process so we can kill it on shutdown.
-        let mut child = tokio::process::Command::new("bash")
-            .arg("-c")
+        let mut cmd = tokio::process::Command::new("bash");
+        cmd.arg("-c")
             .arg(command)
             .env_clear()
             .env("HOME", std::env::var("HOME").unwrap_or_default())
@@ -208,7 +224,12 @@ impl ExecTool {
                 "LANG",
                 std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()),
             )
-            .env("TERM", "dumb")
+            .env("TERM", "dumb");
+        // Chat-scoped brain binding: `oxibrain` discovers its space via env.
+        if let Some(space) = self.brain_space() {
+            cmd.env("OXIOS_BRAIN_SPACE", space);
+        }
+        let mut child = cmd
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -305,6 +326,16 @@ impl ExecTool {
         if binary.contains('/') {
             return Err("structured_exec: binary must be a bare name, not a path".to_string());
         }
+
+        // Brain gating: hard rule independent of AllowlistMode — even a
+        // permissive/empty allowlist must not expose `oxibrain` to an
+        // unbound chat (design §4.3).
+        if binary == "oxibrain" && self.brain_space().is_none() {
+            return Err(
+                "structured_exec: 'oxibrain' is denied — no brain connected to this chat. Connect a brain in the chat header first."
+                    .into(),
+            );
+        }
         if !self.config.read().is_binary_allowed(binary) {
             return Err(format!(
                 "structured_exec: binary '{binary}' is not in the allowlist"
@@ -326,8 +357,8 @@ impl ExecTool {
         let start = std::time::Instant::now();
 
         // Spawn the child process so we can kill it on shutdown.
-        let mut child = tokio::process::Command::new(binary)
-            .args(&args)
+        let mut cmd = tokio::process::Command::new(binary);
+        cmd.args(&args)
             .env_clear()
             .env("HOME", std::env::var("HOME").unwrap_or_default())
             .env("USER", std::env::var("USER").unwrap_or_default())
@@ -337,12 +368,16 @@ impl ExecTool {
                 "LANG",
                 std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()),
             )
-            .env("TERM", "dumb")
+            .env("TERM", "dumb");
+        // Chat-scoped brain binding: `oxibrain` discovers its space via env.
+        if let Some(space) = self.brain_space() {
+            cmd.env("OXIOS_BRAIN_SPACE", space);
+        }
+        let mut child = cmd
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| format!("structured spawn error: {e}"))?;
-
         // Take stdout/stderr handles before the select! so we can read them
         // after wait() completes (wait_with_output consumes the child).
         let stdout_handle = child.stdout.take();
@@ -1031,6 +1066,16 @@ mod tests {
 
     /// Helper: build ExecTool bound to a named agent with specific permissions.
     fn make_agent_tool(agent_name: &str, allowed_tools: &[&str]) -> ExecTool {
+        make_brain_tool(agent_name, allowed_tools, None)
+    }
+
+    /// Helper: ExecTool bound to a named agent with a chat-scoped brain
+    /// binding (`None` = unbound — every `oxibrain` path is denied).
+    fn make_brain_tool(
+        agent_name: &str,
+        allowed_tools: &[&str],
+        brain_space: Option<&str>,
+    ) -> ExecTool {
         let config = ExecConfig {
             allowlist_mode: crate::config::AllowlistMode::Permissive,
             allow_shell_mode: true,
@@ -1046,7 +1091,8 @@ mod tests {
                 perms.allow_tool(tool);
             }
         }
-        let ctx = crate::access_manager::AgentContext::test_fixture(agent_name);
+        let mut ctx = crate::access_manager::AgentContext::test_fixture(agent_name);
+        ctx.brain_space = brain_space.map(str::to_string);
         ExecTool::new(
             Arc::new(parking_lot::RwLock::new(config)),
             Arc::new(Mutex::new(access)),
@@ -1138,5 +1184,94 @@ mod tests {
     fn test_new_has_no_agent_name() {
         let tool = make_tool(vec![]);
         assert!(tool.agent_name().is_none());
+    }
+
+    // ── Brain gating (per-chat binding, design §4.3) ────────────────
+
+    #[tokio::test]
+    async fn test_structured_oxibrain_denied_when_unbound() {
+        let tool = make_brain_tool("test-agent", &["oxibrain"], None);
+        let result = tool
+            .structured_exec("oxibrain", vec!["remember".into()], 5_000, None)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no brain connected"),
+            "expected brain-gate denial, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_structured_oxibrain_denied_without_context() {
+        // Hard rule: no AgentContext (legacy constructors) also counts as
+        // unbound — even an allowlisted binary stays denied.
+        let tool = make_tool(vec!["oxibrain"]);
+        let result = tool.structured_exec("oxibrain", vec![], 5_000, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no brain connected"));
+    }
+
+    #[tokio::test]
+    async fn test_structured_oxibrain_passes_gate_when_bound() {
+        let tool = make_brain_tool("test-agent", &["oxibrain"], Some("work"));
+        // `oxibrain` may not be installed here — any outcome EXCEPT the
+        // brain-gate denial proves the gate passed for a bound chat.
+        if let Err(err) = tool.structured_exec("oxibrain", vec![], 1_000, None).await {
+            assert!(
+                !err.contains("no brain connected"),
+                "bound chat must pass the brain gate, got: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shell_oxibrain_denied_when_unbound() {
+        let tool = make_brain_tool("test-agent", &["bash"], None);
+        let result = tool
+            .shell_exec("oxibrain remember hello", 5_000, None)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("no brain connected"),
+            "expected brain-gate denial, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shell_env_injects_brain_space_when_bound() {
+        let tool = make_brain_tool("test-agent", &["bash"], Some("work"));
+        let result = tool
+            .shell_exec("echo $OXIOS_BRAIN_SPACE", 5_000, None)
+            .await;
+        assert!(
+            result.is_ok(),
+            "bound chat must reach spawn: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().stdout.trim(), "work");
+    }
+
+    #[tokio::test]
+    async fn test_shell_env_omits_brain_space_when_unbound() {
+        let tool = make_brain_tool("test-agent", &["bash"], None);
+        let result = tool
+            .shell_exec("echo \"[$OXIOS_BRAIN_SPACE]\"", 5_000, None)
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().stdout.trim(), "[]");
+    }
+
+    #[tokio::test]
+    async fn test_structured_env_injects_brain_space_when_bound() {
+        let tool = make_brain_tool("test-agent", &["env"], Some("work"));
+        let result = tool.structured_exec("env", vec![], 5_000, None).await;
+        assert!(
+            result.is_ok(),
+            "bound chat must reach spawn: {:?}",
+            result.err()
+        );
+        assert!(result.unwrap().stdout.contains("OXIOS_BRAIN_SPACE=work"));
     }
 }

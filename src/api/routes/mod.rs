@@ -41,6 +41,7 @@ mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
 use search::{handle_browse, handle_search};
+mod issue_routes;
 mod project_routes;
 mod resource_routes;
 mod secrets_routes;
@@ -63,7 +64,7 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::api::middleware::{rate_limit_layer, require_auth, require_ready};
 use crate::api::persona_routes;
@@ -131,6 +132,12 @@ pub(crate) use infra::{
     handle_mcp_server_register, handle_mcp_server_toggle, handle_mcp_server_update,
     handle_mcp_servers_list, handle_mcp_tool_call, handle_mcp_tools_list, handle_metrics,
     handle_permissions_get, handle_permissions_put, handle_security_permissions,
+};
+pub(crate) use issue_routes::{
+    handle_issue_close, handle_issue_create, handle_issue_get, handle_issue_release,
+    handle_issue_reopen, handle_issue_set_milestone, handle_issue_update, handle_issues_list,
+    handle_milestone_create, handle_milestone_delete, handle_milestone_update,
+    handle_milestones_list,
 };
 pub(crate) use knowledge_routes::{
     handle_knowledge_asset_get, handle_knowledge_backlinks, handle_knowledge_chat_append,
@@ -235,6 +242,17 @@ pub fn paginate<T: Clone + serde::Serialize>(
         "page": params.page,
         "limit": limit,
     })
+}
+
+/// Distinguish an absent request field (`None` = don't change) from an
+/// explicit JSON `null` (`Some(None)` = clear). Without this, serde maps
+/// both to `None`, so clearing would be a silent no-op.
+pub(crate) fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
 }
 
 /// Builds the axum router with all API routes.
@@ -644,6 +662,43 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{id}/roots/status",
             get(handle_project_roots_status),
+        )
+        // Project issues + milestones
+        .route("/api/projects/{id}/issues", get(handle_issues_list))
+        .route("/api/projects/{id}/issues", post(handle_issue_create))
+        .route("/api/projects/{id}/issues/{number}", get(handle_issue_get))
+        .route(
+            "/api/projects/{id}/issues/{number}",
+            patch(handle_issue_update),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/close",
+            post(handle_issue_close),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/reopen",
+            post(handle_issue_reopen),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/release",
+            post(handle_issue_release),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/milestone",
+            put(handle_issue_set_milestone),
+        )
+        .route("/api/projects/{id}/milestones", get(handle_milestones_list))
+        .route(
+            "/api/projects/{id}/milestones",
+            post(handle_milestone_create),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            patch(handle_milestone_update),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            delete(handle_milestone_delete),
         )
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))

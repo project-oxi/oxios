@@ -16,6 +16,9 @@ export interface UpdateProjectInput {
   name?: string
   root_paths?: string[]
   instructions?: string
+  /** Default brain space. Tri-state on the wire: omit = keep current,
+   *  `null` = clear, string = set (mirrors PUT /api/projects/:id). */
+  default_brain_space?: string | null
 }
 
 // ─── Hooks ────────────────────────────────────────────────────

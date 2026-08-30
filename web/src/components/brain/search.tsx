@@ -35,10 +35,10 @@ function HitRow({ hit, onSelect }: { hit: BrainSearchHit; onSelect: (id: string)
 }
 
 /** One document row in the documents plane; toggles its gix-backed history. */
-function DocRow({ d }: { d: DocumentHit }) {
+function DocRow({ d, space }: { d: DocumentHit; space: string }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const hist = useBrainDocumentHistory(d.root, d.locator, 8, open)
+  const hist = useBrainDocumentHistory(space, d.root, d.locator, 8, open)
   return (
     <div className="rounded-lg border p-3">
       <div className="flex items-baseline justify-between gap-3">
@@ -72,12 +72,19 @@ function DocRow({ d }: { d: DocumentHit }) {
 }
 
 /** Two-plane search: memory hits (entities) + documents hits (vault). */
-export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) => void }) {
+export function BrainSearch({
+  space,
+  onSelectEntity,
+}: {
+  /** Space all scoped brain calls are bound to (required server-side). */
+  space: string
+  onSelectEntity?: (id: string) => void
+}) {
   const { t } = useTranslation()
   const [q, setQ] = useState('')
   const [mode, setMode] = useState<string>('hybrid')
   const [submitted, setSubmitted] = useState('')
-  const { data, isLoading } = useBrainSearch(submitted, mode, 20, true)
+  const { data, isLoading } = useBrainSearch(submitted, mode, 20, true, 'both', space)
 
   const items = data?.memory ?? []
   const docs = data?.documents ?? []
@@ -139,7 +146,7 @@ export function BrainSearch({ onSelectEntity }: { onSelectEntity?: (id: string) 
             </p>
             <div className="space-y-2">
               {docs.map((d) => (
-                <DocRow key={`${d.document_id}-${d.ordinal}`} d={d} />
+                <DocRow key={`${d.document_id}-${d.ordinal}`} d={d} space={space} />
               ))}
             </div>
           </CardContent>

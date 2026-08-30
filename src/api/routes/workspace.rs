@@ -852,24 +852,21 @@ fn parse_brain_planes(raw: Option<&str>) -> Result<Option<Vec<&'static str>>, St
 }
 
 /// Build the `/api/brain/status` JSON. One shape for the live brain
-/// (`Some(snapshot)`) and the degraded no-brain branch (`None`).
+/// (`Some(snapshot)`) and the degraded no-brain branch (`None`). Global by
+/// design: per-space data (space name, episode counts) moved to the scoped
+/// `/api/brain/stats?space=` endpoint.
 fn brain_status_json(
     snap: Option<oxios_kernel::BrainStatusSnapshot>,
-    episodes: Option<i64>,
     pending_extraction: Option<u64>,
 ) -> serde_json::Value {
     match snap {
         None => serde_json::json!({
             "available": false,
-            "space": null,
-            "episodes": null,
             "pending_extraction": null,
             "binary": { "installed": false, "path": null, "version": null },
         }),
         Some(s) => serde_json::json!({
             "available": s.available,
-            "space": s.space,
-            "episodes": episodes,
             "pending_extraction": pending_extraction,
             "binary": {
                 "installed": s.binary_installed,
@@ -880,25 +877,17 @@ fn brain_status_json(
     }
 }
 
-/// GET /api/brain/status — daemonless session/binary state + space +
-/// episode count + pending extraction backlog.
+/// GET /api/brain/status — daemonless session/binary state + pending
+/// extraction backlog.
 pub(crate) async fn handle_brain_status(
     state: State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
-        return Ok(Json(brain_status_json(None, None, None)));
+        return Ok(Json(brain_status_json(None, None)));
     };
     let snap = brain.status_snapshot();
-    let episodes = brain
-        .stats()
-        .await
-        .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()));
     let pending_extraction = brain.pending_stats().await.map(|p| p.count);
-    Ok(Json(brain_status_json(
-        Some(snap),
-        episodes,
-        pending_extraction,
-    )))
+    Ok(Json(brain_status_json(Some(snap), pending_extraction)))
 }
 /// POST /api/brain/recall — assemble context for an agent turn.
 #[derive(Debug, Deserialize)]
@@ -908,6 +897,8 @@ pub(crate) struct BrainRecallRequest {
     /// Token budget for the assembled context.
     #[serde(default = "default_recall_budget")]
     pub budget: usize,
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
 }
 
 fn default_recall_budget() -> usize {
@@ -918,17 +909,22 @@ pub(crate) async fn handle_brain_recall(
     state: State<Arc<AppState>>,
     Json(body): Json<BrainRecallRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    if body.space.is_empty() {
+        return Err(AppError::BadRequest("space parameter required".into()));
+    }
     let context = match state.kernel.brain.as_ref() {
-        Some(brain) => brain.recall(&body.query, body.budget).await,
+        Some(brain) => brain.recall(&body.space, &body.query, body.budget).await,
         None => None,
     };
     Ok(Json(serde_json::json!({ "context": context })))
 }
-
-/// GET /api/brain/search?q=&mode=&limit=&planes= — hybrid/lexical/semantic/graph/community.
+/// GET /api/brain/search?q=&space=&mode=&limit=&planes= —
+/// hybrid/lexical/semantic/graph/community.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainSearchQuery {
     pub q: String,
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
     #[serde(default = "default_search_mode")]
     pub mode: String,
     #[serde(default = "default_search_limit")]
@@ -954,7 +950,9 @@ pub(crate) async fn handle_brain_search(
         return Ok(Json(serde_json::Value::Null));
     };
     let refs = planes.as_deref();
-    let result = brain.search(&query.q, &query.mode, query.limit, refs).await;
+    let result = brain
+        .search(&query.space, &query.q, &query.mode, query.limit, refs)
+        .await;
     Ok(Json(
         result
             .and_then(|r| serde_json::to_value(r).ok())
@@ -962,10 +960,12 @@ pub(crate) async fn handle_brain_search(
     ))
 }
 
-/// GET /api/brain/document-history?alias=&locator=&limit= — gix-backed
-/// revision history of one tracked vault document.
+/// GET /api/brain/document-history?space=&alias=&locator=&limit= —
+/// gix-backed revision history of one tracked vault document.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainDocumentHistoryQuery {
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
     pub alias: String,
     pub locator: String,
     pub limit: Option<usize>,
@@ -979,26 +979,43 @@ pub(crate) async fn handle_brain_document_history(
         return Ok(Json(serde_json::Value::Null));
     };
     let result = brain
-        .document_history(&query.alias, &query.locator, query.limit.unwrap_or(32))
+        .document_history(
+            &query.space,
+            &query.alias,
+            &query.locator,
+            query.limit.unwrap_or(32),
+        )
         .await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/entity/{id} — an entity's current beliefs.
+/// Shared single-field query for scoped brain endpoints without other
+/// parameters. `space` is required — a missing value is rejected by axum.
+#[derive(Debug, Deserialize)]
+pub(crate) struct BrainSpaceQuery {
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
+}
+
+/// GET /api/brain/entity/{id}?space= — an entity's current beliefs.
 pub(crate) async fn handle_brain_entity(
     state: State<Arc<AppState>>,
     Path(entity_id): Path<String>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.get_entity(&entity_id).await;
+    let result = brain.get_entity(&query.space, &entity_id).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/timeline?entity=&from=&to= — belief intervals over a range.
+/// GET /api/brain/timeline?space=&entity=&from=&to= — belief intervals
+/// over a range.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainTimelineQuery {
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
     pub entity: String,
     /// Start of range in Unix milliseconds (optional).
     pub from: Option<i64>,
@@ -1020,48 +1037,57 @@ pub(crate) async fn handle_brain_timeline(
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.timeline(&query.entity, query.from, query.to).await;
+    let result = brain
+        .timeline(&query.space, &query.entity, query.from, query.to)
+        .await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/why/{statement_id} — provenance + confidence breakdown.
+/// GET /api/brain/why/{statement_id}?space= — provenance + confidence
+/// breakdown.
 pub(crate) async fn handle_brain_why(
     state: State<Arc<AppState>>,
     Path(statement_id): Path<String>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.why(&statement_id).await;
+    let result = brain.why(&query.space, &statement_id).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/contradictions — contradicted statements in the space.
+/// GET /api/brain/contradictions?space= — contradicted statements in the
+/// space.
 pub(crate) async fn handle_brain_contradictions(
     state: State<Arc<AppState>>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.contradictions().await;
+    let result = brain.contradictions(&query.space).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/stats — aggregate counts for the space.
+/// GET /api/brain/stats?space= — aggregate counts for the space.
 pub(crate) async fn handle_brain_stats(
     state: State<Arc<AppState>>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.stats().await;
+    let result = brain.stats(&query.space).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/brief?target_kind=&entity_id=&topic= — rendered page
-/// (Markdown) for an entity, the space, or a topic keyword.
+/// GET /api/brain/brief?space=&target_kind=&entity_id=&topic= — rendered
+/// page (Markdown) for an entity, the space, or a topic keyword.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainBriefQuery {
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
     /// `entity` (default), `space`, or `topic`.
     pub target_kind: Option<String>,
     pub entity_id: Option<String>,
@@ -1106,15 +1132,22 @@ pub(crate) async fn handle_brain_brief(
         return Ok(Json(serde_json::Value::Null));
     };
     let markdown = brain
-        .brief(&kind, query.entity_id.as_deref(), query.topic.as_deref())
+        .brief(
+            &query.space,
+            &kind,
+            query.entity_id.as_deref(),
+            query.topic.as_deref(),
+        )
         .await;
     Ok(Json(serde_json::json!({ "markdown": markdown })))
 }
 
-/// GET /api/brain/graph?start=a,b&depth=&max_nodes=&direction= — bounded
-/// belief-filtered subgraph traversal.
+/// GET /api/brain/graph?space=&start=a,b&depth=&max_nodes=&direction= —
+/// bounded belief-filtered subgraph traversal.
 #[derive(Debug, Deserialize)]
 pub(crate) struct BrainGraphQuery {
+    /// Oxibrain space to operate in. Required.
+    pub space: String,
     /// Comma-separated start entity ids.
     pub start: String,
     pub depth: Option<usize>,
@@ -1150,6 +1183,7 @@ pub(crate) async fn handle_brain_graph(
     };
     let result = brain
         .traverse(
+            &query.space,
             &start,
             query.depth.unwrap_or(2).clamp(1, 6),
             query.max_nodes.unwrap_or(64).clamp(1, 256),
@@ -1158,13 +1192,13 @@ pub(crate) async fn handle_brain_graph(
         .await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
-
-/// GET /api/brain/operations/{section} — daemon console data:
+/// GET /api/brain/operations/{section}?space= — daemon console data:
 /// `merges` (entity merge records), `failures` (extraction failures),
 /// `sources` (registered pull sources).
 pub(crate) async fn handle_brain_operations(
     state: State<Arc<AppState>>,
     Path(section): Path<String>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if !matches!(section.as_str(), "merges" | "failures" | "sources") {
         return Err(AppError::BadRequest(
@@ -1174,7 +1208,7 @@ pub(crate) async fn handle_brain_operations(
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.review_merges(&section).await;
+    let result = brain.review_merges(&query.space, &section).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
@@ -1189,15 +1223,16 @@ pub(crate) async fn handle_brain_spaces(
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
-/// GET /api/brain/space — overview of the configured space (counts +
-/// recent entities).
+/// GET /api/brain/space?space= — overview of one space (counts + recent
+/// entities).
 pub(crate) async fn handle_brain_space(
     state: State<Arc<AppState>>,
+    Query(query): Query<BrainSpaceQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let Some(brain) = state.kernel.brain.as_ref() else {
         return Ok(Json(serde_json::Value::Null));
     };
-    let result = brain.space_overview().await;
+    let result = brain.space_overview(&query.space).await;
     Ok(Json(result.unwrap_or(serde_json::Value::Null)))
 }
 
@@ -1332,29 +1367,28 @@ mod tests {
 
     #[test]
     fn brain_status_shape_live_and_degraded() {
-        // Degraded (no brain facade): exact documented shape.
-        let degraded = brain_status_json(None, None, None);
+        // Degraded (no brain facade): exact documented shape. Global by
+        // design — no `space`, no per-space `episodes` (both moved to the
+        // scoped `/api/brain/stats?space=` endpoint).
+        let degraded = brain_status_json(None, None);
         assert_eq!(degraded["available"], serde_json::json!(false));
-        assert_eq!(degraded["space"], serde_json::json!(null));
-        assert_eq!(degraded["episodes"], serde_json::json!(null));
         assert_eq!(degraded["pending_extraction"], serde_json::json!(null));
         assert_eq!(
             degraded["binary"],
             serde_json::json!({"installed": false, "path": null, "version": null})
         );
+        assert!(degraded.get("space").is_none());
+        assert!(degraded.get("episodes").is_none());
 
-        // Live: snapshot fields surface; nulls preserved when stats degrade.
+        // Live: snapshot fields surface.
         let snap = oxios_kernel::BrainStatusSnapshot {
             available: true,
-            space: "personal".into(),
             binary_installed: true,
             binary_path: Some("/opt/oxibrain".into()),
             binary_version: Some("oxibrain 0.8.0".into()),
         };
-        let live = brain_status_json(Some(snap), Some(42), Some(7));
+        let live = brain_status_json(Some(snap), Some(7));
         assert_eq!(live["available"], serde_json::json!(true));
-        assert_eq!(live["space"], serde_json::json!("personal"));
-        assert_eq!(live["episodes"], serde_json::json!(42));
         assert_eq!(live["pending_extraction"], serde_json::json!(7));
         assert_eq!(live["binary"]["installed"], serde_json::json!(true));
         assert_eq!(live["binary"]["path"], serde_json::json!("/opt/oxibrain"));
@@ -1362,6 +1396,7 @@ mod tests {
             live["binary"]["version"],
             serde_json::json!("oxibrain 0.8.0")
         );
+        assert!(live.get("space").is_none());
     }
 
     #[test]

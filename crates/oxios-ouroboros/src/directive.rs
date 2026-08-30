@@ -104,6 +104,12 @@ pub struct ExecEnv {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_id: Option<String>,
 
+    /// Chat-scoped brain binding (chat brain picker). `Some(space)` connects
+    /// the agent's brain surface to that oxibrain space for the turn; `None`
+    /// fully disables it (skill, recall, exec, auto-memory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brain_space: Option<String>,
+
     /// Agent conversation state to restore on retry (RFC-029 P2b).
     ///
     /// When `Some`, the recovery coordinator captured the previous run's
@@ -177,6 +183,12 @@ pub struct MsgCtx {
     /// `None` → inherit the global default. Populated by the gateway from
     /// the WS / POST `persona_id` field.
     pub persona_id: Option<String>,
+
+    /// Chat-scoped brain binding (chat brain picker). Carried into
+    /// [`ExecEnv::brain_space`] so the agent runtime connects the brain
+    /// surface to that oxibrain space for the turn. Populated by the
+    /// gateway from the WS / POST `brain_space` field.
+    pub brain_space: Option<String>,
     /// Per-message model override (optional). When set, the orchestrator
     /// carries it into [`ExecEnv::model_override`] so the agent runtime
     /// uses this model instead of `role_routing[role]` or the engine

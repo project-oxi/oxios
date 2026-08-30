@@ -39,7 +39,7 @@ use std::sync::Arc;
 
 use crate::access_manager::{
     AccessGate, AgentContext, OXI_HOME_DENY_ROOTS, OXIOS_HOME_DENY_SUBPATHS, TracingAuditSink,
-    TrailAuditSink,
+    TrailAuditSink, oxi_deny_root, oxios_deny_roots,
 };
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
@@ -331,6 +331,7 @@ impl AgentRuntime {
             &directive.acceptance_criteria,
             env.cspace_hint.as_deref(),
             &env.root_paths,
+            env.project_id,
             env.workspace_context.as_deref(),
             session_ctx,
             session_id,
@@ -338,6 +339,7 @@ impl AgentRuntime {
             env.model_override.as_deref(),
             env.role.as_deref(),
             env.persona_id.as_deref(),
+            env.brain_space.as_deref(),
             env.restore_state.as_ref(),
         )
         .await
@@ -359,6 +361,11 @@ impl AgentRuntime {
         acceptance_criteria: &[String],
         cspace_hint: Option<&str>,
         root_paths: &[std::path::PathBuf],
+        // Active project for the turn. Resolved by
+        // `Orchestrator::resolve_exec_env` from explicit `project_ids` or
+        // auto-detection; carried here so the `issue` tool can scope itself
+        // to the project without re-resolving it.
+        project_id: Option<uuid::Uuid>,
         workspace_context: Option<&str>,
         // Retained for API compatibility; recall timing moved to the brain.
         _session_ctx: &mut SessionContext,
@@ -367,6 +374,7 @@ impl AgentRuntime {
         model_override: Option<&str>,
         role: Option<&str>,
         persona_id: Option<&str>,
+        brain_space: Option<&str>,
         restore_state: Option<&serde_json::Value>,
     ) -> Result<ExecutionResult> {
         let prompt = build_user_prompt_inner(goal, acceptance_criteria);
@@ -393,6 +401,9 @@ impl AgentRuntime {
         let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
+        // The `brain` skill bullet is advertised only when a brain is bound
+        // to this chat (design §4.3).
+        let brain_line = brain_space_line(brain_space);
         let mut system_prompt = build_system_prompt_inner(
             goal,
             original_request,
@@ -402,13 +413,17 @@ impl AgentRuntime {
             persona_prompt.as_deref(),
             None,
             None,
+            brain_line.as_deref(),
         );
 
         // Semantic capability retrieval: find tools relevant to this task's goal.
         let capabilities_xml = if let Some(ref retriever) = self.tool_retriever {
             match retriever.embedder().embed(goal).await {
                 Ok(query_vec) => {
-                    let results = retriever.retrieve(&query_vec, 8);
+                    let mut results = retriever.retrieve(&query_vec, 8);
+                    // Unbound chats have no brain: the `brain` skill must not
+                    // surface in the capability index (design §4.3).
+                    filter_brain_capabilities(&mut results, brain_space);
                     if results.is_empty() {
                         None
                     } else {
@@ -426,14 +441,14 @@ impl AgentRuntime {
             None
         };
 
-        // Build kernel manifest from CSpace active domains.
+        // Build kernel manifest from CSpace active domains. The `memory`
+        // domain is advertised only to chats with a bound brain (design §4.3).
         let kernel_manifest = {
-            let domains = cspace.active_domains();
-            if domains.is_empty() {
-                None
-            } else {
-                Some(crate::tools::retrieval::build_kernel_manifest(&domains))
+            let mut domains = cspace.active_domains();
+            if brain_space.is_none() {
+                domains.retain(|d| *d != "memory");
             }
+            (!domains.is_empty()).then(|| crate::tools::retrieval::build_kernel_manifest(&domains))
         };
 
         // Rebuild system prompt with capabilities and manifest if available.
@@ -447,15 +462,19 @@ impl AgentRuntime {
                 persona_prompt.as_deref(),
                 capabilities_xml.as_deref(),
                 kernel_manifest.as_deref(),
+                brain_line.as_deref(),
             );
         }
 
-        // Blend relevant memories into system prompt (RFC-047: brain recall).
-        if let Some(brain) = &self.kernel_handle.brain {
-            match brain.recall(goal, 3000).await {
+        // Blend relevant memories into system prompt (brain recall) — only
+        // when a brain is connected to this chat (design §4.3).
+        if let (Some(brain), Some(space)) = (&self.kernel_handle.brain, brain_space) {
+            match brain.recall(space, goal, 3000).await {
                 Some(context) => {
-                    tracing::info!("Recalled brain context for task");
-                    system_prompt.push_str(&format!("\n\n## Relevant Memory\n{context}\n",));
+                    tracing::info!(space, "Recalled brain context for task");
+                    system_prompt.push_str(&format!(
+                        "\n\n## Connected Brain\nSpace: `{space}`. All `oxibrain` payloads MUST set `\"space\": \"{space}\"`.\n\n## Relevant Memory\n{context}\n"
+                    ));
                 }
                 None => tracing::debug!("No brain context recalled"),
             }
@@ -485,7 +504,7 @@ impl AgentRuntime {
         match self
             .kernel_handle
             .knowledge_lens
-            .recall_for_context(goal, 5)
+            .recall_for_context(goal, 5, brain_space)
             .await
         {
             Ok(ctx) if !ctx.notes.is_empty() => {
@@ -572,7 +591,9 @@ impl AgentRuntime {
                 audit_trail,
                 self.routing_stats.clone(),
                 session_id.clone(),
+                brain_space,
                 root_paths,
+                project_id,
                 restore_state,
                 tool_profile,
             )
@@ -703,6 +724,7 @@ impl AgentRuntime {
                 *idx += 1;
                 current
             };
+            let hook_brain_space = brain_space.map(str::to_string);
             tokio::spawn(async move {
                 match hook
                     .evaluate(
@@ -722,7 +744,13 @@ impl AgentRuntime {
                                 "PersistenceHook executing plan"
                             );
                             let session_id = sid.unwrap_or_default();
-                            hook.execute_plan(plan, &session_id, msg_index).await;
+                            hook.execute_plan(
+                                plan,
+                                &session_id,
+                                msg_index,
+                                hook_brain_space.as_deref(),
+                            )
+                            .await;
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, "PersistenceHook evaluate failed"),
@@ -807,7 +835,9 @@ async fn run_agent(
     audit_trail: Option<Arc<AuditTrail>>,
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
+    brain_space: Option<&str>,
     root_paths: &[std::path::PathBuf],
+    project_id: Option<uuid::Uuid>,
     restore_state: Option<&serde_json::Value>,
     tool_profile: ToolProfile,
 ) -> Result<(
@@ -881,6 +911,8 @@ async fn run_agent(
         agent_id,
         agent_name: format!("agent-{agent_id}"),
         cspace: Arc::new(cspace.clone()),
+        // Per-chat brain binding: prompt gating and exec denial read it here.
+        brain_space: brain_space.map(str::to_string),
     };
 
     // Build audit sink: TrailAuditSink (Merkle chain + JSONL) when audit_trail
@@ -923,23 +955,37 @@ async fn run_agent(
         // CredentialStore reads as a legacy `auth.json` fallback;
         // a broadly-allowed agent should not be able to exfiltrate
         // stored keys via `read`/`grep`.
+        //
+        // Unified home: the `.oxi` leaf resolves through `oxi_home()`
+        // (honoring `OXI_HOME`) so the deny moves with the data; all
+        // other leaves stay anchored at `$HOME`.
         for leaf in OXI_HOME_DENY_ROOTS {
-            deny_gate_builder = deny_gate_builder.with_deny_root(home.join(leaf));
+            deny_gate_builder = deny_gate_builder.with_deny_root(oxi_deny_root(leaf, &home));
         }
 
-        // Sub-path deny for `~/.oxios/<sensitive>`. Each entry is
-        // the sensitive subtree; agents retain access to `workspace/`.
-        // See [`OXIOS_HOME_DENY_SUBPATHS`]
+        // Sub-path deny for `<oxios home>/<sensitive>` on BOTH roots
+        // that can carry sensitive oxios state during the unified-home
+        // transition (copy-only migration): the canonical resolver
+        // root (`OXIOS_HOME` override or `oxi_home()/oxios`) and the
+        // legacy `$HOME/.oxios` while it exists. Each entry is the
+        // sensitive subtree; agents retain access to `workspace/` and
+        // any project root path. See [`OXIOS_HOME_DENY_SUBPATHS`]
         // doc for the per-entry rationale. T18 R4 adds `backups/` —
         // the output dir for `POST /api/system/backup` tarballs,
         // which carry credential-bearing entries.
-        let oxios_root = home.join(".oxios");
-        for sub in OXIOS_HOME_DENY_SUBPATHS {
-            deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+        let oxios_roots = oxios_deny_roots(
+            &crate::oxi_home::oxios_home(),
+            crate::oxi_home::legacy_home_dir().as_deref(),
+        );
+        for oxios_root in oxios_roots {
+            for sub in OXIOS_HOME_DENY_SUBPATHS {
+                deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+            }
         }
     } else {
         tracing::warn!("HOME unset at gate construction; ecosystem deny is disabled for this run");
     }
+
     let access_gate = Arc::new(deny_gate_builder);
 
     // Build the RFC-035 ApprovalGate: declared policies + config overrides +
@@ -999,6 +1045,7 @@ async fn run_agent(
         Some(approval_pending),
         Some(path_access_pending),
         tool_profile != ToolProfile::Control,
+        project_id,
     );
 
     tracing::info!(
@@ -1037,7 +1084,17 @@ async fn run_agent(
         workspace_dir: Some(workspace.clone()),
         output_mode: None,
         provider_options: config.provider_options.clone(),
-        session_id: None,
+        // Carries into `ToolContext.session_id`. The `issue` tool derives
+        // its ownership identity from this, and the SDK's assignment lock is
+        // only meaningful when that identity is non-empty and backed by a
+        // flock this process holds (see `IssueApi`). Leaving it `None` — the
+        // prior value — made every claim instantly reclaimable.
+        session_id: session_id.clone(),
+        // Session-scoped todo state, so a plan survives across the turns of
+        // one conversation instead of resetting every message.
+        todo: session_id.as_deref().map(|sid| {
+            kernel_handle.todos.for_session(sid) as Arc<dyn oxicode_sdk::TodoStateProvider>
+        }),
         // RFC-035 Phase B/C: pass through gap 1/3 config to oxicode-sdk 0.54.0+.
         max_tool_result_bytes: config.max_tool_result_bytes,
         // subagent_depth = CURRENT depth (0 = top-level). The in-process
@@ -1135,10 +1192,11 @@ async fn run_agent(
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();
-    let routing_stats_for_cb = routing_stats.clone();
+    let brain_space_for_callback = brain_space.map(str::to_string);
     // RFC-015: real-time event publishing for chat transparency.
     // Falls back to None when the caller did not opt in.
     let transparency_session: Option<String> = session_id.clone();
+    let routing_stats_for_cb = routing_stats.clone();
     let kernel_handle_for_cb: Arc<KernelHandle> = Arc::clone(&kernel_handle);
     // P1 chat transparency: per-session streaming sink registry. The
     // callback looks up the sink for this session and pushes live text
@@ -1275,7 +1333,7 @@ async fn run_agent(
                 // AgentToolResult metadata, so tools stash payloads keyed
                 // by tool_call_id and we take them here.
                 if let Some(ref sid) = transparency_session {
-                    let results = kernel_handle_for_cb.search_results.take(&tool_call_id);
+                    let results = kernel_handle_for_cb.tool_results.take(&tool_call_id);
                     let _ =
                         kernel_handle_for_cb
                             .infra
@@ -1363,9 +1421,10 @@ async fn run_agent(
                     result.summary.clone(),
                     session_id_for_callback.clone(),
                     brain_for_callback.clone(),
+                    brain_space_for_callback.clone(),
                 );
                 // RFC-015: compaction is a form of reasoning — expose it.
-                if let Some(ref sid) = transparency_session {
+                if let Some(sid) = &transparency_session {
                     let _ = kernel_handle_for_cb
                         .infra
                         .publish(KernelEvent::ReasoningFragment {
@@ -1742,6 +1801,7 @@ fn handle_compaction(
     summary: String,
     session_id: String,
     brain: Option<Arc<crate::brain::BrainSession>>,
+    brain_space: Option<String>,
 ) {
     let content = if session_id.is_empty() {
         summary
@@ -1749,10 +1809,22 @@ fn handle_compaction(
         format!("[session {session_id}] {summary}")
     };
     tokio::spawn(async move {
-        if let Some(brain) = brain
-            && brain.remember(&content, "compaction").await.is_none()
-        {
-            tracing::debug!("brain unavailable — compaction summary not stored");
+        // Skip-unless-bound: without a chat-scoped space there is no space
+        // to store the summary in (the boot-time space is gone).
+        if let (Some(brain), Some(space)) = (brain.as_ref(), brain_space.as_deref()) {
+            if brain
+                .remember(space, &content, "compaction")
+                .await
+                .is_none()
+            {
+                tracing::debug!("brain unavailable — compaction summary not stored");
+            }
+        } else if brain_space.is_some() {
+            // Space bound but the kernel brain is absent — a different
+            // failure from an unbound chat, so it gets its own log line.
+            tracing::debug!("brain unavailable — compaction summary not stored (space bound)");
+        } else {
+            tracing::debug!("brain unbound — compaction summary not stored");
         }
     });
 }
@@ -1769,6 +1841,7 @@ fn build_directive_system_prompt(
     capabilities_xml: Option<&str>,
     kernel_manifest: Option<&str>,
 ) -> String {
+    let brain_line = brain_space_line(env.brain_space.as_deref());
     build_system_prompt_inner(
         &directive.goal,
         &directive.original_request,
@@ -1778,6 +1851,7 @@ fn build_directive_system_prompt(
         persona_prompt,
         capabilities_xml,
         kernel_manifest,
+        brain_line.as_deref(),
     )
 }
 
@@ -1808,6 +1882,26 @@ const ARTIFACT_PROTOCOL: &str = "\n\n\
     short snippets that are part of an explanation belong in a normal fenced\n\
     code block. Use an artifact only for content the user would open to view,\n\
     not copy-and-paste. Limit one artifact per self-contained piece.\n";
+/// Drop the brain skill from retrieved capabilities when the chat is unbound.
+///
+/// Installed skills are indexed as `skill:{name}` (see `build_tool_retriever`
+/// in the binary crate), so the brain skill's entry name is `skill:brain` —
+/// builtin OS tools carry bare names, none of them "brain".
+fn filter_brain_capabilities(
+    results: &mut Vec<crate::tools::retrieval::ScoredTool>,
+    brain_space: Option<&str>,
+) {
+    if brain_space.is_none() {
+        results.retain(|scored| scored.entry.name != "skill:brain");
+    }
+}
+
+/// The `Memory` bullet suffix naming the chat's connected brain space, or
+/// `None` when unbound (bullet omitted entirely — the skill stays hidden).
+fn brain_space_line(brain_space: Option<&str>) -> Option<String> {
+    brain_space.map(|space| format!("Connected brain space: `{space}`."))
+}
+
 /// Shared system-prompt builder for the directive path.
 ///
 /// Composes the static agent prelude, goal/constraints/criteria sections,
@@ -1823,6 +1917,7 @@ fn build_system_prompt_inner(
     persona_prompt: Option<&str>,
     capabilities_xml: Option<&str>,
     kernel_manifest: Option<&str>,
+    brain_line: Option<&str>,
 ) -> String {
     let mut prompt = String::from(
         "You are an autonomous agent in the Oxios operating system.\n\
@@ -1832,9 +1927,17 @@ fn build_system_prompt_inner(
          You have the following tools:\n\
          - **File tools**: read, write, edit files; grep, find, ls for searching\n\
          - **Web tools**: web_search for searching the web, get_search_results for retrieving cached results\n\
-         - **Exec**: run shell commands\n\
-         - **Memory**: the `brain` skill — remember/ask through the allowlisted `oxibrain` CLI (exec structured mode) — your cross-session recall. Use `remember` proactively when the user shares preferences, facts, or corrections worth remembering.\n\
-         - **Knowledge**: knowledge — personal markdown vault for documents and notes\n\
+         - **Exec**: run shell commands\n",
+    );
+    // Brain-gated Memory bullet: advertise the `brain` skill — the connected
+    // oxibrain CLI — only to chats with a bound brain (design §4.3).
+    if let Some(line) = brain_line {
+        prompt.push_str(&format!(
+            "- **Memory**: the `brain` skill — the connected oxibrain CLI. {line}\n"
+        ));
+    }
+    prompt.push_str(
+        "- **Knowledge**: knowledge — personal markdown vault for documents and notes\n\
          - **Kernel tools**: agent, project, persona, cron, security, budget, resource\n\n\
          **Important**: When the task involves fetching information from the internet,\n\
          websites, or online services, use `web_search` first — do NOT search local files.\n\
@@ -2124,6 +2227,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         // The four pinned type values must appear verbatim (the frontend
         // matches these exact substrings — paraphrasing breaks the preview).
@@ -2132,5 +2236,90 @@ mod tests {
         assert!(prompt.contains("image/svg+xml"));
         assert!(prompt.contains("application/lobe.artifacts.mermaid"));
         assert!(prompt.contains("application/lobe.artifacts.react"));
+    }
+
+    #[test]
+    fn test_system_prompt_hides_brain_skill_when_unbound() {
+        let prompt = build_system_prompt_inner(
+            "build a dashboard",
+            "build a dashboard",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !prompt.contains("brain skill"),
+            "unbound prompt must not advertise the brain skill"
+        );
+        assert!(
+            !prompt.contains("**Memory**"),
+            "unbound prompt must not contain a Memory bullet"
+        );
+    }
+
+    #[test]
+    fn test_system_prompt_advertises_brain_skill_when_bound() {
+        let brain_line = brain_space_line(Some("work"));
+        let prompt = build_system_prompt_inner(
+            "build a dashboard",
+            "build a dashboard",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            brain_line.as_deref(),
+        );
+        assert!(prompt.contains(
+            "- **Memory**: the `brain` skill — the connected oxibrain CLI. Connected brain space: `work`."
+        ));
+    }
+    #[tokio::test]
+    async fn test_capability_filter_removes_indexed_brain_skill_when_unbound() {
+        use crate::embedding::TfIdfEmbeddingProvider;
+        use crate::tools::retrieval::{ToolEntry, ToolRetriever};
+
+        // Mirror the production index shape: installed skills are indexed as
+        // `skill:{name}` (src/kernel.rs build_tool_retriever).
+        let mut retriever = ToolRetriever::new(Arc::new(TfIdfEmbeddingProvider));
+        for (name, desc) in [
+            ("skill:brain", "remember and recall personal memories"),
+            ("skill:deploy", "deploy the project to production"),
+            ("exec", "run shell commands"),
+        ] {
+            retriever
+                .index_tool(ToolEntry {
+                    name: name.into(),
+                    category: "skill".into(),
+                    description: desc.into(),
+                    skill_path: None,
+                    command: None,
+                })
+                .await;
+        }
+        let query = retriever
+            .embedder()
+            .embed("remember this fact for me")
+            .await
+            .expect("tfidf embed");
+
+        // Unbound: the indexed brain skill must be filtered out.
+        let mut unbound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut unbound, None);
+        assert!(
+            unbound.iter().all(|s| s.entry.name != "skill:brain"),
+            "unbound chats must not see the indexed `skill:brain` capability"
+        );
+        assert!(unbound.iter().any(|s| s.entry.name == "skill:deploy"));
+
+        // Bound: the brain skill survives.
+        let mut bound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut bound, Some("work"));
+        assert!(bound.iter().any(|s| s.entry.name == "skill:brain"));
     }
 }

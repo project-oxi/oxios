@@ -2,13 +2,13 @@
 # RFC-003 Knowledge Migration Script
 #
 # Migrates Space-scoped knowledge directories to the global
-# ~/.oxios/knowledge/ directory.
+# <oxios home>/knowledge/ directory.
 #
 # Before RFC-003: each Space had its own knowledge/ directory
-#   ~/.oxios/workspace/sessions/<space-id>/knowledge/
+#   <oxios home>/workspace/sessions/<space-id>/knowledge/
 #
 # After RFC-003: single global knowledge base
-#   ~/.oxios/knowledge/
+#   <oxios home>/knowledge/
 #
 # Usage:
 #   bash share/migrate-knowledge.sh          # dry run (shows what would be moved)
@@ -16,9 +16,17 @@
 
 set -euo pipefail
 
-OXIOS_HOME="${OXIOS_HOME:-$HOME/.oxios}"
-GLOBAL_KB="${OXIOS_HOME}/knowledge"
-WORKSPACE="${OXIOS_HOME}/workspace"
+# Resolve the oxios home — mirrors oxios_kernel::oxi_home:
+#   $OXIOS_HOME > $OXI_HOME/oxios > $HOME/.oxi/oxios
+if [ -n "${OXIOS_HOME:-}" ]; then
+    OXIOS_ROOT="$OXIOS_HOME"
+elif [ -n "${OXI_HOME:-}" ]; then
+    OXIOS_ROOT="${OXI_HOME%/}/oxios"
+else
+    OXIOS_ROOT="$HOME/.oxi/oxios"
+fi
+GLOBAL_KB="${OXIOS_ROOT}/knowledge"
+WORKSPACE="${OXIOS_ROOT}/workspace"
 DRY_RUN=true
 
 if [[ "${1:-}" == "--run" ]]; then

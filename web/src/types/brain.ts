@@ -17,8 +17,6 @@ export interface BrainBinaryStatus {
 /** GET /api/brain/status */
 export interface BrainStatus {
   available: boolean
-  space: string | null
-  episodes: number | null
   pending_extraction: number | null
   binary: BrainBinaryStatus
 }

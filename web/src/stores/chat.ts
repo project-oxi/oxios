@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { adaptChunk } from '@/lib/stream/adapter'
 import type { ProcessorResult } from '@/lib/stream/StreamProcessor'
 import { StreamProcessor } from '@/lib/stream/StreamProcessor'
@@ -35,6 +36,9 @@ interface PersistedState {
   /** Session persona override id (null = inherit the global active persona).
    * Rehydrated from the session record on loadSession. */
   activePersonaId: string | null
+  /** Session brain-space binding id (null = unconnected turn). Rehydrated
+   *  from the session record on loadSession; persisted with the tab. */
+  activeBrainSpace: string | null
   /** Per-message sampling temperature. Persisted. `null` = use provider default. */
   temperature: number | null
   /** Per-message max output tokens. Persisted. `null` = use provider default. */
@@ -107,6 +111,11 @@ interface ChatRuntimeState {
    *  retryLoadSession to re-fire the same fetch without remembering the id
    *  outside the store. */
   _lastLoadedSessionId: string | null
+  /** Default-brain resolution inputs (Task 9 inheritance): the active
+   *  project's `default_brain_space` and the global config
+   *  `brain.default_space` ('' = none). Seeded by useBrainBindingSync on the
+   *  chat page; sendMessage resolves the effective binding from these. */
+  brainDefaults: { project: string | null; global: string }
 
   /** Server-derived execution snapshot for the active session (design
    *  §6.1). Runtime-only — never persisted: rehydrated from SessionDetail
@@ -171,6 +180,11 @@ interface ChatActions {
   setActiveRole: (role: string | null) => void
   /** Session persona override (null = inherit global active persona). */
   setActivePersona: (personaId: string | null) => void
+  /** Session brain-space binding (null = unconnected turn; defaults may
+   *  still apply — see brainDefaults). */
+  setActiveBrainSpace: (brainSpaceId: string | null) => void
+  /** Seed the default-brain resolution inputs (used by useBrainBindingSync). */
+  setBrainDefaults: (next: { project: string | null; global: string }) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
@@ -838,6 +852,7 @@ export const useChatStore = create<ChatStore>()(
       activeRole: null,
       activeModelId: null,
       activePersonaId: null,
+      activeBrainSpace: null,
       temperature: null,
       maxTokens: null,
       // ── Runtime ──
@@ -845,6 +860,7 @@ export const useChatStore = create<ChatStore>()(
       isStreaming: false,
       streamStartedAt: null as number | null,
       pendingModel: null as string | null,
+      brainDefaults: { project: null, global: '' },
       connected: false,
       _sendQueue: [],
       _pendingQueue: [],
@@ -1121,6 +1137,7 @@ export const useChatStore = create<ChatStore>()(
           activeSessionId,
           activeProjectId,
           activePersonaId,
+          activeBrainSpace,
           activeRole,
           activeModelId,
           temperature,
@@ -1128,6 +1145,7 @@ export const useChatStore = create<ChatStore>()(
           connected,
           connect,
           _ws,
+          brainDefaults,
         } = get()
 
         // Ensure WS is connected first
@@ -1184,6 +1202,12 @@ export const useChatStore = create<ChatStore>()(
           // Session persona override — backend validates against the
           // registry and threads it to ExecEnv::persona_id for the turn.
           persona_id: activePersonaId ?? '',
+          // Session brain binding — the RESOLVED value (explicit picker
+          // choice, else project/global default; '' = unconnected turn) so
+          // the kernel records the effective binding on the session. The
+          // backend validates the space and persists it.
+          brain_space:
+            resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? '',
           // Per-message model override (or last-picked persistent one).
           model: activeModelId ?? '',
         }
@@ -1362,6 +1386,14 @@ export const useChatStore = create<ChatStore>()(
             // SessionDetail; null when no persona binds.
             effectiveProfile:
               (data.effective_profile as EffectiveProfile | null | undefined) ?? null,
+            // Chat brain binding outlives the turn (chat picker): restore
+            // the session's bound space on reopen. The GET handler does not
+            // expose a top-level field yet — fall back to session metadata,
+            // which the WS ingress stamps on every bound turn.
+            activeBrainSpace:
+              (data.brain_space as string | null) ??
+              (data.metadata?.brain_space as string | null) ??
+              null,
             isStreaming: false,
             _pendingQueue: [],
             sessionLoadError: null,
@@ -1433,12 +1465,20 @@ export const useChatStore = create<ChatStore>()(
         set({ activePersonaId: personaId })
       },
 
+      setActiveBrainSpace(brainSpaceId: string | null) {
+        set({ activeBrainSpace: brainSpaceId })
+      },
+
       setActiveModelId(modelId: string | null) {
         set({ activeModelId: modelId })
       },
 
       setTemperature(temperature: number | null) {
         set({ temperature })
+      },
+
+      setBrainDefaults(next: { project: string | null; global: string }) {
+        set({ brainDefaults: next })
       },
 
       setMaxTokens(maxTokens: number | null) {
@@ -1468,6 +1508,7 @@ export const useChatStore = create<ChatStore>()(
           activeRole: null,
           activeModelId: null,
           activePersonaId: null,
+          activeBrainSpace: null,
           temperature: null,
           maxTokens: null,
           messages: [],
@@ -1991,6 +2032,7 @@ export const useChatStore = create<ChatStore>()(
         activeRole: state.activeRole,
         activeModelId: state.activeModelId,
         activePersonaId: state.activePersonaId,
+        activeBrainSpace: state.activeBrainSpace,
         temperature: state.temperature,
         maxTokens: state.maxTokens,
       }),

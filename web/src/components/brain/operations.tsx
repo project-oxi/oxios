@@ -14,9 +14,9 @@ function fmtDate(ms: number): string {
   })
 }
 
-function MergesTable() {
+function MergesTable({ space }: { space: string }) {
   const { t } = useTranslation()
-  const { data, isLoading } = useBrainMerges()
+  const { data, isLoading } = useBrainMerges(space)
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>
   const items = data ?? []
   if (items.length === 0)
@@ -55,9 +55,9 @@ function MergesTable() {
   )
 }
 
-function FailuresTable() {
+function FailuresTable({ space }: { space: string }) {
   const { t } = useTranslation()
-  const { data, isLoading } = useBrainFailures()
+  const { data, isLoading } = useBrainFailures(space)
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>
   const items = data ?? []
   if (items.length === 0)
@@ -91,9 +91,9 @@ function FailuresTable() {
   )
 }
 
-function SourcesTable() {
+function SourcesTable({ space }: { space: string }) {
   const { t } = useTranslation()
-  const { data, isLoading } = useBrainSources()
+  const { data, isLoading } = useBrainSources(space)
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>
   const items = data ?? []
   if (items.length === 0)
@@ -131,7 +131,7 @@ function SourcesTable() {
  * registered pull sources (`review_merges` sections). Failures are the
  * quarantine queue — the daemon's own console surfaces the same data.
  */
-export function BrainOperations() {
+export function BrainOperations({ space }: { space: string }) {
   const { t } = useTranslation()
   const [section, setSection] = useState<OperationsSection>('failures')
   return (
@@ -157,9 +157,9 @@ export function BrainOperations() {
       </div>
       <Card>
         <CardContent className="pt-6">
-          {section === 'merges' && <MergesTable />}
-          {section === 'failures' && <FailuresTable />}
-          {section === 'sources' && <SourcesTable />}
+          {section === 'merges' && <MergesTable space={space} />}
+          {section === 'failures' && <FailuresTable space={space} />}
+          {section === 'sources' && <SourcesTable space={space} />}
         </CardContent>
       </Card>
     </div>

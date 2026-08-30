@@ -3,7 +3,7 @@
 //! Embedded builds (default release path) serve the SPA compiled into the
 //! binary — exclusively. Non-embedded builds (`cargo install` from crates.io)
 //! download `web-dist.zip` from GitHub Releases at startup and resolve the
-//! downloaded generation via the `~/.oxios/web/.active` marker on restart.
+//! downloaded generation via the `~/.oxi/oxios/web/.active` marker on restart.
 //!
 //! There is deliberately NO on-disk override for embedded builds: a manually
 //! placed dist used to shadow binary deploys silently (stale-UI incidents,
@@ -23,12 +23,12 @@ use std::time::{Duration, SystemTime};
 /// canonical constant").
 const GITHUB_REPO: &str = crate::managed_install::GITHUB_REPO;
 
-/// Returns `~/.oxios/web/` (download staging root + marker location).
+/// Returns `~/.oxi/oxios/web/` (download staging root + marker location).
 fn user_web_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".oxios").join("web"))
+    Some(oxios_kernel::oxi_home::oxios_home().join("web"))
 }
 
-/// Returns the path to the active-dist marker file (`~/.oxios/web/.active`).
+/// Returns the path to the active-dist marker file (`~/.oxi/oxios/web/.active`).
 ///
 /// RFC-024 SP3: persists the path the in-memory atomic pointer last pointed
 /// at, so a daemon restart resolves the same generation the previous process

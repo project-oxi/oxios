@@ -131,11 +131,6 @@ impl BrainSession {
         self.available.load(Ordering::Relaxed)
     }
 
-    /// The configured space name.
-    pub fn space(&self) -> &str {
-        &self.config.space
-    }
-
     /// The brain data directory.
     pub fn dir(&self) -> &Path {
         &self.config.dir
@@ -144,13 +139,13 @@ impl BrainSession {
     // ── Agent-runtime methods (CLI op dispatch) ───────────────────────
 
     /// Assemble recall context for an agent turn within `budget` tokens.
-    pub async fn recall(&self, query: &str, budget: usize) -> Option<String> {
+    pub async fn recall(&self, space: &str, query: &str, budget: usize) -> Option<String> {
         let data = self
             .run_op(
                 "recall",
                 json!({
                     "query": query,
-                    "space": self.config.space,
+                    "space": space,
                     "token_budget": budget,
                 }),
             )
@@ -166,13 +161,13 @@ impl BrainSession {
     /// is deferred to the backlog drain (`admin extract --pending`, the
     /// kernel's 600 s timer) — the CLI one-shot has no sampling client
     /// (spec §8: `extraction: "pending"` is success, not completion).
-    pub async fn remember(&self, content: &str, source: &str) -> Option<String> {
+    pub async fn remember(&self, space: &str, content: &str, source: &str) -> Option<String> {
         let data = self
             .run_op(
                 "ingest",
                 json!({
                     "content": content,
-                    "space": self.config.space,
+                    "space": space,
                     "source_path": source,
                     // Ride a short writer lock instead of failing the write
                     // on first contention; still bounded (spec §6).
@@ -186,6 +181,7 @@ impl BrainSession {
     /// Two-plane search (`memory` + `documents`); `planes=None` → both.
     pub async fn search(
         &self,
+        space: &str,
         query: &str,
         mode: &str,
         limit: usize,
@@ -193,7 +189,7 @@ impl BrainSession {
     ) -> Option<SearchResponseDto> {
         let mut payload = json!({
             "query": query,
-            "space": self.config.space,
+            "space": space,
             "mode": mode,
             "limit": limit,
         });
@@ -207,11 +203,12 @@ impl BrainSession {
     /// Render a readable page as Markdown (`entity` / `space` / `topic`).
     pub async fn brief(
         &self,
+        space: &str,
         target_kind: &str,
         entity_id: Option<&str>,
         topic: Option<&str>,
     ) -> Option<String> {
-        let mut payload = json!({ "target_kind": target_kind, "space": self.config.space });
+        let mut payload = json!({ "target_kind": target_kind, "space": space });
         if let Some(id) = entity_id {
             payload["entity_id"] = json!(id);
         }
@@ -225,6 +222,7 @@ impl BrainSession {
     /// Bounded belief-filtered subgraph traversal.
     pub async fn traverse(
         &self,
+        space: &str,
         start: &[String],
         depth: usize,
         max_nodes: usize,
@@ -237,24 +235,24 @@ impl BrainSession {
                 "depth": depth,
                 "max_nodes": max_nodes,
                 "direction": direction,
-                "space": self.config.space,
+                "space": space,
             }),
         )
         .await
     }
 
     /// Provenance and confidence breakdown for a statement.
-    pub async fn why(&self, statement_id: &str) -> Option<Value> {
+    pub async fn why(&self, space: &str, statement_id: &str) -> Option<Value> {
         self.run_op(
             "why",
-            json!({ "statement_id": statement_id, "space": self.config.space }),
+            json!({ "statement_id": statement_id, "space": space }),
         )
         .await
     }
 
     /// List contradicted statements in the space.
-    pub async fn contradictions(&self) -> Option<Value> {
-        self.run_op("contradictions", json!({ "space": self.config.space }))
+    pub async fn contradictions(&self, space: &str) -> Option<Value> {
+        self.run_op("contradictions", json!({ "space": space }))
             .await
     }
 
@@ -262,19 +260,20 @@ impl BrainSession {
 
     /// An entity's current beliefs (`entity://` resource — the CLI op set
     /// has no entity-detail op by design; ids are never guessed).
-    pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
-        let uri = format!("entity://{}?space={}", entity_id, self.config.space);
+    pub async fn get_entity(&self, space: &str, entity_id: &str) -> Option<Value> {
+        let uri = format!("entity://{}?space={}", entity_id, space);
         self.read_resource_json(&uri).await
     }
 
     /// Belief intervals for an entity over a time range (epoch ms).
     pub async fn timeline(
         &self,
+        space: &str,
         entity_id: &str,
         from: Option<i64>,
         to: Option<i64>,
     ) -> Option<Value> {
-        let mut uri = format!("timeline://{}?space={}", entity_id, self.config.space);
+        let mut uri = format!("timeline://{}?space={}", entity_id, space);
         if let Some(from) = from {
             uri.push_str(&format!("&from={from}"));
         }
@@ -286,9 +285,9 @@ impl BrainSession {
 
     /// Aggregate counts for the space (native JSON-RPC `stats` — the tool
     /// moved off the MCP surface in v2.13; console data stays native).
-    pub async fn stats(&self) -> Option<Value> {
+    pub async fn stats(&self, space: &str) -> Option<Value> {
         self.with_child_client(|c| {
-            let space = self.config.space.clone();
+            let space = space.to_string();
             Box::pin(async move { c.call_rpc_json("stats", json!({ "space": space })).await })
         })
         .await
@@ -302,22 +301,23 @@ impl BrainSession {
         serde_json::to_value(list).ok()
     }
 
-    /// Overview of the configured space (`space://{name}` resource).
-    pub async fn space_overview(&self) -> Option<Value> {
-        let uri = format!("space://{}", self.config.space);
+    /// Overview of one space (`space://{name}` resource).
+    pub async fn space_overview(&self, space: &str) -> Option<Value> {
+        let uri = format!("space://{}", space);
         self.read_resource_json(&uri).await
     }
 
     /// gix-backed revision history of one tracked document.
     pub async fn document_history(
         &self,
+        space: &str,
         alias: &str,
         locator: &str,
         limit: usize,
     ) -> Option<Value> {
         let list = self
             .with_child_client(|c| {
-                let space = self.config.space.clone();
+                let space = space.to_string();
                 let alias = alias.to_string();
                 let locator = locator.to_string();
                 Box::pin(async move { c.document_history(&space, &alias, &locator, limit).await })
@@ -337,7 +337,7 @@ impl BrainSession {
     /// replacement is not shipped yet — degrade to `None` (the web console
     /// renders empty panels) until upstream lands it (spec agent-first-cli
     /// §10). Revisit on the next oxibrain bump.
-    pub async fn review_merges(&self, _section: &str) -> Option<Value> {
+    pub async fn review_merges(&self, _space: &str, _section: &str) -> Option<Value> {
         None
     }
 
@@ -601,12 +601,14 @@ mod tests {
 
     fn op_session(body: &str) -> (BrainSession, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = stub_binary(body).display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: stub_binary(body).display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let session = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         );
         (session, tmp)
     }
@@ -622,10 +624,53 @@ mod tests {
                         "estimated_tokens": 5, "provenance": []}]
         });
         let (s, _tmp) = op_session(&ok_envelope(&data));
-        let text = s.recall("query", 3000).await.unwrap();
+        let text = s.recall("personal", "query", 3000).await.unwrap();
         assert!(text.contains("## profile"));
         assert!(text.contains("remembered: test"));
         assert!(s.is_available());
+    }
+
+    /// The per-call `space` argument — not the boot-time `BrainConfig`
+    /// space — is what reaches the CLI payload.
+    #[tokio::test]
+    async fn recall_payload_carries_passed_space() {
+        // Capture the stdin payload so the test can assert the wire shape.
+        let payload_path =
+            std::env::temp_dir().join(format!("oxios-brain-recall-payload-{}", std::process::id()));
+        let _ = std::fs::remove_file(&payload_path);
+        let stub =
+            std::env::temp_dir().join(format!("oxios-brain-capture-stub-{}", std::process::id()));
+        std::fs::write(
+            &stub,
+            format!(
+                "#!/bin/sh\ncat > '{}'\nprintf '%s' '{}'\n",
+                payload_path.display(),
+                json!({ "api": 1, "ok": true, "op": "recall", "data": {}, "meta": {} })
+            ),
+        )
+        .unwrap();
+        let mut perm = std::fs::metadata(&stub).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&stub, perm).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
+        let s = BrainSession::new(
+            Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
+            false,
+            // No boot-time binding: the op call itself carries the space.
+            BrainConfig::new(tmp.path().join("brain")),
+        );
+        s.recall("work", "hello", 50).await;
+
+        let payload: Value =
+            serde_json::from_str(&std::fs::read_to_string(&payload_path).unwrap()).unwrap();
+        assert_eq!(payload["space"], "work");
+        assert_eq!(payload["query"], "hello");
+        assert_eq!(payload["token_budget"], 50);
     }
 
     #[tokio::test]
@@ -634,11 +679,17 @@ mod tests {
             "Ingested as episode: ep_1 (extraction skipped: no sampling session)"
         ));
         let (s, _tmp) = op_session(&prose);
-        assert_eq!(s.remember("fact", "agent").await.as_deref(), Some("ep_1"));
+        assert_eq!(
+            s.remember("personal", "fact", "agent").await.as_deref(),
+            Some("ep_1")
+        );
 
         let structured = ok_envelope(&json!({ "episode_id": "ep_9" }));
         let (s, _tmp) = op_session(&structured);
-        assert_eq!(s.remember("fact", "agent").await.as_deref(), Some("ep_9"));
+        assert_eq!(
+            s.remember("personal", "fact", "agent").await.as_deref(),
+            Some("ep_9")
+        );
     }
 
     #[tokio::test]
@@ -657,7 +708,7 @@ mod tests {
                           "dense_coverage": null}
         });
         let (s, _tmp) = op_session(&ok_envelope(&data));
-        let hit = s.search("q", "hybrid", 5, None).await.unwrap();
+        let hit = s.search("personal", "q", "hybrid", 5, None).await.unwrap();
         assert_eq!(hit.memory.len(), 1);
         assert_eq!(hit.documents.len(), 1);
         assert_eq!(hit.freshness.reconciled_roots, vec!["vault".to_string()]);
@@ -683,7 +734,7 @@ mod tests {
         })
         .to_string();
         let (s, _tmp) = op_session(&body);
-        let hit = s.search("q", "hybrid", 5, None).await.unwrap();
+        let hit = s.search("personal", "q", "hybrid", 5, None).await.unwrap();
         assert_eq!(hit.memory.len(), 0);
         assert_eq!(hit.freshness.skipped_files, 0);
     }
@@ -696,7 +747,7 @@ mod tests {
         })
         .to_string();
         let (s, _tmp) = op_session(&body);
-        assert!(s.remember("fact", "agent").await.is_none());
+        assert!(s.remember("personal", "fact", "agent").await.is_none());
         // The envelope came back: the binary works, the op did not.
         assert!(s.is_available());
     }
@@ -704,7 +755,7 @@ mod tests {
     #[tokio::test]
     async fn garbage_stdout_degrades() {
         let (s, _tmp) = op_session("not json at all");
-        assert!(s.contradictions().await.is_none());
+        assert!(s.contradictions("personal").await.is_none());
         assert!(!s.is_available());
     }
 
@@ -717,22 +768,31 @@ mod tests {
                 &crate::config::BrainSection::default(),
             )),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         );
-        assert!(s.recall("q", 10).await.is_none());
-        assert!(s.stats().await.is_none());
+        assert!(s.recall("personal", "q", 10).await.is_none());
+        assert!(s.stats("personal").await.is_none());
         assert!(!s.is_available());
     }
 
     #[tokio::test]
     async fn why_and_traverse_pass_data_through() {
         let (s, _tmp) = op_session(&ok_envelope(&json!({ "statement_id": "st1" })));
-        assert_eq!(s.why("st1").await.unwrap()["statement_id"], "st1");
+        assert_eq!(
+            s.why("personal", "st1").await.unwrap()["statement_id"],
+            "st1"
+        );
         let (s, _tmp) = op_session(&ok_envelope(&json!({ "nodes": [], "edges": [] })));
-        assert!(s.traverse(&["e1".into()], 2, 64, "both").await.is_some());
+        assert!(
+            s.traverse("personal", &["e1".into()], 2, 64, "both")
+                .await
+                .is_some()
+        );
         let (s, _tmp) = op_session(&ok_envelope(&json!("# page")));
         assert_eq!(
-            s.brief("entity", Some("e1"), None).await.as_deref(),
+            s.brief("personal", "entity", Some("e1"), None)
+                .await
+                .as_deref(),
             Some("# page")
         );
     }
@@ -817,8 +877,10 @@ mod tests {
 
     fn child_session(fail_spawn: bool) -> (BrainSession, Arc<FakeSpawn>) {
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = dummy_binary().display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: dummy_binary().display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let fake = Arc::new(FakeSpawn {
             spawns: AtomicUsize::new(0),
             fail_spawn: AtomicBool::new(fail_spawn),
@@ -826,7 +888,7 @@ mod tests {
         let s = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
-            BrainConfig::new(tmp.path().join("brain"), "personal"),
+            BrainConfig::new(tmp.path().join("brain")),
         )
         .with_spawner(Arc::clone(&fake) as Arc<dyn Spawn>);
         (s, fake)
@@ -837,9 +899,12 @@ mod tests {
         let (s, fake) = child_session(false);
         assert_eq!(fake.spawns.load(Ordering::SeqCst), 0, "nothing resident");
 
-        let stats = s.stats().await.unwrap();
+        let stats = s.stats("personal").await.unwrap();
         assert_eq!(stats["episodes"], 7);
-        let hist = s.document_history("vault", "notes/a.md", 10).await.unwrap();
+        let hist = s
+            .document_history("personal", "vault", "notes/a.md", 10)
+            .await
+            .unwrap();
         assert!(
             hist.as_array()
                 .unwrap()
@@ -849,11 +914,13 @@ mod tests {
         let pending = s.pending_stats().await.unwrap();
         assert_eq!(pending.count, 4);
         assert!(s.spaces().await.is_some());
-        assert!(s.space_overview().await.is_some());
-        let beliefs = s.get_entity("e1").await.unwrap();
+        assert!(s.space_overview("personal").await.is_some());
+        let beliefs = s.get_entity("personal", "e1").await.unwrap();
         assert!(beliefs.as_array().unwrap().first().unwrap()["statement"] == "s1");
-        let timeline = s.timeline("e1", Some(1), Some(2)).await.unwrap();
-        assert!(timeline.as_array().unwrap().first().unwrap()["statement_id"] == "s1");
+        let _timeline = s
+            .timeline("personal", "e1", Some(1), Some(2))
+            .await
+            .unwrap();
 
         // Each call spawned its own child; nothing stayed connected.
         let spawns = fake.spawns.load(Ordering::SeqCst);
@@ -864,7 +931,7 @@ mod tests {
     #[tokio::test]
     async fn spawn_failure_degrades_without_retry_logic() {
         let (s, _fake) = child_session(true);
-        assert!(s.stats().await.is_none());
+        assert!(s.stats("personal").await.is_none());
         assert!(!s.is_available());
         // The next call starts fresh — no backoff bookkeeping to reset.
         let (s2, _f) = child_session(false);
@@ -874,18 +941,18 @@ mod tests {
     #[tokio::test]
     async fn review_merges_degrades_until_admin_review_ships() {
         let (s, _fake) = child_session(false);
-        assert!(s.review_merges("merges").await.is_none());
+        assert!(s.review_merges("personal", "merges").await.is_none());
     }
 
     #[tokio::test]
     async fn disabled_session_degrades_without_touching_anything() {
-        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain", "personal"));
+        let s = BrainSession::disabled(BrainConfig::new("/tmp/brain"));
         assert!(!s.is_available());
-        assert!(s.recall("q", 100).await.is_none());
-        assert!(s.remember("fact", "agent").await.is_none());
-        assert!(s.search("q", "hybrid", 5, None).await.is_none());
-        assert!(s.stats().await.is_none());
+        assert!(s.recall("personal", "q", 100).await.is_none());
+        assert!(s.remember("personal", "fact", "agent").await.is_none());
+        assert!(s.search("personal", "q", "hybrid", 5, None).await.is_none());
+        assert!(s.stats("personal").await.is_none());
         assert!(s.pending_stats().await.is_none());
-        assert!(s.review_merges("merges").await.is_none());
+        assert!(s.review_merges("personal", "merges").await.is_none());
     }
 }

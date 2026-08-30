@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { RootPathsEditor } from '@/components/project/root-paths-editor'
+import { ProjectBrainSelect } from '@/components/brain/space-select'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,7 +15,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { useCreateProject } from '@/hooks/use-projects'
+import { useCreateProject, useUpdateProject } from '@/hooks/use-projects'
 
 interface CreateProjectDialogProps {
   open: boolean
@@ -28,15 +29,17 @@ interface CreateProjectDialogProps {
 export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogProps) {
   const { t } = useTranslation()
   const create = useCreateProject()
-
+  const update = useUpdateProject()
   const [name, setName] = useState('')
   const [rootPaths, setRootPaths] = useState<string[]>([])
   const [instructions, setInstructions] = useState('')
+  const [defaultBrainSpace, setDefaultBrainSpace] = useState<string | null>(null)
 
   const reset = () => {
     setName('')
     setRootPaths([])
     setInstructions('')
+    setDefaultBrainSpace(null)
   }
 
   useEffect(() => {
@@ -54,7 +57,29 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
         instructions: instructions.trim() || undefined,
       },
       {
-        onSuccess: () => {
+        onSuccess: (created) => {
+          // The create endpoint carries no default brain space; apply it via
+          // a follow-up update when the user picked one (tri-state PUT).
+          if (defaultBrainSpace !== null) {
+            update.mutate(
+              { id: created.id, default_brain_space: defaultBrainSpace },
+              {
+                onSuccess: () => {
+                  toast.success(t('projects.createSuccess'))
+                  reset()
+                  onOpenChange(false)
+                },
+                onError: () => {
+                  // Project was created; surface the follow-up failure but
+                  // still close — the default brain can be set later.
+                  toast.error(t('projects.updateError'))
+                  reset()
+                  onOpenChange(false)
+                },
+              },
+            )
+            return
+          }
           toast.success(t('projects.createSuccess'))
           reset()
           onOpenChange(false)
@@ -98,6 +123,17 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
               rows={4}
             />
           </div>
+
+          {/* Default brain — inherited by new chats in this project */}
+          <div className="space-y-2">
+            <Label>{t('projects.defaultBrain')}</Label>
+            <ProjectBrainSelect
+              value={defaultBrainSpace}
+              onValueChange={setDefaultBrainSpace}
+              className="w-full"
+            />
+          </div>
+
           <DialogFooter>
             <Button
               type="button"

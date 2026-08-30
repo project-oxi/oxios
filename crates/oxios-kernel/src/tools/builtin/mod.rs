@@ -95,6 +95,15 @@ pub fn register_all_kernel_tools(
 
     // Kernel domain tools (take &KernelHandle)
     registry.register(ProjectTool::from_kernel(kernel));
+    // Issues are per-project. This path (the SDK `KernelToolProvider`
+    // bridge) has no turn, so no project is bound and every action reports
+    // that. The agent runtime binds the turn's project in
+    // `register_tools_from_cspace_gated`.
+    registry.register(crate::tools::IssueTool::new(
+        Arc::clone(&kernel.issues),
+        Arc::clone(&kernel.tool_results),
+        None,
+    ));
     registry.register(KernelAgentTool::from_kernel(kernel));
     registry.register(PersonaTool::from_kernel(kernel));
 

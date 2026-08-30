@@ -716,6 +716,9 @@ impl Gateway {
             // Session-scoped persona override (chat picker): validated at
             // the WS/HTTP ingress; carried through to ExecEnv::persona_id.
             let persona_id = msg.metadata.get("persona_id").map(String::as_str);
+            // Chat-scoped brain binding (chat brain picker): validated at
+            // the WS/HTTP ingress; carried through to ExecEnv::brain_space.
+            let brain_space = msg.metadata.get("brain_space").map(String::as_str);
             // Parse optional per-message model params from metadata. Strings
             // are used so the WS layer doesn't need a structured payload
             // change — the gateway translates them to typed ModelParams here.
@@ -747,6 +750,7 @@ impl Gateway {
                     model_override,
                     model_params,
                     persona_id,
+                    brain_space,
                     &request_id,
                 ) => Some(res),
             };

@@ -237,10 +237,13 @@ impl KnowledgeCuration {
             .num_milliseconds()
             .max(0) as u64;
 
-        let report_path = self
-            .knowledge_base
-            .root()
-            .join(".oxios")
+        // Unified home: curation reports are oxios-private state and
+        // live under the oxios home (`OXIOS_HOME` override or
+        // `~/.oxi/oxios`) — never inside the shared vault, which is
+        // user-owned knowledge (no app writes another app's subtree).
+        // `state/` is denied to agents via `OXIOS_HOME_DENY_SUBPATHS`.
+        let report_path = crate::oxi_home::oxios_home()
+            .join("state")
             .join("curation_reports")
             .join(format!("{}.json", report.curation_id));
         if let Some(parent) = report_path.parent() {

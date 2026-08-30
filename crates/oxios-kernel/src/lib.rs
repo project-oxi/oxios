@@ -77,6 +77,7 @@ pub mod embedding;
 pub mod foundation;
 pub mod memory_agent;
 pub mod onboarding;
+pub mod oxi_home;
 pub mod persona;
 
 // ─── Tools & Skills ───────────────────────────────────────────────
@@ -95,6 +96,7 @@ pub mod backup;
 pub mod compression;
 pub mod config;
 pub use oxi_vault_git as git_layer;
+pub mod home_migrate;
 pub mod kernel_db;
 pub mod project;
 pub mod resource_monitor;
@@ -167,7 +169,7 @@ pub use mcp::{
     McpBridge, McpCapabilities, McpServer, McpTool, McpToolCallResult as CallToolResult,
 };
 
-pub use brain::{BrainConfig, BrainInstaller, BrainSession, Spawn, StdioChild, resolve_space};
+pub use brain::{BrainConfig, BrainInstaller, BrainSession, Spawn, StdioChild};
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
 pub use kernel_handle::brain_api::BrainStatusSnapshot;
 pub use memory_agent::sona::{
@@ -254,10 +256,11 @@ pub use kernel_handle::MarketplaceApi;
 pub use kernel_handle::{
     A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
-    InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
-    MemoApi, MemoryNote, ModelInfo, PersonaApi, ProjectApi, ProjectInfo, ProviderCategory,
-    ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot, RoutingUpdate,
-    SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
+    InputModality as EngineInputModality, IssueApi, IssueQuery, IssueView, KnowledgeContext,
+    KnowledgeLens, KnowledgeNote, McpApi, MemoApi, MemoryNote, MilestoneView, ModelInfo, NewIssue,
+    PersonaApi, ProjectApi, ProjectInfo, ProviderCategory, ProviderInfo, RoutingConfigSnapshot,
+    RoutingStats, RoutingStatsSnapshot, RoutingUpdate, SecurityApi, SharedExecConfig, StateApi,
+    TimelineApi, ValidateKeyResult,
 };
 #[cfg(feature = "browser")]
 pub use kernel_handle::{ScreenshotEngine, ScreenshotViewport};

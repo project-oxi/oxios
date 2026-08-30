@@ -365,6 +365,7 @@ impl Orchestrator {
         model_override: Option<&str>,
         model_params: Option<oxios_ouroboros::ModelParams>,
         persona_id: Option<&str>,
+        brain_space: Option<&str>,
         request_id: &str,
     ) -> Result<OrchestrationResult> {
         // Get the IntentEngine (always wired by the kernel assembler).
@@ -384,6 +385,7 @@ impl Orchestrator {
             role: role.map(String::from),
             model_override: model_override.map(String::from),
             persona_id: persona_id.map(String::from),
+            brain_space: brain_space.map(String::from),
             user_id: user_id.to_string(),
             model_params,
         };
@@ -500,6 +502,7 @@ impl Orchestrator {
             persona_id: ctx.persona_id.clone(),
             restore_state: None,
             session_id: Some(ctx.session_id.clone()),
+            brain_space: ctx.brain_space.clone(),
             model_params: ctx.model_params.clone(),
         }
     }

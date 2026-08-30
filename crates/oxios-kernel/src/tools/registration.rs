@@ -50,7 +50,7 @@ use crate::types::AgentId;
 pub fn register_always_on(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
-    bus: Arc<crate::tools::SearchResultBus>,
+    bus: Arc<crate::tools::StructuredResultBus>,
     search: crate::config::SearchConfig,
 ) {
     registry.register(ReadTool::new());
@@ -66,8 +66,11 @@ pub fn register_always_on(
     ));
     registry.register(crate::tools::KernelGetSearchResultsTool::new(
         GetSearchResultsTool::new(search_cache),
-        bus,
+        bus.clone(),
     ));
+    // Session-scoped planning. Ungated by design: the todo list is
+    // in-process state that touches no file and no network.
+    registry.register(crate::tools::TodoTool::new(bus));
 }
 
 /// Register the headless-browser browse tools when the engine is available.
@@ -101,7 +104,7 @@ fn register_browser_tools(_kernel: &KernelHandle, _registry: &ToolRegistry) {}
 pub fn register_always_on_gated(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
-    bus: Arc<crate::tools::SearchResultBus>,
+    bus: Arc<crate::tools::StructuredResultBus>,
     search: crate::config::SearchConfig,
     gate: Arc<AccessGate>,
     context: AgentContext,
@@ -110,6 +113,7 @@ pub fn register_always_on_gated(
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
 ) {
+    let bus_for_todo = Arc::clone(&bus);
     registry.register(GatedTool::with_approval(
         ReadTool::new(),
         gate.clone(),
@@ -182,6 +186,10 @@ pub fn register_always_on_gated(
         pending_approvals,
         pending_path_access.clone(),
     ));
+    // Session-scoped planning, mirroring `register_always_on`. Registered
+    // ungated even here: the todo list is in-process state that touches no
+    // file and no network, so there is nothing for the access gate to check.
+    registry.register(crate::tools::TodoTool::new(bus_for_todo));
 }
 
 /// Register tools into `registry` based on the agent's [`CSpace`].
@@ -204,7 +212,7 @@ pub fn register_always_on_gated(
 /// |-------------|----------------|-----------------|
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` |
 /// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
-/// | `KernelDomain { "project" }` | any | `ProjectTool` |
+/// | `KernelDomain { "project" }` | any | `ProjectTool` + `IssueTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
@@ -225,7 +233,7 @@ pub fn register_tools_from_cspace(
     register_always_on(
         registry,
         search_cache,
-        Arc::clone(&kernel.search_results),
+        Arc::clone(&kernel.tool_results),
         kernel.engine.search_config(),
     );
 
@@ -273,7 +281,7 @@ pub fn register_tools_from_cspace(
             // agents use exec to run program commands.
             ResourceRef::Skill { .. } => {}
 
-            // Space, Agent, Mcp resource refs are handled through
+            // Agent, Mcp resource refs are handled through
             // their respective KernelDomain registrations above
             // or through dedicated tool paths.
             _ => {}
@@ -318,7 +326,7 @@ pub fn register_tools_from_cspace(
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` (gated) |
 /// | `Browser` | `EXECUTE` | SDK browse tools |
 /// | `KernelDomain { "memory" }` | — | *(registered unconditionally in `register_all_kernel_tools`)* |
-/// | `KernelDomain { "space" }` | any | `ProjectTool` |
+/// | `KernelDomain { "project" }` | any | `ProjectTool` + `IssueTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
@@ -346,6 +354,9 @@ pub fn register_tools_from_cspace_gated(
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
     include_always_on_tools: bool,
+    // Active project for the turn; scopes the `issue` tool. `None` means no
+    // project is selected, and the tool says so instead of guessing one.
+    project_id: Option<crate::project::ProjectId>,
 ) {
     // ── Tier 1: Always-on tools (gated) ──────────────────────────────
     // Skipped for control-only personas (ToolProfile::Control): the
@@ -355,7 +366,7 @@ pub fn register_tools_from_cspace_gated(
         register_always_on_gated(
             registry,
             search_cache,
-            Arc::clone(&kernel.search_results),
+            Arc::clone(&kernel.tool_results),
             kernel.engine.search_config(),
             gate.clone(),
             context.clone(),
@@ -398,8 +409,16 @@ pub fn register_tools_from_cspace_gated(
                     // CLI (exec structured mode). Domain stays recognized so
                     // persona grants keep their meaning.
                 }
-                "space" => {
+                "project" => {
                     registry.register(ProjectTool::from_kernel(kernel));
+                    // Issues are per-project, so they ride the project
+                    // capability. Not path-gated: the store lives under the
+                    // `~/.oxi` whole-root deny and is reachable only here.
+                    registry.register(crate::tools::IssueTool::new(
+                        Arc::clone(&kernel.issues),
+                        Arc::clone(&kernel.tool_results),
+                        project_id,
+                    ));
                 }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
@@ -452,19 +471,25 @@ pub fn register_tools_from_cspace_gated(
 mod tests {
     use super::*;
 
+    /// The always-on tier as the agent actually receives it.
+    ///
+    /// `OxiosKernelBridge::tool_names` is a hand-maintained list, so a name
+    /// can be advertised there while no tool is registered under it — that
+    /// exact drift shipped once when `todo` was added to the list and to the
+    /// gated path but not to this one. Assert against the real registry.
     #[test]
-    fn register_always_on_registers_eight_tools() {
+    fn register_always_on_registers_nine_tools() {
         let registry = ToolRegistry::new();
         let cache = Arc::new(SearchCache::new());
         register_always_on(
             &registry,
             cache,
-            Arc::new(crate::tools::SearchResultBus::new()),
+            Arc::new(crate::tools::StructuredResultBus::new()),
             crate::config::SearchConfig::default(),
         );
 
-        // The always-on set is: read, write, edit, grep, find, ls, web_search, get_search_results
-        // ToolRegistry doesn't expose a count, but we can verify individual tool names.
+        // The always-on set is: read, write, edit, grep, find, ls,
+        // web_search, get_search_results, todo.
         let tool_names = registry.names();
         assert!(
             tool_names.contains(&"read".to_string()),
@@ -498,5 +523,36 @@ mod tests {
             tool_names.contains(&"get_search_results".to_string()),
             "get_search_results tool should be registered"
         );
+        assert!(
+            tool_names.contains(&"todo".to_string()),
+            "todo tool should be registered"
+        );
+    }
+
+    /// Every always-on tool must also appear in the gate's Layer-0 skip list.
+    ///
+    /// The tier is registered unconditionally, so the LLM will call these
+    /// tools; if a name is missing from the skip list, no capability template
+    /// grants the matching EXECUTE right and every call is hard-denied. That
+    /// catch-22 shipped once for `web_search` (see the comment on
+    /// `gate::AccessGate::check_tool`) and is easy to reintroduce by adding a
+    /// tool to one list and not the other.
+    #[test]
+    fn always_on_tools_are_all_exempt_from_layer_zero() {
+        let registry = ToolRegistry::new();
+        register_always_on(
+            &registry,
+            Arc::new(SearchCache::new()),
+            Arc::new(crate::tools::StructuredResultBus::new()),
+            crate::config::SearchConfig::default(),
+        );
+
+        for name in registry.names() {
+            assert!(
+                crate::access_manager::LAYER0_EXEMPT_TOOLS.contains(&name.as_str()),
+                "always-on tool `{name}` is missing from LAYER0_EXEMPT_TOOLS; \
+                 every call to it would be denied for lack of an EXECUTE capability"
+            );
+        }
     }
 }

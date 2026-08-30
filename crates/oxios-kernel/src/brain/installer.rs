@@ -403,10 +403,12 @@ mod tests {
         // Mask host-installed `oxibrain` so locate_binary is deterministic.
         // The guard restores PATH on Drop, including on panic.
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
         let explicit = tmp.path().join("custom-oxibrain");
         std::fs::write(&explicit, b"#!/bin/sh\n").unwrap();
-        section.binary_path = explicit.display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: explicit.display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let inst = BrainInstaller::from_brain_section(tmp.path(), &section);
         {
             let _path_guard = EmptyPathGuard::install();
@@ -414,8 +416,10 @@ mod tests {
         }
 
         // No explicit → managed root wins over PATH.
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = String::new();
+        let section = crate::config::BrainSection {
+            binary_path: String::new(),
+            ..crate::config::BrainSection::default()
+        };
         let inst = BrainInstaller::from_brain_section(tmp.path(), &section);
         {
             let _path_guard = EmptyPathGuard::install();
@@ -488,8 +492,10 @@ mod tests {
         std::fs::write(&wrapper, script).unwrap();
         make_executable(&wrapper);
 
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = wrapper.display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: wrapper.display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let inst = BrainInstaller::from_brain_section(tmp.path(), &section);
 
         // First call: probes.

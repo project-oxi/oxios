@@ -15,6 +15,7 @@ use std::sync::Arc;
 use oxios_kernel::{ProjectInfo, ProjectManagerError};
 
 use crate::api::error::AppError;
+use crate::api::routes::deserialize_some;
 use crate::api::server::AppState;
 
 // ─── Request / Query types ──────────────────────────────────
@@ -52,6 +53,10 @@ pub(crate) struct UpdateProjectRequest {
     pub name: Option<String>,
     pub root_paths: Option<Vec<String>>,
     pub instructions: Option<String>,
+    /// Default brain space inherited by NEW chats in this Project. Absent =
+    /// keep current; JSON `null` = clear; string = set.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub default_brain_space: Option<Option<String>>,
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -198,6 +203,22 @@ pub(crate) async fn handle_project_update(
 ) -> Result<Json<ProjectInfo>, AppError> {
     let api = project_api!(state);
 
+    // Default brain space uses the tri-state bundle update: absent = keep
+    // current, JSON `null` = clear, string = set. Everything else rides the
+    // regular reduced-record update below.
+    if body.default_brain_space.is_some() {
+        let project = api
+            .update_project_bundle(&id, body.instructions.clone(), body.default_brain_space)
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        // Also apply traditional field updates if provided.
+        if body.name.is_some() || body.root_paths.is_some() || body.instructions.is_some() {
+            let updated = api
+                .update_project(&id, body.name, body.root_paths, body.instructions)
+                .map_err(project_error)?;
+            return Ok(Json(updated));
+        }
+        return Ok(Json(project));
+    }
     let project = api
         .update_project(&id, body.name, body.root_paths, body.instructions)
         .map_err(project_error)?;

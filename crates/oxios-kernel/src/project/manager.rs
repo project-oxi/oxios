@@ -274,6 +274,13 @@ impl ProjectManager {
 
         project_db::delete_project(&self.db.conn(), &id.to_string())?;
 
+        // Remove the project's on-disk data (issues, milestones). A missing
+        // directory is success; any other failure degrades to a warning — the
+        // SQLite row is already gone, and the orphaned files are inert.
+        if let Err(e) = crate::project::paths::remove_project_dir(id) {
+            tracing::warn!(id = %id, error = %e, "failed to remove project data directory");
+        }
+
         tracing::info!(id = %id, "Project removed");
         Ok(())
     }
@@ -289,6 +296,36 @@ impl ProjectManager {
             project.clone()
         };
         let _ = project_db::save_project(&self.db.conn(), &project_clone);
+    }
+
+    /// Update a Project's bundle fields (instructions, default brain space).
+    ///
+    /// For `default_brain_space`, the outer `Option` selects change (`Some`)
+    /// vs leave-untouched (`None`); the inner `None` clears the value. The
+    /// reduced model carries no `mount_ids`; presentation is UI-derived.
+    pub fn update_project_bundle(
+        &self,
+        id: ProjectId,
+        instructions: Option<String>,
+        default_brain_space: Option<Option<String>>,
+    ) -> Result<Project> {
+        let mut projects = self.projects.write();
+        let project = projects
+            .get_mut(&id)
+            .ok_or(ProjectManagerError::NotFound(id))?;
+
+        if let Some(instr) = instructions {
+            project.instructions = instr;
+        }
+        if let Some(space) = default_brain_space {
+            project.default_brain_space = space;
+        }
+        project.updated_at = Utc::now();
+
+        let project_clone = project.clone();
+        drop(projects);
+        project_db::save_project(&self.db.conn(), &project_clone)?;
+        Ok(project_clone)
     }
 }
 
@@ -310,5 +347,41 @@ mod tests {
             reason: "path does not exist".to_string(),
         };
         assert!(err.to_string().contains("invalid root path"));
+    }
+
+    #[test]
+    fn remove_project_deletes_the_project_data_directory() {
+        use crate::kernel_handle::issue_api::{IssueApi, NewIssue};
+        use crate::project::paths::{self, test_support::temp_data_home};
+
+        let _home = temp_data_home();
+        let db = Arc::new(KernelDatabase::open_in_memory().expect("open db"));
+        let manager = ProjectManager::new(db, None).expect("manager");
+        let project = manager
+            .create("cleanup", vec![], "")
+            .expect("create project");
+
+        let issues = IssueApi::new();
+        issues
+            .create_milestone(project.id, "v1".into(), None, None, None)
+            .expect("create milestone");
+        issues
+            .create(project.id, NewIssue::new("fix it").session("s"))
+            .expect("create issue");
+
+        let dir = paths::project_dir(project.id);
+        assert!(
+            dir.is_dir(),
+            "data dir should exist before removal: {}",
+            dir.display()
+        );
+
+        manager.remove_project(project.id).expect("remove project");
+
+        assert!(
+            !dir.exists(),
+            "data dir should be gone after removal: {}",
+            dir.display()
+        );
     }
 }

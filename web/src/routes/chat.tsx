@@ -15,11 +15,13 @@ import { PathAccessCard } from '@/components/chat/path-access-card'
 import { SessionSkeleton } from '@/components/chat/session-skeleton'
 import { TerminalToggle } from '@/components/chat/TerminalToggle'
 import { TextSelectionBar } from '@/components/chat/text-selection-bar'
+import { TodoProgressBar } from '@/components/chat/todo-progress-bar'
 import { ToolApprovalCard } from '@/components/chat/tool-approval-card'
 import { WorktreeComparePanel } from '@/components/chat/WorktreeComparePanel'
 import { PortalPanel } from '@/components/portal/portal-panel'
 import { Button } from '@/components/ui/button'
 import { WorkbenchShell } from '@/components/workbench/WorkbenchShell'
+import { useBrainBindingSync } from '@/hooks/use-brain-binding'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useRoles } from '@/hooks/use-engine'
@@ -36,6 +38,7 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 // Chat UI — Claude-inspired centered layout
 // ---------------------------------------------------------------------------
 export function ChatPage() {
+  useBrainBindingSync()
   const { t } = useTranslation()
   // Scope the subscription to exactly the fields the page renders — the
   // whole-store destructure re-rendered ChatPage on every store write (e.g.
@@ -523,6 +526,9 @@ export function ChatPage() {
           )}
           {!activeInterview && (
             <div className="bg-background/95 backdrop-blur-sm shrink-0">
+              {/* Live plan progress. Renders nothing unless a todo plan with
+                  outstanding work exists in this session's transcript. */}
+              <TodoProgressBar messages={messages} onReveal={scrollToBottom} />
               <ChatInput
                 value={input}
                 onChange={setInput}

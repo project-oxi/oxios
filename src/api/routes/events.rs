@@ -135,10 +135,18 @@ pub(crate) async fn handle_session_delete(
     use oxios_kernel::state_store::SessionId;
     let session_id = SessionId(id);
     match state.kernel.state.delete_session(&session_id).await {
-        Ok(true) => Ok(Json(serde_json::json!({
-            "status": "deleted",
-            "id": session_id.0,
-        }))),
+        Ok(true) => {
+            // Design §5.2: the session's issue liveness locks and todo state
+            // die with the session. Both calls are infallible no-ops for a
+            // session that never claimed an issue or tracked a todo, so no
+            // error path is needed here.
+            state.kernel.issues.release_session(&session_id.0);
+            state.kernel.todos.forget(&session_id.0);
+            Ok(Json(serde_json::json!({
+                "status": "deleted",
+                "id": session_id.0,
+            })))
+        }
         Ok(false) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }

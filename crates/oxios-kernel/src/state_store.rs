@@ -167,6 +167,10 @@ pub struct Session {
     /// session reopen.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_records: Vec<ReasoningRecord>,
+    /// Chat-scoped brain binding (chat brain picker). Persisted so the
+    /// session keeps its brain connection across turns/reopens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brain_space: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_persona_id: Option<String>,
     /// RFC-025: Project this session belongs to (singular, grouping only).
@@ -202,6 +206,7 @@ impl Session {
             trajectory_steps: Vec::new(),
             reasoning_records: Vec::new(),
             active_persona_id: None,
+            brain_space: None,
             created_at: now,
             updated_at: now,
             metadata: SessionMetadata::new(),
@@ -219,6 +224,7 @@ impl Session {
             trajectory_steps: Vec::new(),
             reasoning_records: Vec::new(),
             active_persona_id: None,
+            brain_space: None,
             project_id: None,
             parent_session_id: None,
             created_at: now,
@@ -276,6 +282,12 @@ impl Session {
     /// Sets the active persona ID.
     pub fn set_active_persona(&mut self, persona_id: Option<String>) {
         self.active_persona_id = persona_id;
+        self.updated_at = Utc::now();
+    }
+
+    /// Sets the chat-scoped brain binding.
+    pub fn set_brain_space(&mut self, brain_space: Option<String>) {
+        self.brain_space = brain_space;
         self.updated_at = Utc::now();
     }
 
@@ -1093,4 +1105,5 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].user_id, "recent-user");
     }
+
 }

@@ -260,7 +260,6 @@
     "mentionHint": "@로 지식·메모리·역할 검색 — 검색어를 입력하세요",
     "noMentionResults": "일치하는 항목이 없습니다",
     "waitingForConnection": "연결 대기 중...",
-    "loadingSpaces": "공간 로드 중...",
     "today": "오늘",
     "yesterday": "어제",
     "thisWeek": "이번 주",
@@ -283,11 +282,9 @@
     "manageSpaces": "공간 관리",
     "user": "사용자",
     "assistant": "어시스턴트",
-    "loadingSpacesShort": "공간 로드 중...",
     "refreshing": "새로고침 중",
     "sendMessage": "메시지 보내기",
     "noMessagesYet": "메시지가 없습니다",
-    "spacesLabel": "공간",
     "sessionsLabel": "세션",
     "serverConnecting": "서버에 연결 중...",
     "sendHint": "메시지를 보내 대화를 시작하세요.",
@@ -547,7 +544,30 @@
         "blog": "블로그"
       }
     },
-    "folderPickerLocalOnly": "폴더 선택은 로컬 호스트에서만 사용할 수 있습니다 — 경로를 직접 입력해 추가하세요"
+    "folderPickerLocalOnly": "폴더 선택은 로컬 호스트에서만 사용할 수 있습니다 — 경로를 직접 입력해 추가하세요",
+    "todo": {
+      "progress": "{{total}}개 중 {{completed}}개 완료",
+      "updating": "계획 갱신 중…",
+      "empty": "아직 계획이 없습니다",
+      "blocked": "대기: {{reason}}",
+      "showMore": "… {{count}}개 더",
+      "showLess": "접기",
+      "revealHint": "계획으로 이동"
+    },
+    "issue": {
+      "working": "이슈 {{action}} 실행 중…",
+      "done": "이슈 {{action}} 완료",
+      "count": "이슈 {{count}}개",
+      "count_other": "이슈 {{count}}개",
+      "claimed": "활성 세션이 작업 중"
+    },
+    "brain": {
+      "label": "브레인",
+      "toolsOff": "브레인 꺼짐",
+      "none": "연결 안 됨",
+      "connected": "브레인: {{name}}",
+      "defaultSuffix": "(기본)"
+    }
   },
   "commandPalette": {
     "placeholder": "명령 검색 또는 메모 입력…",
@@ -680,7 +700,6 @@
     "tokenMaxing": "토큰 맥싱",
     "git": "Git",
     "sessions": "세션",
-    "spaces": "공간",
     "workspace": "작업공간",
     "calendar": "캘린더",
     "cronJobs": "Cron 작업",
@@ -1474,6 +1493,7 @@
     "deleteMemories": "이 프로젝트에 연결된 메모리",
     "deleteSuccess": "프로젝트가 삭제되었습니다",
     "deleteTitle": "\"{{name}}\" 삭제?",
+    "defaultBrain": "기본 브레인",
     "desc": "경로와 연결된 메모리를 가진 등록된 작업 컨텍스트",
     "details": "상세 정보",
     "editDesc": "\"{{name}}\" 수정",
@@ -1493,6 +1513,16 @@
     "resultsCount": "{{count}}건",
     "staleRoot": "폴더 없음",
     "staleRootHint": "이 폴더가 디스크에 더 이상 없습니다. 프로젝트를 편집해 수정하거나 제거하세요.",
+    "tabs": {
+      "activity": "활동",
+      "details": "상세",
+      "memories": "메모리",
+      "paths": "경로",
+      "issues": "이슈",
+      "milestones": "마일스톤"
+    },
+    "tags": "태그",
+    "tagsHint": "쉼표로 구분",
     "title": "프로젝트",
     "undoWarning": "이 작업은 되돌릴 수 없습니다.",
     "updateError": "수정 실패: {{error}}",
@@ -2146,24 +2176,6 @@
     "skillsShNeedsKey": "skills.sh에는 API 키가 필요합니다",
     "skillsShNeedsKeyDesc": "config.toml의 [skills_sh]에 api_key를 설정하거나 SKILLS_SH_TOKEN 환경변수를 지정한 뒤 재시작하세요. 키는 skills-api@vercel.com에 요청할 수 있습니다. ClawHub는 키 없이 동작합니다."
   },
-  "spaces": {
-    "title": "공간",
-    "newSpace": "새 공간",
-    "spaceName": "공간 이름",
-    "noSpaces": "공간 없음",
-    "createFirstSpace": "첫 번째 공간을 만드세요",
-    "paths": "경로",
-    "status": "상태",
-    "created": "생성일",
-    "archived": "보관됨",
-    "activateSpace": "공간 활성화",
-    "archiveSpace": "공간 보관",
-    "count": "{{count}}개 공간",
-    "description": "에이전트 상호작용 중에 공간이 생성됩니다.",
-    "spaceDetail": "공간 상세",
-    "spaceInformation": "공간 정보",
-    "notFound": "공간을 찾을 수 없습니다"
-  },
   "systemTools": {
     "title": "시스템 도구",
     "subtitle": "진단, 감사, 백업, 로그 관리",
@@ -2652,6 +2664,8 @@
     "spaces": "스페이스",
     "spaceName": "스페이스",
     "spaceCurrent": "현재",
+    "selectSpace": "스페이스 선택",
+    "defaultSpace": "기본 브레인",
     "notInstalled": "브레인 바이너리가 설치되지 않았습니다",
     "notInstalledHint": "`oxios brain install`로 번들된 oxibrain CLI를 설치하세요.",
     "documents": "문서",
@@ -2660,61 +2674,33 @@
     "hideHistory": "기록 닫기",
     "noHistory": "아직 기록된 리비전이 없습니다."
   },
-  "workbench": {
-    "noProject": "프로젝트 없음",
-    "addFolders": "폴더 추가",
-    "addFoldersHint": "로컬 도구를 사용하려면 폴더를 추가하세요",
-    "commandHint": "명령 팔레트 열기",
-    "projectSelector": {
-      "label": "프로젝트 선택",
-      "title": "프로젝트",
-      "create": "새 프로젝트…",
-      "editFolders": "폴더 편집…",
-      "settings": "프로젝트 설정…"
-    },
-    "rail": {
-      "label": "활동",
-      "conversation": "대화",
-      "files": "파일",
-      "terminal": "터미널",
-      "changes": "변경",
-      "preview": "미리보기"
-    },
-    "stage": {
-      "close": "닫기",
-      "conversation": "대화",
-      "files": "파일",
-      "terminal": "터미널",
-      "changes": "변경",
-      "preview": "미리보기"
-    },
-    "quickOpen": {
-      "placeholder": "검색할 파일 입력…",
-      "empty": "일치 항목 없음",
-      "roots": "루트"
-    },
-    "editor": {
-      "save": "저장",
-      "saved": "저장됨",
-      "saveFailed": "저장 실패",
-      "readonly": "읽기 전용",
-      "truncated": "잘림",
-      "truncatedHint": "512KiB 초과 — 읽기 전용으로 표시됩니다."
-    },
-    "changes": {
-      "reviewPending": "검토 대기 {{count}}건",
-      "reviewed": "검토됨",
-      "revert": "되돌리기",
-      "pending": "대기 중",
-      "reverted": "되돌려짐",
-      "empty": "아직 파일 변경이 없습니다"
-    },
-    "terminal": {
-      "empty": "터미널 출력이 아직 없습니다"
-    },
-    "preview": {
-      "empty": "미리보기가 없습니다",
-      "openInPanel": "패널에서 열기"
+  "issues": {
+    "new": "새 이슈",
+    "create": "생성",
+    "close": "닫기",
+    "reopen": "다시 열기",
+    "release": "해제",
+    "empty": "이슈 없음",
+    "emptyDesc": "이 프로젝트에 등록된 이슈가 없습니다.",
+    "titlePlaceholder": "무엇을 해야 하나요?",
+    "searchPlaceholder": "제목 검색…",
+    "noMilestone": "마일스톤 없음",
+    "claimedBy": "{{session}} 세션이 작업 중",
+    "staleClaim": "종료된 세션이 남긴 점유",
+    "filter": {
+      "open": "열림",
+      "closed": "닫힘",
+      "all": "전체"
     }
+  },
+  "milestones": {
+    "new": "새 마일스톤",
+    "create": "생성",
+    "closed": "닫힘",
+    "empty": "마일스톤 없음",
+    "emptyDesc": "이슈를 마일스톤으로 묶어 진행도를 추적하세요.",
+    "titlePlaceholder": "마일스톤 이름",
+    "progress": "{{total}}개 중 {{closed}}개 닫힘",
+    "due": "마감 {{date}}"
   }
 }

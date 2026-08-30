@@ -93,13 +93,11 @@ pub(crate) struct ComponentStatus {
     pub detail: Option<String>,
 }
 
-/// Brain daemon health (RFC-047).
+/// Brain daemonless health (RFC-047).
 #[derive(Debug, Serialize, Clone)]
 pub(crate) struct BrainHealth {
-    /// Whether the daemon is reachable.
+    /// Whether the session child is up or the binary is installed.
     pub available: bool,
-    /// Episode count in the space (None when unreachable).
-    pub episodes: Option<i64>,
 }
 
 /// Agent subsystem health.
@@ -126,8 +124,8 @@ pub(crate) struct ComponentHealth {
     pub brain: BrainHealth,
     /// Agent subsystem health.
     pub agents: AgentHealth,
-    /// Active spaces count.
-    pub spaces_active: usize,
+    /// Active projects count.
+    pub projects_active: usize,
 }
 
 /// Response body for the status endpoint.
@@ -202,16 +200,8 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
             snap.available || snap.binary_installed
         })
         .unwrap_or(false);
-    let episodes = match state.kernel.brain.as_ref() {
-        Some(brain) => brain
-            .stats()
-            .await
-            .and_then(|s| s.get("episodes").and_then(|e| e.as_i64())),
-        None => None,
-    };
     let brain_health = BrainHealth {
         available: brain_ok,
-        episodes,
     };
 
     // Agent health — count active from supervisor, metrics from export
@@ -259,7 +249,7 @@ pub(crate) async fn handle_status(state: State<Arc<AppState>>) -> Json<StatusRes
         },
         brain: brain_health,
         agents: agent_health,
-        spaces_active: state
+        projects_active: state
             .kernel
             .projects
             .as_ref()
@@ -520,10 +510,7 @@ fn oxios_home_from_state(state: &AppState) -> PathBuf {
         .config_path
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(format!("{home}/.oxios"))
-        })
+        .unwrap_or_else(oxios_kernel::oxi_home::oxios_home)
 }
 
 /// Classify the install channel for the running daemon and combine it
@@ -872,10 +859,11 @@ pub(crate) async fn handle_update_run(
             // dir. The active dir is published only after extraction
             // succeeds and validates, so no request ever sees a
             // half-populated dist.
-            let web_root = dirs::home_dir()
-                .ok_or_else(|| AppError::Internal("cannot determine home directory".into()))?
-                .join(".oxios")
-                .join("web");
+            // Unified home: web-dist staging lives under the
+            // resolver root (`OXIOS_HOME` override or `~/.oxi/oxios`)
+            // — the `web/` subtree is denied to agents via
+            // `OXIOS_HOME_DENY_SUBPATHS`.
+            let web_root = oxios_kernel::oxi_home::oxios_home().join("web");
             let staging = web_root.join(format!("dist-{target_version}"));
             if staging.exists() {
                 std::fs::remove_dir_all(&staging)
@@ -2658,18 +2646,10 @@ fn build_backup_tar_args(
 /// archive root when the resolved path does not exist — see
 /// `build_backup_tar_args` for the contract.
 pub(crate) async fn handle_backup(state: State<Arc<AppState>>) -> Json<BackupResponse> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            return Json(BackupResponse {
-                success: false,
-                path: String::new(),
-                size_bytes: 0,
-                message: "Cannot determine home directory.".into(),
-            });
-        }
-    };
-    let oxios_home = home.join(".oxios");
+    // Unified home: tarballs land under the resolver root
+    // (`OXIOS_HOME` override or `~/.oxi/oxios`), NOT a hardcoded
+    // `~/.oxios`.
+    let oxios_home = oxios_kernel::oxi_home::oxios_home();
 
     // Resolve the vault through the kernel's 3-step chain so the
     // backup lands on the actual vault root — explicit
@@ -2684,20 +2664,14 @@ pub(crate) async fn handle_backup(state: State<Arc<AppState>>) -> Json<BackupRes
     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
     let backup_name = format!("oxios-backup-{timestamp}.tar.gz");
 
-    // T18 R4: tarballs land under `~/.oxios/backups/`, NOT directly
-    // in `~/.oxios/`. Pre-R4 backups matched no deny entry, so a
-    // broadly-allowed agent could read the resulting tar and pull
-    // out credential-bearing config.toml + vault contents. Now
+    // T18 R4: tarballs land under `<oxios home>/backups/`, NOT
+    // directly in the oxios home. Pre-R4 backups matched no deny
+    // entry, so a broadly-allowed agent could read the resulting tar
+    // and pull out credential-bearing config.toml + vault contents.
     // `backups/` is in `OXIOS_HOME_DENY_SUBPATHS` (single source of
     // truth) — the agent sees an opaque directory under the deny,
     // and tarballs inherit the protection via the gate's canonical-
     // prefix subpath policy.
-    //
-    // The directory is created on demand; first backup establishes
-    // it. Defensive: if mkdir fails (e.g. read-only home), tar
-    // would still write the file (with a parent created lazily in
-    // some implementations), but we surface the failure by bailing
-    // up front so the response carries an explicit error.
     let backups_dir = oxios_home.join("backups");
     if let Err(e) = std::fs::create_dir_all(&backups_dir) {
         return Json(BackupResponse {

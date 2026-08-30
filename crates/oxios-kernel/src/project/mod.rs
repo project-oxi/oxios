@@ -14,6 +14,8 @@
 
 pub mod conversation_buffer;
 pub mod manager;
+pub mod milestone;
+pub mod paths;
 pub mod project_db;
 
 use chrono::{DateTime, Utc};
@@ -24,6 +26,8 @@ use uuid::Uuid;
 // ── Re-exports ──────────────────────────────────────────────
 pub use conversation_buffer::{ConversationBuffer, ConversationTurn};
 pub use manager::{ProjectManager, ProjectManagerError, validate_root_paths};
+pub use milestone::{Milestone, MilestonePatch, MilestoneProgress, MilestoneStatus};
+pub use paths::{project_dir, project_issues_dir, project_milestones_path};
 
 /// Unique identifier for a Project.
 pub type ProjectId = Uuid;
@@ -47,6 +51,11 @@ pub struct Project {
     /// Project-specific instructions injected only while this project is
     /// active.
     pub instructions: String,
+    /// Default brain space inherited by NEW chats created in this Project
+    /// when the user has not explicitly picked a brain. The Web layer applies
+    /// it to new chats; the kernel only stores and serves the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_brain_space: Option<String>,
     /// When this project was created.
     pub created_at: DateTime<Utc>,
     /// When this project was last modified.
@@ -68,6 +77,7 @@ impl Project {
             name: name.into(),
             root_paths,
             instructions: instructions.into(),
+            default_brain_space: None,
             created_at: now,
             updated_at: now,
             last_active_at: now,
@@ -92,6 +102,7 @@ mod tests {
         assert_eq!(p.name, "oxios");
         assert_eq!(p.root_paths, vec![PathBuf::from("/tmp")]);
         assert_eq!(p.instructions, "be careful");
+        assert!(p.default_brain_space.is_none());
         assert!(p.created_at >= before);
         assert_eq!(p.created_at, p.updated_at);
         assert_eq!(p.created_at, p.last_active_at);

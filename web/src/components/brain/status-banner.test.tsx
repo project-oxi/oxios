@@ -16,24 +16,18 @@ vi.mock('react-i18next', () => ({
 
 const onlineStatus = {
   available: true,
-  space: 'personal',
-  episodes: 1,
   pending_extraction: 0,
   binary: { installed: true, path: '/usr/bin/oxibrain', version: '0.8.0' },
 } as BrainStatus
 
 const binaryMissingStatus = {
   available: false,
-  space: null,
-  episodes: null,
   pending_extraction: null,
   binary: { installed: false, path: null, version: null },
 } as BrainStatus
 
 const degradedStatus = {
   available: false,
-  space: 'personal',
-  episodes: 0,
   pending_extraction: 3,
   binary: { installed: true, path: '/usr/bin/oxibrain', version: '0.8.0' },
 } as BrainStatus

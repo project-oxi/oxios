@@ -214,7 +214,7 @@ impl ProjectManager {
         if let Err(e) = crate::project::paths::remove_project_dir(id) {
             tracing::warn!(id = %id, error = %e, "failed to remove project data directory");
         }
- 
+
         tracing::info!(id = %id, "Project removed");
         Ok(())
     }

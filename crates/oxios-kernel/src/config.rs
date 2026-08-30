@@ -1566,7 +1566,7 @@ impl KernelConfig {
     ///    ECOSYSTEM C5 v1.1. Tests can override the config path via the
     ///    `OXIOS_OXI_CONFIG_PATH` env var; production reads
     ///    `~/.oxi/config.toml`.
-    /// 3. Fallback `~/.oxi/vault` (with `expand_home`).
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
     ///
     /// A read failure or missing `[vault]` table falls through to step 3;
     /// resolution is best-effort so a malformed shared config never

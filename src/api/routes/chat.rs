@@ -3136,7 +3136,10 @@ mod brain_space_tests {
             { "id": "22222222-2222-2222-2222-222222222222", "name": "work" },
         ]);
         assert!(space_listed(&spaces, "dev"));
-        assert!(!space_listed(&spaces, "11111111-1111-1111-1111-111111111111"));
+        assert!(!space_listed(
+            &spaces,
+            "11111111-1111-1111-1111-111111111111"
+        ));
         assert!(!space_listed(&spaces, "missing"));
     }
 

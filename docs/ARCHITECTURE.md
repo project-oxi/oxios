@@ -706,11 +706,19 @@ consumes the binary through **three lanes** —
    boot): scratch-file JSON payloads (`--json @file`), required `space`,
    `--dir` before the op name.
 
-**Document plane:** vault ingestion is a declaration, not an RPC. At boot the
-kernel idempotently seeds `~/.oxi/brain/documents.toml` with a
-`[[root]]` row (`alias = "vault"`, path = resolved knowledge root, space);
-user-authored rows are preserved. `search`/`recall` auto-materialize
-unmaterialized roots, so a failed boot-time warm index never blocks.
+**Space binding is per-chat.** The chat request's `brain_space` becomes
+`ExecEnv.brain_space`: the system prompt carries a `## Connected Brain`
+section and every exec exports `$OXIOS_BRAIN_SPACE`. A chat with no binding
+has the brain surface fully off — `oxibrain` exec is denied and the `brain`
+skill is filtered from capabilities. `[brain].default_space` (global) and
+`Project.default_brain_space` (project) seed new chats; empty = unconnected.
+
+**Document plane:** vault ingestion is a declaration, not an RPC. oxios no
+longer writes `~/.oxi/brain/documents.toml` — the vault root is declared by
+the user (or oxibrain's typed document-root registration), and the boot warm
+index / `oxios brain reindex` reconcile whatever roots are declared.
+`search`/`recall` auto-materialize unmaterialized roots, so a failed
+boot-time warm index never blocks.
 
 **Extraction drain:** `remember` (op `ingest`) parks episodes in the
 extraction backlog — a CLI one-shot has no sampling client, so
@@ -720,7 +728,7 @@ one-shot `oxibrain admin extract --pending`. A backlog waiting while oxios
 is not running is the daemonless contract, not a bug.
 
 **Boot gating:** brain boot work (daemon-era legacy cleanup — launchd plist
-bootout, stale socket/pid — documents.toml seeding, warm index, drain timer)
+bootout, stale socket/pid — warm document index, drain timer)
 runs only on the long-lived daemon surface (`KernelBuilder.daemon`), exactly
 like the RFC-050 vault watcher. One-shot CLI commands never spawn overlapping
 index children.
@@ -737,7 +745,8 @@ were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite
 WAL) owns the mount/project tables in `~/.oxios/workspace/kernel.db`.
 
 **Config:** `[brain]` section — `enabled` / `dir` (default `~/.oxi/brain`) /
-`space` (default `personal`) / `binary_path` / `auto_install` (renamed from
+`default_space` (default empty = unconnected; seeds new chats without a
+project binding) / `binary_path` / `auto_install` (renamed from
 `auto_manage`). `socket_path` and `auto_manage` are removed; old configs
 warn-and-ignore them.
 
@@ -746,10 +755,11 @@ succeeded), `oxibrain_recall_total` (counter, incremented on successful
 recall).
 
 **CLI:** `oxios brain status|install|uninstall|reindex|extract`;
-`/api/brain/status` reports transport/binary state + space + episode count +
-pending backlog.
+`/api/brain/status` reports transport/binary state + pending backlog;
+`/api/brain/spaces` and `/api/brain/space?space=` browse the space roster
+and one space's overview.
 
-**Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,documents,config}.rs`
+**Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,config}.rs`
 
 Design: `docs/designs/2026-08-29-brain-cli-op-cutover-design.md` (supersedes
 the transport half of `2026-08-27-daemonless-brain-design.md`, which

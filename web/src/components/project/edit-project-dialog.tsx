@@ -52,6 +52,7 @@ export function EditProjectDialog({
       setName(project.name)
       setIcon(project.emoji ?? 'package')
       setMountIds(project.mount_ids ?? [])
+      setInstructions(project.instructions ?? '')
       setDefaultBrainSpace(project.default_brain_space ?? null)
     }
   }, [project?.id, open])

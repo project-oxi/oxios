@@ -138,8 +138,10 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
                   onOpenChange(false)
                 },
                 onError: () => {
-                  // Project was created; surface the attach failure but still close.
-                  toast.error(t('projects.attachMountsError'))
+                  // Project was created; surface the follow-up failure but
+                  // still close — the PUT carries mounts AND the default
+                  // brain space, so the mount-specific message no longer fits.
+                  toast.error(t('projects.updateError'))
                   reset()
                   onOpenChange(false)
                 },

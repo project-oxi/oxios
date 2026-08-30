@@ -208,6 +208,13 @@ impl ProjectManager {
         // Remove from SQLite (cascades to project_memory via FK)
         project_db::delete_project(&self.db.conn(), &id.to_string())?;
 
+        // Remove the project's on-disk data (issues, milestones). A missing
+        // directory is success; any other failure degrades to a warning — the
+        // SQLite row is already gone, and the orphaned files are inert.
+        if let Err(e) = crate::project::paths::remove_project_dir(id) {
+            tracing::warn!(id = %id, error = %e, "failed to remove project data directory");
+        }
+ 
         tracing::info!(id = %id, "Project removed");
         Ok(())
     }
@@ -327,5 +334,42 @@ mod tests {
 
         let err = ProjectManagerError::DuplicateName("test".to_string());
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn remove_project_deletes_the_project_data_directory() {
+        use crate::kernel_handle::issue_api::{IssueApi, NewIssue};
+        use crate::project::paths::{self, test_support::temp_data_home};
+
+        let _home = temp_data_home();
+        let db = Arc::new(KernelDatabase::open_in_memory().expect("open db"));
+        let manager = ProjectManager::new(db, None).expect("manager");
+
+        let project = manager
+            .create_project("cleanup".into(), vec![], None, None, ProjectSource::Manual)
+            .expect("create project");
+
+        let issues = IssueApi::new();
+        issues
+            .create_milestone(project.id, "v1".into(), None, None, None)
+            .expect("create milestone");
+        issues
+            .create(project.id, NewIssue::new("fix it").session("s"))
+            .expect("create issue");
+
+        let dir = paths::project_dir(project.id);
+        assert!(
+            dir.is_dir(),
+            "data dir should exist before removal: {}",
+            dir.display()
+        );
+
+        manager.remove_project(project.id).expect("remove project");
+
+        assert!(
+            !dir.exists(),
+            "data dir should be gone after removal: {}",
+            dir.display()
+        );
     }
 }

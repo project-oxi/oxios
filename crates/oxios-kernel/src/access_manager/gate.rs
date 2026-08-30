@@ -1224,8 +1224,8 @@ mod tests {
         // CSpace. Register them in the agent's bounding CSpace and
         // the gate must admit them; drop the grant and the gate
         // denies at the Capability layer (see
-        // `layer0_denies_web_search_without_cspace_grant` above for
-        // the deny half of the contract).
+        // `layer0_web_search_is_always_on_exempt_without_cspace_grant`
+        // above for the always-on half of the contract).
         use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
         let (gate, mut ctx) = make_gate();
         let mut cspace = (*ctx.cspace).clone();
@@ -1302,26 +1302,29 @@ mod tests {
             "web_search must pass Layer 0 with WebSearch EXECUTE grant: {result:?}"
         );
     }
+
     #[test]
     fn denied_tool_event_carries_tool_name_not_resource() {
         // Task 7 follow-up. With Layer-0 typed mapping, denying a
         // tool carries the typed `ResourceRef` Display string in
-        // `AccessDenied.resource` (e.g. `web_search` for both
-        // `web_search` and `get_search_results`). The audit
+        // `AccessDenied.resource` (e.g. `memory` for both
+        // `memory_read` and `memory_search`). The audit
         // `ToolAccess { tool, .. }` event must, however, carry the
-        // denied TOOL NAME — `get_search_results` — not the
+        // denied TOOL NAME — `memory_search` — not the
         // resource token, otherwise two distinct tool names would
         // collapse into one audit record. The fixture CSpace grants
-        // no WebSearch capability, so `check_tool` denies at
-        // `DenyLayer::Capability` (matches the
-        // `layer0_denies_web_search_without_cspace_grant` contract).
+        // no Memory capability, so `check_tool` denies
+        // `memory_search` at `DenyLayer::Capability` (it is not in
+        // `LAYER0_EXEMPT_TOOLS`; the always-on contract for
+        // `web_search`/`get_search_results` is covered by
+        // `layer0_web_search_is_always_on_exempt_without_cspace_grant`).
         let (gate, ctx, sink) = make_gate_with_recording_sink();
         let denied = gate
             .check(CheckRequest::Tool {
                 context: &ctx,
-                tool_name: "get_search_results",
+                tool_name: "memory_search",
             })
-            .expect_err("get_search_results must deny without WebSearch grant");
+            .expect_err("memory_search must deny without a Memory grant");
         assert_eq!(denied.layer, DenyLayer::Capability);
 
         let events = sink.snapshot();
@@ -1332,7 +1335,7 @@ mod tests {
             crate::access_manager::audit_sink::AuditEvent::ToolAccess { tool, allowed, .. } => {
                 assert!(!allowed, "denial event must record allowed=false");
                 assert_eq!(
-                    tool, "get_search_results",
+                    tool, "memory_search",
                     "audit tool must be the denied tool name, not the typed resource"
                 );
             }
@@ -1340,7 +1343,7 @@ mod tests {
         }
         // The typed resource is preserved on AccessDenied for
         // callers that need to map back to the capability template.
-        assert_eq!(denied.resource, "web_search");
+        assert_eq!(denied.resource, "memory");
     }
 
     #[test]

@@ -260,7 +260,6 @@
     "mentionHint": "@로 지식·메모리·마운트 검색 — 검색어를 입력하세요",
     "noMentionResults": "일치하는 항목이 없습니다",
     "waitingForConnection": "연결 대기 중...",
-    "loadingSpaces": "공간 로드 중...",
     "today": "오늘",
     "yesterday": "어제",
     "thisWeek": "이번 주",
@@ -283,11 +282,9 @@
     "manageSpaces": "공간 관리",
     "user": "사용자",
     "assistant": "어시스턴트",
-    "loadingSpacesShort": "공간 로드 중...",
     "refreshing": "새로고침 중",
     "sendMessage": "메시지 보내기",
     "noMessagesYet": "메시지가 없습니다",
-    "spacesLabel": "공간",
     "sessionsLabel": "세션",
     "serverConnecting": "서버에 연결 중...",
     "sendHint": "메시지를 보내 대화를 시작하세요.",
@@ -566,6 +563,13 @@
       "count": "이슈 {{count}}개",
       "count_other": "이슈 {{count}}개",
       "claimed": "활성 세션이 작업 중"
+    },
+    "brain": {
+      "label": "브레인",
+      "toolsOff": "브레인 꺼짐",
+      "none": "연결 안 됨",
+      "connected": "브레인: {{name}}",
+      "defaultSuffix": "(기본)"
     }
   },
   "commandPalette": {
@@ -700,7 +704,6 @@
     "tokenMaxing": "토큰 맥싱",
     "git": "Git",
     "sessions": "세션",
-    "spaces": "공간",
     "workspace": "작업공간",
     "calendar": "캘린더",
     "cronJobs": "Cron 작업",
@@ -1529,6 +1532,7 @@
     "deleteMemories": "이 프로젝트에 연결된 메모리",
     "deleteSuccess": "프로젝트가 삭제되었습니다",
     "deleteTitle": "\"{{name}}\" 삭제?",
+    "defaultBrain": "기본 브레인",
     "desc": "경로와 연결된 메모리를 가진 등록된 작업 컨텍스트",
     "description": "설명",
     "descriptionPlaceholder": "Oxios 에이전트 운영 체제",
@@ -2215,24 +2219,6 @@
     "skillsShNeedsKey": "skills.sh에는 API 키가 필요합니다",
     "skillsShNeedsKeyDesc": "config.toml의 [skills_sh]에 api_key를 설정하거나 SKILLS_SH_TOKEN 환경변수를 지정한 뒤 재시작하세요. 키는 skills-api@vercel.com에 요청할 수 있습니다. ClawHub는 키 없이 동작합니다."
   },
-  "spaces": {
-    "title": "공간",
-    "newSpace": "새 공간",
-    "spaceName": "공간 이름",
-    "noSpaces": "공간 없음",
-    "createFirstSpace": "첫 번째 공간을 만드세요",
-    "paths": "경로",
-    "status": "상태",
-    "created": "생성일",
-    "archived": "보관됨",
-    "activateSpace": "공간 활성화",
-    "archiveSpace": "공간 보관",
-    "count": "{{count}}개 공간",
-    "description": "에이전트 상호작용 중에 공간이 생성됩니다.",
-    "spaceDetail": "공간 상세",
-    "spaceInformation": "공간 정보",
-    "notFound": "공간을 찾을 수 없습니다"
-  },
   "systemTools": {
     "title": "시스템 도구",
     "subtitle": "진단, 감사, 백업, 로그 관리",
@@ -2723,6 +2709,8 @@
     "spaces": "스페이스",
     "spaceName": "스페이스",
     "spaceCurrent": "현재",
+    "selectSpace": "스페이스 선택",
+    "defaultSpace": "기본 브레인",
     "notInstalled": "브레인 바이너리가 설치되지 않았습니다",
     "notInstalledHint": "`oxios brain install`로 번들된 oxibrain CLI를 설치하세요.",
     "documents": "문서",

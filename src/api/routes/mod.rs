@@ -60,7 +60,7 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::api::middleware::{rate_limit_layer, require_auth, require_ready};
 use crate::api::persona_routes;
@@ -243,6 +243,17 @@ pub fn paginate<T: Clone + serde::Serialize>(
         "page": params.page,
         "limit": limit,
     })
+}
+
+/// Distinguish an absent request field (`None` = don't change) from an
+/// explicit JSON `null` (`Some(None)` = clear). Without this, serde maps
+/// both to `None`, so clearing would be a silent no-op.
+pub(crate) fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
 }
 
 /// Builds the axum router with all API routes.

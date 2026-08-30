@@ -323,6 +323,7 @@ async fn test_orchestrator_happy_path() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -362,6 +363,7 @@ async fn test_orchestrator_events_published() {
                 None, // model_override
                 None, // model_params
                 None, // persona_id
+                None, // brain_space
                 "test-req",
             )
             .await
@@ -543,6 +545,7 @@ async fn test_orchestrator_routes_to_supervisor() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await

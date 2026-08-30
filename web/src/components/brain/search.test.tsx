@@ -83,9 +83,15 @@ describe('BrainSearch', () => {
   })
 
   it('renders memory hit rows and selects the entity on click', async () => {
-    server.use(http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE)))
+    let requestedSpace: string | null = null
+    server.use(
+      http.get('/api/brain/search', ({ request }) => {
+        requestedSpace = new URL(request.url).searchParams.get('space')
+        return HttpResponse.json(ENVELOPE)
+      }),
+    )
     const onSelectEntity = vi.fn()
-    render(withQueryClient(<BrainSearch onSelectEntity={onSelectEntity} />))
+    render(withQueryClient(<BrainSearch space="personal" onSelectEntity={onSelectEntity} />))
 
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'user')
@@ -98,6 +104,8 @@ describe('BrainSearch', () => {
 
     await user.click(screen.getByText('The user'))
     expect(onSelectEntity).toHaveBeenCalledWith('ent-user-1')
+    // Scoped contract: the search request carries the bound space.
+    await waitFor(() => expect(requestedSpace).toBe('personal'))
   })
 
   it('shows the empty state when the envelope has no memory or document hits', async () => {
@@ -116,7 +124,7 @@ describe('BrainSearch', () => {
         }),
       ),
     )
-    render(withQueryClient(<BrainSearch />))
+    render(withQueryClient(<BrainSearch space="personal" />))
 
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'zzz')
@@ -129,7 +137,7 @@ describe('BrainSearch', () => {
 
   it('renders the documents card when the envelope carries document hits', async () => {
     server.use(http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)))
-    render(withQueryClient(<BrainSearch />))
+    render(withQueryClient(<BrainSearch space="personal" />))
 
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
@@ -146,11 +154,15 @@ describe('BrainSearch', () => {
   ]
 
   it('renders revision rows when the history toggle opens a document', async () => {
+    let historySpace: string | null = null
     server.use(
       http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)),
-      http.get('/api/brain/document-history', () => HttpResponse.json(HISTORY)),
+      http.get('/api/brain/document-history', ({ request }) => {
+        historySpace = new URL(request.url).searchParams.get('space')
+        return HttpResponse.json(HISTORY)
+      }),
     )
-    render(withQueryClient(<BrainSearch />))
+    render(withQueryClient(<BrainSearch space="personal" />))
 
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
@@ -164,6 +176,8 @@ describe('BrainSearch', () => {
     // toggle flips to the hide label.
     expect(await screen.findByText(/rev-abcd/)).toBeInTheDocument()
     expect(screen.getByText(/rev-1234/)).toBeInTheDocument()
+    // Document history is space-scoped too.
+    expect(historySpace).toBe('personal')
     expect(screen.getByRole('button', { name: 'brain.hideHistory' })).toBeInTheDocument()
   })
 
@@ -172,7 +186,7 @@ describe('BrainSearch', () => {
       http.get('/api/brain/search', () => HttpResponse.json(ENVELOPE_WITH_DOCS)),
       http.get('/api/brain/document-history', () => HttpResponse.json([])),
     )
-    render(withQueryClient(<BrainSearch />))
+    render(withQueryClient(<BrainSearch space="personal" />))
 
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'oxibrain')
@@ -180,5 +194,27 @@ describe('BrainSearch', () => {
 
     await user.click(await screen.findByRole('button', { name: 'brain.showHistory' }))
     expect(await screen.findByText('brain.noHistory')).toBeInTheDocument()
+  })
+
+  it('does not issue a scoped request when no space is bound', async () => {
+    let called = false
+    server.use(
+      http.get('/api/brain/search', () => {
+        called = true
+        return HttpResponse.json(ENVELOPE)
+      }),
+    )
+    render(withQueryClient(<BrainSearch space="" />))
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('brain.searchPlaceholder'), 'user')
+    await user.click(screen.getByRole('button', { name: 'brain.search' }))
+
+    // The submit resolves to the empty state without firing the scoped
+    // query — the backend would 400 an unscoped search.
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent('brain.noSearchResults'),
+    )
+    expect(called).toBe(false)
   })
 })

@@ -23,9 +23,12 @@ import { useKnowledgeSearch } from '@/hooks/use-knowledge'
 import { useMounts } from '@/hooks/use-mounts'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { api } from '@/lib/api-client'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
+import { useChatStore } from '@/stores/chat'
 import { ApprovalModeSelector } from './approval-mode-selector'
+import { BrainPickerContainer } from './brain-picker'
 import { FanOutButton } from './FanOutButton'
 import { LiveActivityBar } from './live-activity-bar'
 import { ModelParamsPopover } from './model-params-popover'
@@ -259,7 +262,16 @@ export function ChatInput({
       /* offline */
     }
     try {
-      const mRes = await mem.mutateAsync({ query, limit: 5 })
+      // Session brain binding: mention search runs against the RESOLVED
+      // binding (explicit picker choice, else project/global default;
+      // '' = unconnected turn) — same formula sendMessage uses to record
+      // the binding on the session. An inherited default displays the
+      // bound pill but `activeBrainSpace === null`; reading the raw value
+      // would silently no-op memory search on every default-bound turn.
+      const { activeBrainSpace, brainDefaults } = useChatStore.getState()
+      const space =
+        resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? ''
+      const mRes = space ? await mem.mutateAsync({ query, limit: 5, space }) : null
       const memoryHits = mRes?.memory ?? []
       for (const hit of memoryHits) {
         results.push({
@@ -843,6 +855,7 @@ export function ChatInput({
               setActiveRole={setActiveRole}
             />
             {!isCopilot && <PersonaPickerContainer />}
+            {!isCopilot && <BrainPickerContainer />}
             <ApprovalModeSelector />
             {!isCopilot && (
               <>

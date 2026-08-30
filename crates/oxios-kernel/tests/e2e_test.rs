@@ -188,6 +188,7 @@ async fn test_orchestrator_happy_path() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -224,6 +225,7 @@ async fn test_session_continuation() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -242,6 +244,7 @@ async fn test_session_continuation() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -266,6 +269,7 @@ async fn test_multiple_sessions_independent() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -281,6 +285,7 @@ async fn test_multiple_sessions_independent() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -311,6 +316,7 @@ async fn test_session_cleaned_after_completion() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -328,6 +334,7 @@ async fn test_session_cleaned_after_completion() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -354,6 +361,7 @@ async fn test_phase_events_published() {
             None, // model_override
             None, // model_params
             None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await

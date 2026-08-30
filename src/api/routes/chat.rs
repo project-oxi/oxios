@@ -58,10 +58,41 @@ pub(crate) struct ChatRequest {
     /// active persona.
     #[serde(default)]
     persona_id: String,
+    /// Chat-scoped brain binding. Validated against the live oxibrain
+    /// spaces list, then inserted into gateway metadata so the orchestrator
+    /// forwards it as `ExecEnv::brain_space`. Empty → unconnected.
+    #[serde(default)]
+    brain_space: String,
 }
 
 pub(crate) fn default_user() -> String {
     "default".into()
+}
+
+/// Match a chat brain binding against a spaces payload by NAME. The
+/// kernel forwards the binding verbatim as the ops' `space`, and oxibrain
+/// ops address spaces by name (`Brain::lookup_space(name)`, ADR-013) —
+/// ids never validate. A malformed roster fails open: the turn degrades
+/// per the design.
+fn space_listed(spaces: &serde_json::Value, space: &str) -> bool {
+    spaces
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .any(|s| s.get("name").and_then(|n| n.as_str()) == Some(space))
+        })
+        .unwrap_or(true)
+}
+
+/// Validate a chat brain binding against the live spaces list.
+/// Skipped when the brain is unavailable — the turn degrades per the design.
+async fn validate_brain_space(
+    brain: &Option<oxios_kernel::kernel_handle::BrainApi>,
+    space: &str,
+) -> Option<String> {
+    let brain = brain.as_ref()?;
+    let spaces = brain.spaces().await?;
+    (!space_listed(&spaces, space)).then(|| format!("Brain space '{space}' not found"))
 }
 
 /// Response body for the chat endpoint.
@@ -176,6 +207,21 @@ pub(crate) async fn handle_chat(
             }
         }
         msg.metadata.insert("persona_id".to_owned(), pid.clone());
+    }
+
+    // Chat-scoped brain binding: validate against the live spaces list the
+    // same way the WS ingress does — an unknown space is a 400 rather than
+    // a silently unconnected turn. Unavailable brain degrades per design.
+    let request_brain_space = if !body.brain_space.is_empty() {
+        Some(body.brain_space.clone())
+    } else {
+        None
+    };
+    if let Some(space) = &request_brain_space {
+        if let Some(reason) = validate_brain_space(&state.kernel.brain, space).await {
+            return Err(AppError::BadRequest(reason));
+        }
+        msg.metadata.insert("brain_space".to_owned(), space.clone());
     }
     if let Some(t) = body.temperature {
         msg.metadata.insert("temperature".to_owned(), t.to_string());
@@ -298,6 +344,9 @@ pub(crate) async fn handle_chat(
                     if let Some(ref pid) = request_persona_id {
                         session.active_persona_id = Some(pid.clone());
                     }
+                    if let Some(bs) = &request_brain_space {
+                        session.brain_space = Some(bs.clone());
+                    }
                     if let Err(e) = state.kernel.state.save_session(&session).await {
                         tracing::warn!(error = %e, "Failed to persist session");
                     }
@@ -353,6 +402,9 @@ pub(crate) async fn handle_chat(
                     }
                     if let Some(ref pid) = request_persona_id {
                         session.active_persona_id = Some(pid.clone());
+                    }
+                    if let Some(bs) = &request_brain_space {
+                        session.brain_space = Some(bs.clone());
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, "Failed to load/create session"),
@@ -1278,6 +1330,31 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 continue;
                             }
                         }
+
+                        // Chat-scoped brain binding (chat brain picker).
+                        // Validated early like the persona override: an
+                        // unknown space is rejected before the turn starts.
+                        // Absent → the turn runs unconnected.
+                        let incoming_brain_space = parsed
+                            .get("brain_space")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+                        if let Some(bs) = &incoming_brain_space
+                            && let Some(reason) =
+                                validate_brain_space(&state.kernel.brain, bs).await
+                        {
+                            let err_json = serde_json::json!({
+                                "type": "error",
+                                "message": reason
+                            });
+                            let _ = ws_tx
+                                .lock()
+                                .await
+                                .send(Message::Text(err_json.to_string().into()))
+                                .await;
+                            continue;
+                        }
                         // One-shot requests from the Oxios Copilot dialog set
                         // `ephemeral: true`. The recv task skips the
                         // pending-message insert so
@@ -1473,6 +1550,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 }
                                 if let Some(pid) = &incoming_persona_id {
                                     incoming.metadata.insert("persona_id".into(), pid.clone());
+                                }
+                                if let Some(bs) = &incoming_brain_space {
+                                    incoming.metadata.insert("brain_space".into(), bs.clone());
                                 }
                                 if let Some(t) = incoming_temperature {
                                     incoming
@@ -1739,6 +1819,10 @@ async fn persist_session(
             if let Some(pid) = metadata.get("persona_id") {
                 session.active_persona_id = Some(pid.clone());
             }
+            // Chat brain binding outlives the turn (chat picker).
+            if let Some(bs) = metadata.get("brain_space") {
+                session.brain_space = Some(bs.clone());
+            }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to persist session");
             }
@@ -1792,6 +1876,10 @@ async fn persist_session(
             // Session persona override outlives the turn (chat picker).
             if let Some(pid) = metadata.get("persona_id") {
                 session.active_persona_id = Some(pid.clone());
+            }
+            // Chat brain binding outlives the turn (chat picker).
+            if let Some(bs) = metadata.get("brain_space") {
+                session.brain_space = Some(bs.clone());
             }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to create session");
@@ -3031,5 +3119,35 @@ mod cancel_tests {
     fn resolve_cancel_key_none_when_all_absent() {
         assert_eq!(resolve_cancel_key(None, None, None), None);
         assert_eq!(resolve_cancel_key(Some(""), None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod brain_space_tests {
+    use super::*;
+
+    /// The chat binding is the space NAME — oxibrain ops take `space` by
+    /// name (ADR-013), so an id must NOT validate even though it appears
+    /// in the roster payload.
+    #[test]
+    fn brain_space_matches_by_name_not_id() {
+        let spaces = serde_json::json!([
+            { "id": "11111111-1111-1111-1111-111111111111", "name": "dev" },
+            { "id": "22222222-2222-2222-2222-222222222222", "name": "work" },
+        ]);
+        assert!(space_listed(&spaces, "dev"));
+        assert!(!space_listed(
+            &spaces,
+            "11111111-1111-1111-1111-111111111111"
+        ));
+        assert!(!space_listed(&spaces, "missing"));
+    }
+
+    /// Malformed roster payloads fail open — validation is skipped and the
+    /// turn degrades per the availability contract.
+    #[test]
+    fn brain_space_fails_open_on_malformed_roster() {
+        assert!(space_listed(&serde_json::json!("not-an-array"), "dev"));
+        assert!(space_listed(&serde_json::json!(null), "dev"));
     }
 }

@@ -14,7 +14,6 @@ use oxios_kernel::{
     PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
     SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
     auth::AuthManager, config::load_config, git_layer::rel_path, mcp::validate_mcp_command,
-    resolve_space,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
@@ -133,7 +132,7 @@ impl Kernel {
     /// Create a new kernel builder with sensible defaults.
     pub fn builder() -> KernelBuilder {
         KernelBuilder {
-            config_path: oxios_kernel::config::expand_home("~/.oxios/config.toml"),
+            config_path: oxios_kernel::oxi_home::oxios_home().join("config.toml"),
             watch_vault: false,
             daemon: false,
         }
@@ -276,8 +275,8 @@ impl Kernel {
                 let kh =
                     kh.with_compression(oxios_kernel::CompressionApi::new(compression_service));
 
-                // Unified asset store (~/.oxios/assets/).
-                let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+                // Unified asset store (~/.oxi/oxios/assets/).
+                let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
                 match oxios_kernel::AssetStore::new(assets_root) {
                     Ok(store) => {
                         if let Err(e) = store.reconcile() {
@@ -631,6 +630,7 @@ impl Kernel {
                 None,
                 None, // model_params
                 None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await
@@ -656,6 +656,7 @@ impl Kernel {
                 None, // model_override
                 None, // model_params
                 None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await
@@ -1036,9 +1037,22 @@ impl KernelBuilder {
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
 
-        let mut config = if config_path.exists() {
-            tracing::info!(path = %config_path.display(), "Loading config");
-            load_config(&config_path)?
+        // Unified home: canonical-first, legacy READ-ONLY fallback.
+        // When the canonical config is missing but a pre-unification
+        // `~/.oxios/config.toml` exists, it is loaded read-only;
+        // persistence (`config_path`, used by config PUT / onboarding)
+        // always targets the canonical path.
+        let load_path = oxios_kernel::oxi_home::effective_config_path(&config_path);
+        if load_path != config_path {
+            tracing::info!(
+                canonical = %config_path.display(),
+                legacy = %load_path.display(),
+                "canonical config missing; loading legacy pre-unification config (read-only)"
+            );
+        }
+        let mut config = if load_path.exists() {
+            tracing::info!(path = %load_path.display(), "Loading config");
+            load_config(&load_path)?
         } else {
             tracing::info!("No config file found, using defaults");
             OxiosConfig::default()
@@ -1252,23 +1266,18 @@ impl KernelBuilder {
             &config.brain,
         ));
         let brain_dir = oxios_kernel::brain::resolved_brain_dir(&home, &config.brain.dir);
-        // T17 precedence: `~/.oxi/config.toml [vault].space` wins.
-        let space = resolve_space(&home, &config.brain.space);
         let brain = Arc::new(if config.brain.enabled {
             oxios_kernel::BrainSession::new(
                 installer.clone(),
                 config.brain.auto_install,
-                oxios_kernel::BrainConfig::new(brain_dir.clone(), space.clone()),
+                oxios_kernel::BrainConfig::new(brain_dir.clone()),
             )
         } else {
             // `enabled = false` ⇒ never spawn the child, never invoke the
             // installer, never poll the binary. NoopSpawn errors every
             // spawn attempt; BrainApi stays attached so routes serve the
             // degraded shape (None / 503) instead of 500.
-            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(
-                brain_dir.clone(),
-                space.clone(),
-            ))
+            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(brain_dir.clone()))
         });
 
         // Agent CLI lane: pre-allow the oxibrain binary so exec structured
@@ -1290,24 +1299,10 @@ impl KernelBuilder {
                 inst.legacy_cleanup(&dir).await;
             });
 
-            // Document-plane declaration + warm index (C1: never blocks boot).
+            // Warm document index (C1: never blocks boot).
             let inst = installer.clone();
             let dir = brain_dir.clone();
-            let knowledge_root = config.kernel.resolved_knowledge_root();
-            let vault_space = space.clone();
             tokio::spawn(async move {
-                match oxios_kernel::brain::ensure_vault_root(
-                    &dir.join("documents.toml"),
-                    &knowledge_root,
-                    &vault_space,
-                ) {
-                    Ok(true) => tracing::info!("documents.toml: seeded vault root"),
-                    Ok(false) => {}
-                    Err(e) => tracing::warn!(
-                        error = %e,
-                        "documents.toml seed failed — first search auto-materializes"
-                    ),
-                }
                 if let Some(bin) = inst.locate_binary() {
                     // Stock oxibrain `admin index --embed` always reports
                     // "no embedding port configured" — no non-test caller
@@ -1751,8 +1746,8 @@ impl KernelBuilder {
             ));
             let kh = kh.with_compression(oxios_kernel::CompressionApi::new(compression_svc));
 
-            // Unified asset store (~/.oxios/assets/).
-            let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+            // Unified asset store (~/.oxi/oxios/assets/).
+            let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
             let kh = match oxios_kernel::AssetStore::new(assets_root) {
                 Ok(store) => {
                     if let Err(e) = store.reconcile() {
@@ -1844,15 +1839,13 @@ impl KernelBuilder {
         // Wire SQLite agent log index if available
         let (agent_log_db,) = {
             let db_path = if config.agent_log.db_path.is_empty() {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".oxios/state/agent_log.db")
+                oxios_kernel::oxi_home::oxios_home().join("state/agent_log.db")
             } else {
                 let p = std::path::PathBuf::from(&config.agent_log.db_path);
                 if p.is_absolute() {
                     p
                 } else {
-                    dirs::home_dir().unwrap_or_default().join(".oxios").join(&p)
+                    oxios_kernel::oxi_home::oxios_home().join(&p)
                 }
             };
 
@@ -2350,7 +2343,9 @@ fn migrate_projects_to_mounts(
 
         // Link the resolved Mounts and clear the legacy `paths` field so the
         // runtime legacy fallbacks never re-activate for this Project.
-        if let Err(e) = project_manager.update_project_bundle(project.id, Some(mount_ids), None) {
+        if let Err(e) =
+            project_manager.update_project_bundle(project.id, Some(mount_ids), None, None)
+        {
             tracing::warn!(
                 project = %project.name,
                 error = %e,

@@ -12,7 +12,7 @@ use clap_complete::Shell;
     name = "oxios",
     version,
     about = "Oxios Agent OS — Agent Operating System",
-    after_help = "Examples:\n  oxios                         First run: interactive setup\n  oxios start                   Start the daemon\n  oxios web                     Open web dashboard in browser\n  oxios run \"review this code\"  Execute a single prompt\n  oxios chat                    Start interactive chat\n  oxios status                  Show system status\n  oxios doctor                  Diagnose issues\n\nGetting started:\n  After cargo install oxios, just run:\n    oxios\n  The setup wizard will guide you through configuration."
+    after_help = "Examples:\n  oxios                         First run: interactive setup\n  oxios start                   Start the daemon\n  oxios web                     Open web dashboard in browser\n  oxios run \"review this code\"  Execute a single prompt\n  oxios chat                    Start interactive chat\n  oxios status                  Show system status\n  oxios doctor                  Diagnose issues\n  oxios migrate --dry-run       Preview the legacy-home migration\n\nGetting started:\n  After cargo install oxios, just run:\n    oxios\n  The setup wizard will guide you through configuration."
 )]
 pub(crate) struct Cli {
     /// Run in foreground (do not daemonize).
@@ -24,7 +24,7 @@ pub(crate) struct Cli {
     pub(crate) verbose: bool,
 
     /// Path to config file.
-    #[arg(short, long, default_value = "~/.oxios/config.toml", global = true)]
+    #[arg(short, long, default_value = "~/.oxi/oxios/config.toml", global = true)]
     pub(crate) config: String,
 
     #[command(subcommand)]
@@ -112,6 +112,15 @@ pub(crate) enum Command {
         /// scripts and the smoke harness; requires `--cleanup`.
         #[arg(long, requires = "cleanup")]
         yes: bool,
+    },
+
+    /// Migrate the legacy `~/.oxios` home into the canonical unified
+    /// home (`~/.oxi/oxios`). Journaled, resumable, and copy-only —
+    /// the source is never modified.
+    Migrate {
+        /// Print the migration plan without touching anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// List available models for the configured (or specified) provider.

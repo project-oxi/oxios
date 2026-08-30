@@ -9,9 +9,11 @@ import type { ContradictionDetail } from '@/types/brain'
 
 function ContradictionCard({
   detail,
+  space,
   onSelectEntity,
 }: {
   detail: ContradictionDetail
+  space: string
   onSelectEntity?: (id: string) => void
 }) {
   const { t } = useTranslation()
@@ -58,16 +60,23 @@ function ContradictionCard({
           </Button>
         </div>
 
-        {whyOpen && <WhyDetails statementId={detail.statement_id} />}
+        {whyOpen && <WhyDetails statementId={detail.statement_id} space={space} />}
       </CardContent>
     </Card>
   )
 }
 
 /** Contradiction inbox: statements with both affirming and denying support. */
-export function BrainContradictions({ onSelectEntity }: { onSelectEntity?: (id: string) => void }) {
+export function BrainContradictions({
+  space,
+  onSelectEntity,
+}: {
+  /** Space the scoped brain calls are bound to (required server-side). */
+  space: string
+  onSelectEntity?: (id: string) => void
+}) {
   const { t } = useTranslation()
-  const { data, isLoading, isError, refetch } = useBrainContradictions()
+  const { data, isLoading, isError, refetch } = useBrainContradictions(space)
 
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>
   if (isError) return <ErrorState onRetry={() => refetch()} />
@@ -80,7 +89,12 @@ export function BrainContradictions({ onSelectEntity }: { onSelectEntity?: (id: 
   return (
     <div className="space-y-2">
       {items.map((c) => (
-        <ContradictionCard key={c.statement_id} detail={c} onSelectEntity={onSelectEntity} />
+        <ContradictionCard
+          key={c.statement_id}
+          detail={c}
+          space={space}
+          onSelectEntity={onSelectEntity}
+        />
       ))}
     </div>
   )

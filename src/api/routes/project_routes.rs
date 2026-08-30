@@ -14,6 +14,7 @@ use oxios_kernel::ProjectInfo;
 
 use crate::api::error::AppError;
 use crate::api::routes::PageParams;
+use crate::api::routes::deserialize_some;
 use crate::api::routes::paginate;
 use crate::api::server::AppState;
 
@@ -62,6 +63,10 @@ pub(crate) struct UpdateProjectRequest {
     pub mount_ids: Option<Vec<String>>,
     /// RFC-025: custom instructions.
     pub instructions: Option<String>,
+    /// Default brain space inherited by NEW chats in this Project. Absent =
+    /// keep current; JSON `null` = clear; string = set.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub default_brain_space: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,7 +164,7 @@ pub(crate) async fn handle_project_create(
             .as_ref()
             .is_some_and(|i| !i.trim().is_empty());
     let project = if wants_bundle {
-        api.update_project_bundle(&project.id, body.mount_ids, body.instructions)
+        api.update_project_bundle(&project.id, body.mount_ids, body.instructions, None)
             .map_err(|e| AppError::BadRequest(e.to_string()))?
     } else {
         project
@@ -177,9 +182,15 @@ pub(crate) async fn handle_project_update(
     let api = project_api!(state);
 
     // RFC-025: if mount_ids or instructions are provided, route to bundle update.
-    if body.mount_ids.is_some() || body.instructions.is_some() {
+    if body.mount_ids.is_some() || body.instructions.is_some() || body.default_brain_space.is_some()
+    {
         let project = api
-            .update_project_bundle(&id, body.mount_ids, body.instructions)
+            .update_project_bundle(
+                &id,
+                body.mount_ids,
+                body.instructions,
+                body.default_brain_space,
+            )
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
         // Also apply traditional field updates if provided.
         if body.name.is_some()

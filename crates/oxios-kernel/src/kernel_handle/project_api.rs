@@ -29,6 +29,8 @@ pub struct ProjectInfo {
     pub mount_ids: Vec<String>,
     /// RFC-025: Custom instructions injected into the system prompt.
     pub instructions: String,
+    /// Brain space inherited by NEW chats in this Project (`None` = none set).
+    pub default_brain_space: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_active_at: String,
@@ -46,6 +48,7 @@ impl From<&Project> for ProjectInfo {
             memory_visible: project.memory_visible,
             mount_ids: project.mount_ids.iter().map(|m| m.to_string()).collect(),
             instructions: project.instructions.clone(),
+            default_brain_space: project.default_brain_space.clone(),
             created_at: project.created_at.to_rfc3339(),
             updated_at: project.updated_at.to_rfc3339(),
             last_active_at: project.last_active_at.to_rfc3339(),
@@ -156,12 +159,16 @@ impl ProjectApi {
         self.project_manager.get_project_memory_ids(pid)
     }
 
-    /// Update a Project's RFC-025 bundle fields (mount_ids, instructions).
+    /// Update a Project's RFC-025 bundle fields (mount_ids, instructions) and
+    /// the default brain space. For `default_brain_space`, the outer `Option`
+    /// selects change (`Some`) vs not-provided (`None`, preserve existing);
+    /// the inner `None` clears the value.
     pub fn update_project_bundle(
         &self,
         id: &str,
         mount_ids: Option<Vec<String>>,
         instructions: Option<String>,
+        default_brain_space: Option<Option<String>>,
     ) -> Result<ProjectInfo> {
         let pid = Uuid::parse_str(id).context("Invalid project ID")?;
         // Reject invalid UUIDs rather than silently dropping them. Collecting
@@ -183,9 +190,12 @@ impl ProjectApi {
             }
             None => None,
         };
-        let project = self
-            .project_manager
-            .update_project_bundle(pid, mount_ids, instructions)?;
+        let project = self.project_manager.update_project_bundle(
+            pid,
+            mount_ids,
+            instructions,
+            default_brain_space,
+        )?;
         Ok(ProjectInfo::from(&project))
     }
 }

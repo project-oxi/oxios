@@ -98,6 +98,9 @@ export interface Project {
   mount_ids?: string[]
   /** RFC-025: custom instructions injected into the system prompt */
   instructions?: string
+  /** Default brain space inherited by NEW chats in this Project
+   *  (absent/null = none). */
+  default_brain_space?: string | null
   created_at: string
   updated_at?: string
   last_active_at?: string
@@ -636,7 +639,6 @@ export interface SystemStatus {
       total_completed: number
       total_failed: number
     }
-    spaces_active?: number
     projects_active?: number
   }
 }

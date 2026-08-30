@@ -69,7 +69,7 @@ pub(crate) async fn handle_memo_enable(
     }
 
     // Persist to config.toml (best-effort; the in-memory change already took effect).
-    let config_path = oxios_kernel::config::expand_home("~/.oxios/config.toml");
+    let config_path = state.config_path.clone();
     if config_path.exists() {
         let _ = upsert_memo_section_in_config(&config_path, &body.vault_path, true);
     }
@@ -97,7 +97,7 @@ pub(crate) async fn handle_memo_disable(
         cfg.memo.vault_path.clone()
     };
 
-    let config_path = oxios_kernel::config::expand_home("~/.oxios/config.toml");
+    let config_path = state.config_path.clone();
     if config_path.exists() {
         let _ = upsert_memo_section_in_config(&config_path, &vault_path, false);
     }

@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use oxicode_sdk::{AgentTool, AgentToolResult, SearchCache, ToolContext, ToolError, WebSearchTool};
+
 use serde_json::{Value, json};
 
 use super::structured_results::StructuredResultBus;

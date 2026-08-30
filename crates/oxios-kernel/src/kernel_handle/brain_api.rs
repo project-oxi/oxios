@@ -34,8 +34,6 @@ impl fmt::Debug for BrainApi {
 pub struct BrainStatusSnapshot {
     /// Whether the brain session child is currently up.
     pub available: bool,
-    /// Configured brain space name.
-    pub space: String,
     /// Whether the managed binary is on disk (or an explicit binary is set).
     pub binary_installed: bool,
     /// Resolved binary path when installed.
@@ -55,11 +53,6 @@ impl BrainApi {
         self.session.is_available()
     }
 
-    /// The configured space name.
-    pub fn space(&self) -> &str {
-        self.session.space()
-    }
-
     /// Underlying session (for tests + ad-hoc callers).
     pub fn session(&self) -> Arc<BrainSession> {
         Arc::clone(&self.session)
@@ -73,7 +66,6 @@ impl BrainApi {
             .and_then(|p| self.installer.version_of_cached(p));
         BrainStatusSnapshot {
             available: self.session.is_available(),
-            space: self.session.space().to_string(),
             binary_installed: binary.is_some(),
             binary_path: binary.as_ref().and_then(|p| p.to_str().map(str::to_string)),
             binary_version: version,
@@ -81,81 +73,87 @@ impl BrainApi {
     }
 
     /// Assemble recall context for an agent turn.
-    pub async fn recall(&self, query: &str, budget: usize) -> Option<String> {
-        self.session.recall(query, budget).await
+    pub async fn recall(&self, space: &str, query: &str, budget: usize) -> Option<String> {
+        self.session.recall(space, query, budget).await
     }
 
     /// Remember content as an episode; returns the episode id.
-    pub async fn remember(&self, content: &str, source: &str) -> Option<String> {
-        self.session.remember(content, source).await
+    pub async fn remember(&self, space: &str, content: &str, source: &str) -> Option<String> {
+        self.session.remember(space, content, source).await
     }
 
     /// Two-plane search (`memory` + `documents`); `planes=None` → both.
     pub async fn search(
         &self,
+        space: &str,
         query: &str,
         mode: &str,
         limit: usize,
         planes: Option<&[&str]>,
     ) -> Option<SearchResponseDto> {
-        self.session.search(query, mode, limit, planes).await
+        self.session.search(space, query, mode, limit, planes).await
     }
 
     /// An entity's current beliefs.
-    pub async fn get_entity(&self, entity_id: &str) -> Option<Value> {
-        self.session.get_entity(entity_id).await
+    pub async fn get_entity(&self, space: &str, entity_id: &str) -> Option<Value> {
+        self.session.get_entity(space, entity_id).await
     }
 
     /// Belief intervals for an entity over a time range.
     pub async fn timeline(
         &self,
+        space: &str,
         entity_id: &str,
         from: Option<i64>,
         to: Option<i64>,
     ) -> Option<Value> {
-        self.session.timeline(entity_id, from, to).await
+        self.session.timeline(space, entity_id, from, to).await
     }
 
     /// Provenance and confidence breakdown for a statement.
-    pub async fn why(&self, statement_id: &str) -> Option<Value> {
-        self.session.why(statement_id).await
+    pub async fn why(&self, space: &str, statement_id: &str) -> Option<Value> {
+        self.session.why(space, statement_id).await
     }
 
     /// List contradicted statements in the space.
-    pub async fn contradictions(&self) -> Option<Value> {
-        self.session.contradictions().await
+    pub async fn contradictions(&self, space: &str) -> Option<Value> {
+        self.session.contradictions(space).await
     }
 
     /// Aggregate counts for the space.
-    pub async fn stats(&self) -> Option<Value> {
-        self.session.stats().await
+    pub async fn stats(&self, space: &str) -> Option<Value> {
+        self.session.stats(space).await
     }
 
     /// Render a readable page as Markdown (`entity` / `space` / `topic`).
     pub async fn brief(
         &self,
+        space: &str,
         target_kind: &str,
         entity_id: Option<&str>,
         topic: Option<&str>,
     ) -> Option<String> {
-        self.session.brief(target_kind, entity_id, topic).await
+        self.session
+            .brief(space, target_kind, entity_id, topic)
+            .await
     }
 
     /// Bounded belief-filtered subgraph traversal from start entities.
     pub async fn traverse(
         &self,
+        space: &str,
         start: &[String],
         depth: usize,
         max_nodes: usize,
         direction: &str,
     ) -> Option<Value> {
         self.session
-            .traverse(start, depth, max_nodes, direction)
+            .traverse(space, start, depth, max_nodes, direction)
             .await
     }
     /// Console data: `merges` / `failures` / `sources`.
-    pub async fn review_merges(&self, section: &str) -> Option<Value> {
-        self.session.review_merges(section).await
+    pub async fn review_merges(&self, space: &str, section: &str) -> Option<Value> {
+        self.session.review_merges(space, section).await
     }
 
     /// Spaces the server exposes.
@@ -163,19 +161,22 @@ impl BrainApi {
         self.session.spaces().await
     }
 
-    /// Overview of the configured space (counts + recent entities).
-    pub async fn space_overview(&self) -> Option<Value> {
-        self.session.space_overview().await
+    /// Overview of one space (counts + recent entities).
+    pub async fn space_overview(&self, space: &str) -> Option<Value> {
+        self.session.space_overview(space).await
     }
 
     /// gix-backed revision history of one tracked document.
     pub async fn document_history(
         &self,
+        space: &str,
         alias: &str,
         locator: &str,
         limit: usize,
     ) -> Option<Value> {
-        self.session.document_history(alias, locator, limit).await
+        self.session
+            .document_history(space, alias, locator, limit)
+            .await
     }
 
     /// Memory-plane extraction backlog stats.

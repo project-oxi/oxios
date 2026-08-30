@@ -1,21 +1,42 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { BrainOverview } from '@/components/brain/overview'
+import { DefaultBrainSelect, SpaceSelect } from '@/components/brain/space-select'
 import { StatusBanner } from '@/components/brain/status-banner'
 import { PageHeader } from '@/components/shared/page-header'
 import { useBrainStatus } from '@/hooks/use-brain'
 
-export const Route = createFileRoute('/brain/')({ component: BrainOverviewPage })
+export const Route = createFileRoute('/brain/')({
+  component: BrainOverviewPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    // Selected space for the scoped brain queries ('' = none picked yet).
+    space: (search.space as string) ?? '',
+  }),
+})
 
 function BrainOverviewPage() {
   const { t } = useTranslation()
   const { data: status } = useBrainStatus()
-  const navigate = useNavigate()
+  const { space } = Route.useSearch()
+  const navigate = useNavigate({ from: Route.id })
+
+  const selectSpace = (next: string) =>
+    navigate({ search: (prev) => ({ ...prev, space: next }), replace: true })
+
   return (
     <div className="space-y-6">
-      <PageHeader title={t('brain.title')} subtitle={t('brain.subtitle')} />
+      <PageHeader
+        title={t('brain.title')}
+        subtitle={t('brain.subtitle')}
+        actions={<DefaultBrainSelect className="w-44" />}
+      />
       <StatusBanner status={status} />
-      <BrainOverview onSelectEntity={(id) => navigate({ to: '/brain/entity', search: { id } })} />
+      <SpaceSelect value={space} onValueChange={selectSpace} className="max-w-xs" />
+      <BrainOverview
+        space={space}
+        onSelectSpace={selectSpace}
+        onSelectEntity={(id) => navigate({ to: '/brain/entity', search: { id, space } })}
+      />
     </div>
   )
 }

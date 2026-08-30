@@ -167,6 +167,10 @@ pub struct Session {
     /// session reopen.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_records: Vec<ReasoningRecord>,
+    /// Chat-scoped brain binding (chat brain picker). Persisted so the
+    /// session keeps its brain connection across turns/reopens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brain_space: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_persona_id: Option<String>,
     /// RFC-025: Project this session belongs to (singular, grouping only).
@@ -202,6 +206,7 @@ impl Session {
             trajectory_steps: Vec::new(),
             reasoning_records: Vec::new(),
             active_persona_id: None,
+            brain_space: None,
             created_at: now,
             updated_at: now,
             metadata: SessionMetadata::new(),
@@ -219,6 +224,7 @@ impl Session {
             trajectory_steps: Vec::new(),
             reasoning_records: Vec::new(),
             active_persona_id: None,
+            brain_space: None,
             project_id: None,
             parent_session_id: None,
             created_at: now,
@@ -276,6 +282,12 @@ impl Session {
     /// Sets the active persona ID.
     pub fn set_active_persona(&mut self, persona_id: Option<String>) {
         self.active_persona_id = persona_id;
+        self.updated_at = Utc::now();
+    }
+
+    /// Sets the chat-scoped brain binding.
+    pub fn set_brain_space(&mut self, brain_space: Option<String>) {
+        self.brain_space = brain_space;
         self.updated_at = Utc::now();
     }
 
@@ -1166,5 +1178,34 @@ mod tests {
         let far_cutoff = Utc::now() - chrono::Duration::days(365);
         let all = store.load_sessions_for_promotion(far_cutoff).await.unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_session_brain_space_serde_back_compat() {
+        // Legacy session JSON written before `brain_space` existed must
+        // still deserialize (`#[serde(default)]` back-compat).
+        let legacy = serde_json::json!({
+            "id": "legacy-session",
+            "user_id": "user-1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z"
+        });
+        let parsed: Session = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.brain_space, None);
+
+        // Setter + round-trip: a bound session serializes the space and
+        // deserializes it back intact.
+        let mut session = Session::new("user-1");
+        session.set_brain_space(Some("work".to_string()));
+        assert_eq!(session.brain_space.as_deref(), Some("work"));
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains(r#""brain_space":"work""#));
+        let round: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(round.brain_space.as_deref(), Some("work"));
+
+        // `None` stays absent from the payload (skip_serializing_if).
+        let unbound = Session::new("user-2");
+        let json = serde_json::to_string(&unbound).unwrap();
+        assert!(!json.contains("brain_space"));
     }
 }

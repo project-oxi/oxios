@@ -64,7 +64,7 @@ use cli::{
 
 const DEFAULT_CONFIG: &str = include_str!("../share/default-config.toml");
 
-fn ensure_workspace(oxios_home: &Path) -> Result<()> {
+fn ensure_workspace(oxios_home: &Path, config_source: &Path) -> Result<()> {
     if !oxios_home.exists() {
         tracing::info!(path = %oxios_home.display(), "Creating Oxios home directory");
         std::fs::create_dir_all(oxios_home)?;
@@ -75,8 +75,13 @@ fn ensure_workspace(oxios_home: &Path) -> Result<()> {
             std::fs::create_dir_all(&dir)?;
         }
     }
+    // Materialize the default config at the canonical path ONLY when no
+    // config source exists at all. When the effective source is the
+    // legacy pre-unification `~/.oxios/config.toml` (unified-home
+    // read-only compatibility), writing a fresh default here would
+    // shadow it on the next load.
     let config_path = oxios_home.join("config.toml");
-    if !config_path.exists() {
+    if !config_path.exists() && !config_source.exists() {
         tracing::info!(path = %config_path.display(), "Writing default config");
         std::fs::write(&config_path, DEFAULT_CONFIG)?;
     }
@@ -87,10 +92,7 @@ fn oxios_home_from_config(config_path: &Path) -> PathBuf {
     config_path
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(format!("{home}/.oxios"))
-        })
+        .unwrap_or_else(oxios_kernel::oxi_home::oxios_home)
 }
 
 /// Read the last `n` lines from a file without external commands.
@@ -812,11 +814,15 @@ async fn cmd_doctor(
 
     // 1. Config file exists
     checks += 1;
-    if config_path.exists() {
+    // Unified home: the effective source may be the legacy
+    // pre-unification config (read-only) while the canonical file has
+    // not been materialized yet — that is "present", not missing.
+    let effective_config = oxios_kernel::oxi_home::effective_config_path(config_path);
+    if effective_config.exists() {
         println!(
             "  {} Config file present ({})",
             style("✓").green(),
-            style(config_path.display()).dim()
+            style(effective_config.display()).dim()
         );
     } else {
         println!("  {} Config file missing", style("✗").red().bold());
@@ -882,6 +888,55 @@ async fn cmd_doctor(
             workspace.display()
         );
         issues.push("Workspace directory not found. It will be created on first run.".to_string());
+    }
+
+    // 3b. Unified home layout (oxi_home resolver).
+    checks += 1;
+    let unified_oxi = oxios_kernel::oxi_home::oxi_home();
+    let unified_oxios = oxios_kernel::oxi_home::oxios_home();
+    let legacy_home = oxios_kernel::oxi_home::legacy_home_dir();
+    use oxios_kernel::home_migrate::MigrationState;
+    let layout_plan = oxios_kernel::home_migrate::preflight();
+    println!(
+        "  {} Oxios home ({})",
+        style("✓").green(),
+        style(unified_oxios.display()).dim()
+    );
+    println!("      oxi root: {}", unified_oxi.display());
+    match &legacy_home {
+        Some(legacy) => println!(
+            "      {} legacy home present: {}",
+            style("⚠").yellow().bold(),
+            legacy.display()
+        ),
+        None => println!("      legacy ~/.oxios: none"),
+    }
+    println!(
+        "      migration: {} ({} file(s), {})",
+        layout_plan.state,
+        layout_plan.file_count,
+        human_bytes(layout_plan.total_bytes)
+    );
+    match oxios_kernel::home_migrate::read_journal(&oxios_kernel::home_migrate::journal_path()) {
+        Some(j) => println!(
+            "      journal: {:?} (started at {})",
+            j.status, j.started_at
+        ),
+        None => println!("      journal: none"),
+    }
+    match layout_plan.state {
+        MigrationState::Ready => issues.push(format!(
+            "Legacy home pending migration: run `oxios migrate` to copy {} into {}.",
+            layout_plan.source.display(),
+            layout_plan.destination.display()
+        )),
+        MigrationState::Conflict => issues.push(format!(
+            "Migration conflict between {} and {} ({} differing file(s)); nothing was modified. Compare both, resolve, then rerun `oxios migrate --dry-run`.",
+            layout_plan.source.display(),
+            layout_plan.destination.display(),
+            layout_plan.conflicts.len()
+        )),
+        MigrationState::NothingToDo | MigrationState::AlreadyMigrated => {}
     }
 
     // 4. Daemon status
@@ -1114,6 +1169,112 @@ async fn cmd_doctor(
     Ok(())
 }
 
+// ─── Migrate command ─────────────────────────────────────────────────────────
+
+/// `oxios migrate` — journaled, resumable migration of the legacy
+/// `~/.oxios` home into the canonical unified home (`~/.oxi/oxios`).
+/// Copy-only: the source is never deleted or modified. An explicit
+/// `OXIOS_HOME` never merges with the legacy home (migration no-ops).
+fn cmd_migrate(dry_run: bool) -> Result<()> {
+    use oxios_kernel::home_migrate::{self, MigrationState};
+
+    println!();
+    println!("  {}", style("⬡ Oxios Home Migration").bold());
+    println!("  {}", "─".repeat(48));
+
+    if dry_run {
+        let plan = home_migrate::preflight();
+        print_migration_plan(&plan);
+        match plan.state {
+            MigrationState::Conflict => anyhow::bail!(
+                "Migration conflict: {} file(s) differ between\n    {}\n  and\n    {}\n  Nothing was modified — compare both paths and resolve manually.",
+                plan.conflicts.len(),
+                plan.source.display(),
+                plan.destination.display()
+            ),
+            MigrationState::Ready => println!("  Required action: run `oxios migrate` to apply."),
+            MigrationState::AlreadyMigrated => {
+                println!("  Required action: none (already migrated).")
+            }
+            MigrationState::NothingToDo => {
+                println!("  Required action: none (nothing to migrate).")
+            }
+        }
+        println!("  Dry run — nothing was modified.");
+        println!();
+        return Ok(());
+    }
+
+    let report = home_migrate::migrate(false)?;
+    print_migration_plan(&report.plan);
+    match report.plan.state {
+        MigrationState::Conflict => anyhow::bail!(
+            "Migration conflict: {} file(s) differ between\n    {}\n  and\n    {}\n  Nothing was modified — compare both paths and resolve manually.",
+            report.plan.conflicts.len(),
+            report.plan.source.display(),
+            report.plan.destination.display()
+        ),
+        MigrationState::NothingToDo => println!("  Nothing to migrate."),
+        // `report.plan` reflects the POST-RUN state: a run that copied
+        // files finishes already_migrated, so the "did we do work?"
+        // question is answered by the copy counters, not the state.
+        MigrationState::Ready | MigrationState::AlreadyMigrated
+            if report.files_copied > 0 || report.resumed =>
+        {
+            if report.resumed {
+                println!("  Resumed previous migration.");
+            }
+            println!(
+                "  Copied {} file(s), skipped {} already identical.",
+                report.files_copied, report.files_skipped
+            );
+            println!("  Source left untouched (copy-only; removal is a later cutover release).");
+        }
+        MigrationState::AlreadyMigrated => println!("  Already migrated — nothing to copy."),
+        MigrationState::Ready => unreachable!("verified run cannot stay ready"),
+    }
+    if report.journal_written {
+        println!("  Journal: {}", home_migrate::journal_path().display());
+    }
+    println!();
+    Ok(())
+}
+
+fn print_migration_plan(plan: &oxios_kernel::home_migrate::PreflightPlan) {
+    println!("  source:      {}", plan.source.display());
+    println!("  destination: {}", plan.destination.display());
+    println!(
+        "  files:       {} ({})",
+        plan.file_count,
+        human_bytes(plan.total_bytes)
+    );
+    println!("  state:       {}", plan.state);
+    if !plan.conflicts.is_empty() {
+        println!("  conflicts:");
+        for rel in plan.conflicts.iter().take(10) {
+            println!("    - {}", rel.display());
+        }
+        if plan.conflicts.len() > 10 {
+            println!("    … and {} more", plan.conflicts.len() - 10);
+        }
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 // ─── Models command ──────────────────────────────────────────────────────────
 
 fn cmd_models(provider: Option<&str>) -> Result<()> {
@@ -1122,9 +1283,7 @@ fn cmd_models(provider: Option<&str>) -> Result<()> {
         Some(p) => p.to_string(),
         None => {
             // Try reading from config
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            let config_path =
-                oxios_kernel::config::expand_home(&format!("{home}/.oxios/config.toml"));
+            let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
             if config_path.exists() {
                 let config = oxios_kernel::config::load_config(&config_path)?;
                 if config.engine.default_model.is_empty() {
@@ -1395,10 +1554,7 @@ async fn cmd_email_setup(kernel: &Kernel) {
                     return;
                 }
                 // Save to config.toml
-                let config_path = oxios_kernel::config::expand_home(&format!(
-                    "{}/.oxios/config.toml",
-                    std::env::var("HOME").unwrap_or_default()
-                ));
+                let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
                 if config_path.exists() {
                     let _ = upsert_email_section_in_config_main(&config_path, &config);
                 }
@@ -1487,10 +1643,7 @@ fn cmd_web(config: &OxiosConfig, port_override: Option<u16>) -> Result<()> {
 
     if !was_running {
         println!("  {} Daemon not running — starting...", style("⠋").cyan());
-        let config_path = oxios_kernel::config::expand_home(&format!(
-            "{}/.oxios/config.toml",
-            std::env::var("HOME").unwrap_or_default()
-        ));
+        let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
         daemon.start(&config_path, port)?;
 
         // Give the server a moment to bind the port
@@ -1600,7 +1753,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
         &home,
         &oxios_kernel::config::expand_home(&config.brain.dir).to_string_lossy(),
     );
-    let space = oxios_kernel::resolve_space(&home, &config.brain.space);
 
     match cmd {
         BrainCmd::Status => {
@@ -1618,7 +1770,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
                 None => println!("binary: not installed (run `oxios brain install`)"),
             }
             println!("dir: {}", dir.display());
-            println!("space: {space}");
             if let Some(b) = binary {
                 // Store stats come from the one-shot `admin stats` verb —
                 // no session child, matching the kernel's per-op transport.
@@ -1653,11 +1804,6 @@ async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
             let bin = installer
                 .locate_binary()
                 .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
-            let vault = config.kernel.resolved_knowledge_root();
-            if oxios_kernel::brain::ensure_vault_root(&dir.join("documents.toml"), &vault, &space)?
-            {
-                println!("documents.toml: seeded vault root");
-            }
             // `--embed` is best-effort (boot degrades the same way). Stock
             // oxibrain never attaches an embedder in the CLI, so the embed
             // step reports "no embedding port configured" even though the
@@ -1833,15 +1979,37 @@ async fn run(cli: Cli) -> Result<()> {
     let oxios_home = oxios_home_from_config(&config_path);
     // OXICODE_HOME was set in main() before the tokio runtime started — Rust 2024
     // requires single-threaded env mutation.
+    // ── Pre-boot home migration (BEFORE ensure_workspace) ──
+    // `oxios migrate` must observe the canonical home exactly as it
+    // stands: if ensure_workspace ran first, the freshly-created
+    // skeleton (workspace dirs, default config.toml) would read as a
+    // diverged destination and the plan would report a spurious
+    // conflict against itself.
+    if let Some(Command::Migrate { dry_run }) = cli.command.as_ref() {
+        return cmd_migrate(*dry_run);
+    }
 
-    // Detect first run (before ensure_workspace creates the dir).
-    let is_first_run = !oxios_home.join("config.toml").exists();
+    // Unified home: canonical-first, legacy READ-ONLY fallback. When
+    // the canonical config is missing but a pre-unification
+    // `~/.oxios/config.toml` exists, it becomes the load source;
+    // every write (config PUT, onboarding) still targets the
+    // canonical `config_path`.
+    let config_source = oxios_kernel::oxi_home::effective_config_path(&config_path);
+    if config_source != config_path {
+        tracing::info!(
+            canonical = %config_path.display(),
+            legacy = %config_source.display(),
+            "canonical config missing; loading legacy pre-unification config (read-only)"
+        );
+    }
+    // Detect first run (no usable config anywhere).
+    let is_first_run = !config_source.exists();
 
-    ensure_workspace(&oxios_home)?;
+    ensure_workspace(&oxios_home, &config_source)?;
 
     // ── Load config ──
-    let mut config = if config_path.exists() {
-        oxios_kernel::config::load_config(&config_path)?
+    let mut config = if config_source.exists() {
+        oxios_kernel::config::load_config(&config_source)?
     } else {
         OxiosConfig::default()
     };
@@ -1924,7 +2092,14 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Some(Command::Config { action }) => {
             let action = action.clone().unwrap_or(ConfigAction::Show);
-            return cmd_config(&action, &config_path).await;
+            // Unified home: reads (show/get/list) honor the legacy
+            // read-only fallback; writes (set/reset) always target the
+            // canonical path.
+            let read_path = match &action {
+                ConfigAction::Set { .. } | ConfigAction::Reset { .. } => config_path.clone(),
+                _ => config_source.clone(),
+            };
+            return cmd_config(&action, &read_path).await;
         }
         Some(Command::Onboard) => {
             let result = oxios_kernel::onboarding::run_onboarding(&oxios_home, &mut config, false)?;
@@ -2643,8 +2818,12 @@ async fn run(cli: Cli) -> Result<()> {
                                         }
                                     }
                                     if !mount_ids.is_empty()
-                                        && let Err(e) =
-                                            pm.update_project_bundle(p.id, Some(mount_ids), None)
+                                        && let Err(e) = pm.update_project_bundle(
+                                            p.id,
+                                            Some(mount_ids),
+                                            None,
+                                            None,
+                                        )
                                     {
                                         eprintln!(
                                             "{} Project created but mount link failed: {}",
@@ -2980,9 +3159,10 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Stop)
         | Some(Command::Daemon { .. })
         | Some(Command::Log { .. })
+        | Some(Command::Reset { .. })
+        | Some(Command::Migrate { .. })
         | Some(Command::Config { .. })
         | Some(Command::Onboard)
-        | Some(Command::Reset { .. })
         | Some(Command::Models { .. })
         | Some(Command::Web { .. })
         | Some(Command::Completion { .. })

@@ -244,7 +244,8 @@ enabled = true
 auto_install = true
 # dir = ""          # Empty = ~/.oxi/brain ($OXI_BRAIN_DIR honored)
 # binary_path = ""  # Explicit binary; non-empty skips auto-install
-space = "personal"
+# Default brain space offered to new chats without a project binding.
+# default_space = ""   # Empty = chats start unconnected
 # Uncomment to customize settings; when the section is omitted, defaults below apply.
 # Events are stored as .ics files in ~/.oxios/workspace/calendar/events/
 # [calendar]

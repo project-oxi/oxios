@@ -115,7 +115,7 @@ mod tests {
         let id = AgentId::new_v4();
         let cs = resolve_cspace(None, ToolProfile::Base, id);
         for domain in [
-            "persona", "security", "budget", "resource", "agent", "space",
+            "persona", "security", "budget", "resource", "agent", "project",
         ] {
             assert!(
                 cs.can(
@@ -148,7 +148,7 @@ mod tests {
             Rights::EXECUTE
         ));
         for domain in [
-            "persona", "security", "budget", "resource", "agent", "space",
+            "persona", "security", "budget", "resource", "agent", "project",
         ] {
             assert!(
                 !cs.can(

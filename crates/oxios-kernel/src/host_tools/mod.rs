@@ -56,18 +56,18 @@ impl HostToolsApi {
 
     /// Resolve the integration registry. Defaults are **compiled in** via
     /// `include_str!` (always present regardless of CWD/install layout), with
-    /// an optional filesystem override at `~/.oxios/share/default-integrations.toml`
-    /// and per-file user overrides layered on top from `~/.oxios/integrations.d/`.
+    /// an optional filesystem override at `<oxios home>/share/default-integrations.toml`
+    /// and per-file user overrides layered on top from `<oxios home>/integrations.d/`.
     fn load_registry() -> anyhow::Result<IntegrationRegistry> {
         const EMBEDDED: &str = include_str!("../../share/default-integrations.toml");
-        let home = crate::config::expand_home("~/.oxios");
+        let home = crate::oxi_home::oxios_home();
         let fs_defaults = home.join("share/default-integrations.toml");
         let defaults_text = if fs_defaults.exists() {
             std::fs::read_to_string(&fs_defaults).unwrap_or_else(|_| EMBEDDED.to_string())
         } else {
             EMBEDDED.to_string()
         };
-        let overrides = crate::config::expand_home("~/.oxios/integrations.d");
+        let overrides = home.join("integrations.d");
         IntegrationRegistry::load_text(&defaults_text, &overrides)
     }
 

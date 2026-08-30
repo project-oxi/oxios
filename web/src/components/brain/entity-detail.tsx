@@ -96,9 +96,12 @@ function BeliefsTable({
  * entity:// link follows back to the caller (route search param).
  */
 export function BrainEntityDetail({
+  space,
   initialEntityId,
   onNavigateEntity,
 }: {
+  /** Space all scoped brain calls are bound to (required server-side). */
+  space: string
   initialEntityId?: string
   onNavigateEntity?: (entityId: string) => void
 }) {
@@ -116,9 +119,14 @@ export function BrainEntityDetail({
     }
   }, [initialEntityId, submitted])
 
-  const { data: brief, isLoading: briefLoading } = useBrainBrief('entity', submitted || null, null)
-  const { data: beliefs, isLoading: beliefsLoading } = useBrainEntity(submitted || null)
-  const { data: timeline, isLoading: timelineLoading } = useBrainTimeline(submitted || null)
+  const { data: brief, isLoading: briefLoading } = useBrainBrief(
+    'entity',
+    submitted || null,
+    null,
+    space,
+  )
+  const { data: beliefs, isLoading: beliefsLoading } = useBrainEntity(submitted || null, space)
+  const { data: timeline, isLoading: timelineLoading } = useBrainTimeline(submitted || null, space)
 
   const loadEntity = (id: string) => {
     setSubmitted(id)
@@ -246,7 +254,7 @@ export function BrainEntityDetail({
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <WhyDetails statementId={whyStatement} />
+                <WhyDetails statementId={whyStatement} space={space} />
               </CardContent>
             </Card>
           )}

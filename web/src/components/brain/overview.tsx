@@ -10,6 +10,7 @@ import {
   useBrainStatus,
 } from '@/hooks/use-brain'
 import { cn } from '@/lib/utils'
+import { spaceParam } from './space-select'
 
 function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
@@ -25,12 +26,20 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
   )
 }
 
-/** Overview: daemon availability, space counts, recent entities, spaces. */
-export function BrainOverview({ onSelectEntity }: { onSelectEntity?: (id: string) => void }) {
+/** Overview: daemon availability, scoped space cards, and the space selector. */
+export function BrainOverview({
+  space,
+  onSelectEntity,
+  onSelectSpace,
+}: {
+  space: string
+  onSelectEntity?: (id: string) => void
+  onSelectSpace?: (space: string) => void
+}) {
   const { t } = useTranslation()
   const { data: status, isLoading, isError, refetch } = useBrainStatus()
-  const { data: stats } = useBrainStats()
-  const { data: overview } = useBrainSpaceOverview()
+  const { data: stats } = useBrainStats(space)
+  const { data: overview } = useBrainSpaceOverview(space)
   const { data: spaces } = useBrainSpaces()
 
   if (isLoading) return <LoadingCards count={4} />
@@ -38,6 +47,73 @@ export function BrainOverview({ onSelectEntity }: { onSelectEntity?: (id: string
 
   const s = stats ?? { episodes: null, entities: null, statements: null, contradictions: null }
   const fmt = (n: number | null | undefined) => (n == null ? '—' : String(n))
+
+  const spacesCard = (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{t('brain.spaces')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {(spaces ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t('brain.spaceLabel')}: {t('brain.unknown')}
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="py-2 pr-4 font-medium">{t('brain.spaceName')}</th>
+                <th className="py-2 pr-4 font-medium text-right">{t('brain.entities')}</th>
+                <th className="py-2 font-medium text-right">{t('brain.episodes')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(spaces ?? []).map((sp) => {
+                const value = spaceParam(sp)
+                const selected = value === space
+                return (
+                  <tr
+                    key={sp.id}
+                    className={cn(
+                      'cursor-pointer border-b transition-colors hover:bg-accent/50 last:border-0',
+                      selected && 'bg-accent/30 font-medium',
+                    )}
+                    onClick={() => onSelectSpace?.(value)}
+                  >
+                    <td className="py-2 pr-4">
+                      {sp.name || (
+                        <span className="text-muted-foreground">({sp.id.slice(0, 8)}…)</span>
+                      )}
+                      {selected && (
+                        <span className="ml-2 text-2xs text-muted-foreground/70">
+                          {t('brain.spaceCurrent')}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{sp.entity_count}</td>
+                    <td className="py-2 text-right tabular-nums">{sp.episode_count}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </CardContent>
+    </Card>
+  )
+
+  // No space selected: the global spaces table doubles as the selector and
+  // the scoped cards stay hidden until a row is picked.
+  if (!space) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground" role="status">
+          {t('brain.selectSpace')}
+        </p>
+        {spacesCard}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -90,52 +166,7 @@ export function BrainOverview({ onSelectEntity }: { onSelectEntity?: (id: string
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t('brain.spaces')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {(spaces ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {t('brain.spaceLabel')}: {status?.space ?? t('brain.unknown')}
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">{t('brain.spaceName')}</th>
-                    <th className="py-2 pr-4 font-medium text-right">{t('brain.entities')}</th>
-                    <th className="py-2 font-medium text-right">{t('brain.episodes')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(spaces ?? []).map((sp) => (
-                    <tr
-                      key={sp.id}
-                      className={cn(
-                        'border-b last:border-0',
-                        sp.name === status?.space && 'font-medium',
-                      )}
-                    >
-                      <td className="py-2 pr-4">
-                        {sp.name || (
-                          <span className="text-muted-foreground">({sp.id.slice(0, 8)}…)</span>
-                        )}
-                        {sp.name === status?.space && (
-                          <span className="ml-2 text-2xs text-muted-foreground/70">
-                            {t('brain.spaceCurrent')}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-4 text-right tabular-nums">{sp.entity_count}</td>
-                      <td className="py-2 text-right tabular-nums">{sp.episode_count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </CardContent>
-        </Card>
+        {spacesCard}
       </div>
     </div>
   )

@@ -94,8 +94,8 @@ function DashboardPage() {
     trackTotal: false,
   })
 
-  // Brain episode count (null when the daemon is offline)
-  const brainTotal = brainStatus?.episodes ?? '—'
+  // Brain daemon availability (episodes moved to the scoped stats endpoint)
+  const brainTotal = brainStatus?.available ? t('brain.online') : t('brain.offline')
 
   if (statusLoading) return <LoadingStatCards count={6} />
   if (statusError) return <ErrorState onRetry={() => refetchStatus()} />

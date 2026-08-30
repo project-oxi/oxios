@@ -269,7 +269,7 @@ fn real_grant_path_roots_are_granted_verbatim() {
     let kernel_ws = tempfile::TempDir::new().expect("kernel ws tempdir");
     let mut am = AccessManager::new();
     let perms = am.get_or_create_permissions("agent-roots");
-    apply_execution_grants(perms, &[root_a.clone()], kernel_ws.path());
+    apply_execution_grants(perms, std::slice::from_ref(&root_a), kernel_ws.path());
 
     let perms = am.get_or_create_permissions("agent-roots");
     let want = format!("{}/**", root_a.to_string_lossy().trim_end_matches('/'));

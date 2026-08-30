@@ -2778,7 +2778,6 @@ async fn run(cli: Cli) -> Result<()> {
                         paths.iter().map(std::path::PathBuf::from).collect();
                     match pm.create(name, root_paths, instructions.as_deref().unwrap_or("")) {
                         Ok(p) => {
-
                             println!(
                                 "{} Project '{}' created ({})",
                                 style("✓").green().bold(),

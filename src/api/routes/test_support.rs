@@ -147,7 +147,6 @@ pub(crate) struct TestApp {
     pub state: Arc<AppState>,
     pub project_manager: Arc<ProjectManager>,
     pub state_store: Arc<StateStore>,
-    pub config_path: PathBuf,
 }
 
 /// Build the fixture without any project or session.
@@ -180,7 +179,6 @@ pub(crate) fn test_app(tmp: &Path) -> TestApp {
         state,
         project_manager,
         state_store,
-        config_path,
     }
 }
 
@@ -215,7 +213,7 @@ pub(crate) async fn session_for_project(app: &TestApp, name: &str, roots: Vec<Pa
 
 /// Create a session with no project binding.
 pub(crate) async fn scopeless_session(app: &TestApp) -> String {
-    let mut session = Session::new("tester");
+    let session = Session::new("tester");
     app.state_store.save_session(&session).await.unwrap();
     session.id.0
 }

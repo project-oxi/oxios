@@ -32,7 +32,7 @@ export function useBrainBindingSync() {
   useEffect(() => {
     const brain = (config?.brain ?? {}) as Record<string, unknown>
     const globalDefault = typeof brain.default_space === 'string' ? brain.default_space : ''
-    const project = projectsData?.items.find((p) => p.id === activeProjectId) ?? null
+    const project = projectsData?.items?.find((p) => p.id === activeProjectId) ?? null
     setBrainDefaults({
       project: project?.default_brain_space ?? null,
       global: globalDefault,

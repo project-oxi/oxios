@@ -2098,7 +2098,6 @@ fn build_marketplace_api_value(config: &OxiosConfig) -> MarketplaceApi {
     )
 }
 
-
 /// Register the knowledge git auto-commit pipeline (bounded channel
 /// + async commit consumer + S-4 post-crash reconcile) on the shared
 /// - **`KnowledgeBase`** (T16: vault-rooted `knowledge_git`).

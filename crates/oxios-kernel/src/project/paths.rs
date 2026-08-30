@@ -133,7 +133,8 @@ pub(crate) mod test_support {
     /// Point `data_home()` at a fresh temp directory for the guard's lifetime.
     pub(crate) fn temp_data_home() -> DataHomeGuard {
         let tmp = tempfile::tempdir().expect("tempdir");
-        acquire(&tmp.path().to_path_buf(), Some(tmp))
+        let path = tmp.path().to_path_buf();
+        acquire(&path, Some(tmp))
     }
 
     /// Point `data_home()` at `dir` for the guard's lifetime.
@@ -209,7 +210,10 @@ mod tests {
         let _guard = without_override();
         let home = data_home();
         assert!(
-            home.ends_with("oxios") && home.parent().is_some_and(|p| p.ends_with(".oxi")),
+            home.ends_with("oxios")
+                && home
+                    .parent()
+                    .is_some_and(|p| p.file_name() == Some(std::ffi::OsStr::new(".oxi"))),
             "expected ~/.oxi/oxios, got {}",
             home.display()
         );

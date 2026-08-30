@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { RootPathsEditor } from '@/components/project/root-paths-editor'
 import { ProjectBrainSelect } from '@/components/brain/space-select'
+import { RootPathsEditor } from '@/components/project/root-paths-editor'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,

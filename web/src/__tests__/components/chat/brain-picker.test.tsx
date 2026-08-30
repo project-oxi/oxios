@@ -23,9 +23,11 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 
+// ids deliberately differ from names — the chat binding is the NAME
+// (oxibrain ops address spaces by name), never the id.
 const spaces: SpaceSummary[] = [
-  { id: 'personal', name: 'Personal', created_at: 0, entity_count: 0, episode_count: 0 },
-  { id: 'work', name: 'Work', created_at: 0, entity_count: 0, episode_count: 0 },
+  { id: 'space-uuid-1', name: 'Personal', created_at: 0, entity_count: 0, episode_count: 0 },
+  { id: 'space-uuid-2', name: 'Work', created_at: 0, entity_count: 0, episode_count: 0 },
 ]
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -85,25 +87,25 @@ describe('BrainPicker', () => {
   })
 
   it('shows the bound space name when a selection exists', () => {
-    renderPicker({ activeBrainSpace: 'work' })
+    renderPicker({ activeBrainSpace: 'Work' })
     expect(screen.getByRole('button', { name: 'chat.brain.label' })).toHaveTextContent('Work')
   })
 
   it('marks an inherited default binding with the default suffix', () => {
-    renderPicker({ activeBrainSpace: null, projectDefault: 'work', globalDefault: '' })
+    renderPicker({ activeBrainSpace: null, projectDefault: 'Work', globalDefault: '' })
     expect(screen.getByRole('button', { name: 'chat.brain.label' })).toHaveTextContent(
       'chat.brain.defaultSuffix',
     )
   })
 
   it('does not suffix an explicit selection', () => {
-    renderPicker({ activeBrainSpace: 'work', projectDefault: 'personal' })
+    renderPicker({ activeBrainSpace: 'Work', projectDefault: 'Personal' })
     expect(screen.getByRole('button', { name: 'chat.brain.label' })).not.toHaveTextContent(
       'chat.brain.defaultSuffix',
     )
   })
 
-  it('lists the none row + roster and selects a space', () => {
+  it('lists the none row + roster and selects a space by NAME', () => {
     const setActive = vi.fn()
     renderPicker({ setActiveBrainSpace: setActive })
 
@@ -111,12 +113,12 @@ describe('BrainPicker', () => {
     expect(screen.getByText('chat.brain.none')).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Work'))
-    expect(setActive).toHaveBeenCalledWith('work')
+    expect(setActive).toHaveBeenCalledWith('Work')
   })
 
   it('unbinds via the none row', () => {
     const setActive = vi.fn()
-    renderPicker({ activeBrainSpace: 'work', setActiveBrainSpace: setActive })
+    renderPicker({ activeBrainSpace: 'Work', setActiveBrainSpace: setActive })
 
     fireEvent.click(screen.getByRole('button', { name: 'chat.brain.label' }))
     fireEvent.click(screen.getByText('chat.brain.none'))
@@ -144,7 +146,7 @@ describe('BrainPickerContainer', () => {
 
   it('renders the pill bound to the store selection', async () => {
     server.use(http.get('/api/brain/spaces', () => HttpResponse.json(spaces)))
-    useChatStore.setState({ activeBrainSpace: 'work' })
+    useChatStore.setState({ activeBrainSpace: 'Work' })
     render(
       <Wrapper>
         <BrainPickerContainer />

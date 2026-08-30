@@ -31,7 +31,7 @@ interface BrainPickerProps {
   spaces: Array<{ id: string; name: string }>
   /** Explicit session-scoped selection (null = off; defaults may apply). */
   activeBrainSpace: string | null
-  setActiveBrainSpace: (id: string | null) => void
+  setActiveBrainSpace: (name: string | null) => void
   /** Project default space — drives the "(default)" suffix (Task 9 wires it). */
   projectDefault?: string | null
   /** Global default space; '' = none (Task 9 wires it). */
@@ -55,15 +55,15 @@ export function BrainPicker({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
 
-  const active = spaces.find((s) => s.id === activeBrainSpace) ?? null
+  const active = spaces.find((s) => s.name === activeBrainSpace) ?? null
   // Inherited binding (project/global default) while nothing is picked
   // explicitly → mark the pill so the user can tell where the binding came
   // from. Task 9 starts passing the defaults; until then this stays quiet.
   const inherited = resolveBrainSpace(activeBrainSpace, projectDefault, globalDefault)
   const showDefaultSuffix = activeBrainSpace === null && inherited !== null
 
-  const pick = (id: string | null) => {
-    setActiveBrainSpace(id)
+  const pick = (name: string | null) => {
+    setActiveBrainSpace(name)
     setOpen(false)
   }
 
@@ -112,15 +112,15 @@ export function BrainPicker({
             <button
               key={s.id}
               type="button"
-              onClick={() => pick(s.id)}
+              onClick={() => pick(s.name)}
               className={cn(
                 'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
                 'hover:bg-accent',
-                s.id === activeBrainSpace && 'bg-accent/60',
+                s.name === activeBrainSpace && 'bg-accent/60',
               )}
             >
               <span className="truncate">{s.name}</span>
-              {s.id === activeBrainSpace && <Check className="h-3.5 w-3.5" />}
+              {s.name === activeBrainSpace && <Check className="h-3.5 w-3.5" />}
             </button>
           ))}
 

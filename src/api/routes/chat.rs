@@ -69,6 +69,21 @@ pub(crate) fn default_user() -> String {
     "default".into()
 }
 
+/// Match a chat brain binding against a spaces payload by NAME. The
+/// kernel forwards the binding verbatim as the ops' `space`, and oxibrain
+/// ops address spaces by name (`Brain::lookup_space(name)`, ADR-013) —
+/// ids never validate. A malformed roster fails open: the turn degrades
+/// per the design.
+fn space_listed(spaces: &serde_json::Value, space: &str) -> bool {
+    spaces
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .any(|s| s.get("name").and_then(|n| n.as_str()) == Some(space))
+        })
+        .unwrap_or(true)
+}
+
 /// Validate a chat brain binding against the live spaces list.
 /// Skipped when the brain is unavailable — the turn degrades per the design.
 async fn validate_brain_space(
@@ -77,14 +92,7 @@ async fn validate_brain_space(
 ) -> Option<String> {
     let brain = brain.as_ref()?;
     let spaces = brain.spaces().await?;
-    let known = spaces
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .any(|s| s.get("id").and_then(|i| i.as_str()) == Some(space))
-        })
-        .unwrap_or(true);
-    (!known).then(|| format!("Brain space '{space}' not found"))
+    (!space_listed(&spaces, space)).then(|| format!("Brain space '{space}' not found"))
 }
 
 /// Response body for the chat endpoint.
@@ -3111,5 +3119,32 @@ mod cancel_tests {
     fn resolve_cancel_key_none_when_all_absent() {
         assert_eq!(resolve_cancel_key(None, None, None), None);
         assert_eq!(resolve_cancel_key(Some(""), None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod brain_space_tests {
+    use super::*;
+
+    /// The chat binding is the space NAME — oxibrain ops take `space` by
+    /// name (ADR-013), so an id must NOT validate even though it appears
+    /// in the roster payload.
+    #[test]
+    fn brain_space_matches_by_name_not_id() {
+        let spaces = serde_json::json!([
+            { "id": "11111111-1111-1111-1111-111111111111", "name": "dev" },
+            { "id": "22222222-2222-2222-2222-222222222222", "name": "work" },
+        ]);
+        assert!(space_listed(&spaces, "dev"));
+        assert!(!space_listed(&spaces, "11111111-1111-1111-1111-111111111111"));
+        assert!(!space_listed(&spaces, "missing"));
+    }
+
+    /// Malformed roster payloads fail open — validation is skipped and the
+    /// turn degrades per the availability contract.
+    #[test]
+    fn brain_space_fails_open_on_malformed_roster() {
+        assert!(space_listed(&serde_json::json!("not-an-array"), "dev"));
+        assert!(space_listed(&serde_json::json!(null), "dev"));
     }
 }

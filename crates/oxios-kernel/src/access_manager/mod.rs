@@ -20,8 +20,8 @@ pub use audit_sink::NoOpAuditSink;
 pub use audit_sink::{AuditEvent, AuditSink, TracingAuditSink, TrailAuditSink};
 pub use context::AgentContext;
 pub use gate::{
-    AccessDenied, AccessGate, CheckRequest, DenyLayer, OXI_HOME_DENY_ROOTS,
-    OXIOS_HOME_DENY_SUBPATHS, PathMode,
+    AccessDenied, AccessGate, CheckRequest, DenyLayer, OXI_HOME_DENY_ROOTS, OXI_HOME_RESOLVED_LEAF,
+    OXIOS_HOME_DENY_SUBPATHS, PathMode, oxi_deny_root, oxi_deny_root_for, oxios_deny_roots,
 };
 pub use permissions::{AgentPermissions, AuditEntry, PermissionUpdate};
 pub use rbac::{

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Unified home layout (`oxi_home` resolver)** — all oxios state now
+  resolves under the shared Oxi home: `oxios_home()` =
+  `$OXIOS_HOME` override, else `oxi_home()/oxios` where
+  `oxi_home()` = `$OXI_HOME` or `~/.oxi`. Production sites that
+  hardcoded `~/.oxios` now route through the resolver: the agent
+  deny gate (sensitive sub-path denies cover BOTH the canonical
+  `~/.oxi/oxios` and the legacy `~/.oxios` while it exists; the
+  `.oxi` whole-root deny honors `OXI_HOME`), `POST /api/system/backup`
+  tarballs (`<oxios home>/backups/`), web-dist staging, and knowledge
+  curation reports (relocated from inside the shared vault to
+  `<oxios home>/state/curation_reports/` — no app writes another
+  app's subtree). Config discovery is canonical-first with a legacy
+  READ-ONLY fallback: when `~/.oxi/oxios/config.toml` is missing but
+  `~/.oxios/config.toml` exists, it is loaded read-only; writes always
+  target the canonical path. `share/install.sh` and
+  `share/migrate-knowledge.sh` follow the same
+  `OXIOS_HOME > OXI_HOME/oxios > ~/.oxi/oxios` precedence.
+
 - **Brain cutover to the oxibrain 0.10 agent-first CLI contract** —
   one process per operation, nothing resident. Agent-facing ops
   (`recall`, `ingest`, `search`, `brief`, `traverse`, `why`,
@@ -28,6 +46,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `review_merges` degrades until upstream ships `admin review`.
   The `brain` skill now teaches the op contract. Design:
   `docs/designs/2026-08-29-brain-cli-op-cutover-design.md`.
+
+- **`oxios migrate` + journaled unified-home migration** — new CLI
+  command that copies the legacy `~/.oxios` home into the canonical
+  `~/.oxi/oxios`, engine in `oxios-kernel::home_migrate`. Copy-only
+  (the source is never deleted or modified — removal is deferred to
+  the cutover release). Preflight reports source, destination, file
+  count, total bytes, and a state of `nothing_to_do` / `ready` /
+  `already_migrated` / `conflict`; a conflict (destination exists and
+  at least one source file differs by size or SHA-256) aborts without
+  touching either side. A JSON journal at
+  `~/.oxi/oxios.migration-journal.json` is written atomically (temp +
+  fsync + rename) BEFORE the first mutation and flipped to `complete`
+  after a verify walk, so interrupted runs resume by rerunning; copies
+  are idempotent per file (size + SHA-256 skip, else
+  `<dest>.part-<pid>` + fsync + rename) and relative symlinks are
+  recreated. An explicit `OXIOS_HOME` never merges with the legacy
+  home. `--dry-run` prints the plan and mutates nothing.
+  `oxios doctor` gained a home-layout section (oxi root, oxios home,
+  legacy presence, migration state, journal status).
 
 ### Added
 

@@ -39,7 +39,7 @@ use std::sync::Arc;
 
 use crate::access_manager::{
     AccessGate, AgentContext, OXI_HOME_DENY_ROOTS, OXIOS_HOME_DENY_SUBPATHS, TracingAuditSink,
-    TrailAuditSink,
+    TrailAuditSink, oxi_deny_root, oxios_deny_roots,
 };
 use crate::capability::resolve::resolve_cspace;
 use crate::engine::OxiosEngine;
@@ -966,23 +966,37 @@ async fn run_agent(
         // CredentialStore reads as a legacy `auth.json` fallback;
         // a broadly-allowed agent should not be able to exfiltrate
         // stored keys via `read`/`grep`.
+        //
+        // Unified home: the `.oxi` leaf resolves through `oxi_home()`
+        // (honoring `OXI_HOME`) so the deny moves with the data; all
+        // other leaves stay anchored at `$HOME`.
         for leaf in OXI_HOME_DENY_ROOTS {
-            deny_gate_builder = deny_gate_builder.with_deny_root(home.join(leaf));
+            deny_gate_builder = deny_gate_builder.with_deny_root(oxi_deny_root(leaf, &home));
         }
 
-        // Sub-path deny for `~/.oxios/<sensitive>`. Each entry is
-        // the sensitive subtree; agents retain access to `workspace/`
-        // and any RFC-025 mount path. See [`OXIOS_HOME_DENY_SUBPATHS`]
+        // Sub-path deny for `<oxios home>/<sensitive>` on BOTH roots
+        // that can carry sensitive oxios state during the unified-home
+        // transition (copy-only migration): the canonical resolver
+        // root (`OXIOS_HOME` override or `oxi_home()/oxios`) and the
+        // legacy `$HOME/.oxios` while it exists. Each entry is the
+        // sensitive subtree; agents retain access to `workspace/` and
+        // any RFC-025 mount path. See [`OXIOS_HOME_DENY_SUBPATHS`]
         // doc for the per-entry rationale. T18 R4 adds `backups/` —
         // the output dir for `POST /api/system/backup` tarballs,
         // which carry credential-bearing entries.
-        let oxios_root = home.join(".oxios");
-        for sub in OXIOS_HOME_DENY_SUBPATHS {
-            deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+        let oxios_roots = oxios_deny_roots(
+            &crate::oxi_home::oxios_home(),
+            crate::oxi_home::legacy_home_dir().as_deref(),
+        );
+        for oxios_root in oxios_roots {
+            for sub in OXIOS_HOME_DENY_SUBPATHS {
+                deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+            }
         }
     } else {
         tracing::warn!("HOME unset at gate construction; ecosystem deny is disabled for this run");
     }
+
     let access_gate = Arc::new(deny_gate_builder);
 
     // Build the RFC-035 ApprovalGate: declared policies + config overrides +

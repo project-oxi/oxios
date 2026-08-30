@@ -265,7 +265,7 @@ pub struct SqliteMemoryConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Path to the SQLite database file.
-    /// Empty string means default: `~/.oxios/workspace/memory.db`
+    /// Empty string means default: `~/.oxi/oxios/workspace/memory.db`
     #[serde(default)]
     pub path: String,
     /// Embedding vector dimension.
@@ -1040,15 +1040,17 @@ pub struct DaemonConfig {
 }
 
 fn default_pid_file() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/oxios.pid", h.display()))
-        .unwrap_or_else(|| "./oxios.pid".into())
+    crate::oxi_home::oxios_home()
+        .join("oxios.pid")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn default_daemon_log_dir() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/logs", h.display()))
-        .unwrap_or_else(|| "./logs".into())
+    crate::oxi_home::oxios_home()
+        .join("logs")
+        .to_string_lossy()
+        .into_owned()
 }
 
 impl Default for DaemonConfig {
@@ -1527,7 +1529,12 @@ fn default_workspace() -> String {
 }
 
 fn dirs_home() -> Option<String> {
-    dirs::home_dir().map(|h| format!("{}/.oxios/workspace", h.display()))
+    Some(
+        crate::oxi_home::oxios_home()
+            .join("workspace")
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn default_event_bus_capacity() -> usize {
@@ -1571,7 +1578,10 @@ impl KernelConfig {
         if let Some(p) = read_oxi_vault_path() {
             return expand_home(&p);
         }
-        expand_home("~/.oxi/vault")
+        crate::oxi_home::oxi_home()
+            .join("spaces")
+            .join("personal")
+            .join("vault")
     }
 }
 
@@ -3326,9 +3336,13 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         assert_eq!(resolved, expand_home("~/from-ecosystem"));
 
         // Tier 3: explicit absent AND oxi config absent → fallback
-        // `~/.oxi/spaces/personal/vault`. Hermetic: the seam points at a NONEXISTENT path
+        // `<oxi_home>/spaces/personal/vault` — the approved design
+        // target (`spaces/<space>/vault`), NOT the flat legacy
+        // `~/.oxi/vault`. Hermetic: the seam points at a NONEXISTENT path
         // inside the tempdir so no workstation's real `~/.oxi/config.toml`
-        // can leak into the assertion.
+        // can leak into the assertion, and the expectation goes through
+        // the resolver so an `OXI_HOME` override on the host cannot
+        // break it.
         let nonexistent = dir.join("oxi-config-absent.toml");
         // (Path does not exist — read returns NotFound → fallback.)
         unsafe {
@@ -3339,7 +3353,13 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
         unsafe {
             std::env::remove_var("OXIOS_OXI_CONFIG_PATH");
         }
-        assert_eq!(resolved, expand_home("~/.oxi/vault"));
+        assert_eq!(
+            resolved,
+            crate::oxi_home::oxi_home()
+                .join("spaces")
+                .join("personal")
+                .join("vault")
+        );
     }
 
     // Test-only constructors/helpers for the knowledge_root test above.

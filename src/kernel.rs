@@ -132,7 +132,7 @@ impl Kernel {
     /// Create a new kernel builder with sensible defaults.
     pub fn builder() -> KernelBuilder {
         KernelBuilder {
-            config_path: oxios_kernel::config::expand_home("~/.oxios/config.toml"),
+            config_path: oxios_kernel::oxi_home::oxios_home().join("config.toml"),
             watch_vault: false,
             daemon: false,
         }
@@ -275,8 +275,8 @@ impl Kernel {
                 let kh =
                     kh.with_compression(oxios_kernel::CompressionApi::new(compression_service));
 
-                // Unified asset store (~/.oxios/assets/).
-                let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+                // Unified asset store (~/.oxi/oxios/assets/).
+                let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
                 match oxios_kernel::AssetStore::new(assets_root) {
                     Ok(store) => {
                         if let Err(e) = store.reconcile() {
@@ -1037,9 +1037,22 @@ impl KernelBuilder {
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
 
-        let mut config = if config_path.exists() {
-            tracing::info!(path = %config_path.display(), "Loading config");
-            load_config(&config_path)?
+        // Unified home: canonical-first, legacy READ-ONLY fallback.
+        // When the canonical config is missing but a pre-unification
+        // `~/.oxios/config.toml` exists, it is loaded read-only;
+        // persistence (`config_path`, used by config PUT / onboarding)
+        // always targets the canonical path.
+        let load_path = oxios_kernel::oxi_home::effective_config_path(&config_path);
+        if load_path != config_path {
+            tracing::info!(
+                canonical = %config_path.display(),
+                legacy = %load_path.display(),
+                "canonical config missing; loading legacy pre-unification config (read-only)"
+            );
+        }
+        let mut config = if load_path.exists() {
+            tracing::info!(path = %load_path.display(), "Loading config");
+            load_config(&load_path)?
         } else {
             tracing::info!("No config file found, using defaults");
             OxiosConfig::default()
@@ -1733,8 +1746,8 @@ impl KernelBuilder {
             ));
             let kh = kh.with_compression(oxios_kernel::CompressionApi::new(compression_svc));
 
-            // Unified asset store (~/.oxios/assets/).
-            let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+            // Unified asset store (~/.oxi/oxios/assets/).
+            let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
             let kh = match oxios_kernel::AssetStore::new(assets_root) {
                 Ok(store) => {
                     if let Err(e) = store.reconcile() {
@@ -1826,15 +1839,13 @@ impl KernelBuilder {
         // Wire SQLite agent log index if available
         let (agent_log_db,) = {
             let db_path = if config.agent_log.db_path.is_empty() {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".oxios/state/agent_log.db")
+                oxios_kernel::oxi_home::oxios_home().join("state/agent_log.db")
             } else {
                 let p = std::path::PathBuf::from(&config.agent_log.db_path);
                 if p.is_absolute() {
                     p
                 } else {
-                    dirs::home_dir().unwrap_or_default().join(".oxios").join(&p)
+                    oxios_kernel::oxi_home::oxios_home().join(&p)
                 }
             };
 

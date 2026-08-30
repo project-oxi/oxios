@@ -638,11 +638,13 @@ not separate crates.
 
 | Path | Purpose |
 |------|---------|
-| `~/.oxios/` | Oxios home directory |
-| `~/.oxios/config.toml` | Main configuration |
-| `~/.oxios/workspace/` | Agent working directory |
-| `~/.oxios/workspace/sessions/` | Session data |
-| `~/.oxios/workspace/skills/` | Unified skill definitions |
+| `~/.oxi/oxios/` | Oxios home directory (canonical; `$OXIOS_HOME` or `$OXI_HOME/oxios` override; legacy `~/.oxios/` is read-only until `oxios migrate` runs) |
+| `~/.oxi/oxios/config.toml` | Main configuration |
+| `~/.oxi/oxios/workspace/` | Agent working directory |
+| `~/.oxi/oxios/workspace/sessions/` | Session data |
+| `~/.oxi/oxios/workspace/skills/` | Unified skill definitions |
+| `~/.oxi/spaces/<space>/vault/` | Shared user knowledge vault (oxi ecosystem) |
+| `~/.oxi/oxios/backups/` | Backup tarballs (denied to agents) |
 
 ---
 

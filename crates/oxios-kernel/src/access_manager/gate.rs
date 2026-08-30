@@ -372,6 +372,60 @@ pub const OXIOS_HOME_DENY_SUBPATHS: &[&str] = &[
     "backups",
 ];
 
+/// The [`OXI_HOME_DENY_ROOTS`] entry that names the unified ecosystem
+/// root. The agent-runtime wiring resolves THIS leaf through
+/// `oxi_home()` (honoring `OXI_HOME`) instead of joining it onto
+/// `$HOME`; every other leaf stays `$HOME`-anchored.
+pub const OXI_HOME_RESOLVED_LEAF: &str = ".oxi";
+
+/// Resolve one [`OXI_HOME_DENY_ROOTS`] leaf to its deny root — the
+/// seam both the agent-runtime wiring and the gate parity tests call,
+/// so the `$HOME`-anchored vs resolver-resolved distinction cannot
+/// drift between them.
+///
+/// `oxi_home_override` mirrors the `OXI_HOME` env (the canonical
+/// unified root); production passes [`crate::oxi_home::oxi_home()`],
+/// tests pass a per-tempdir root to stay env-hermetic.
+pub fn oxi_deny_root_for(leaf: &str, home: &Path, oxi_home_override: Option<&Path>) -> PathBuf {
+    if leaf == OXI_HOME_RESOLVED_LEAF {
+        oxi_home_override
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| home.join(OXI_HOME_RESOLVED_LEAF))
+    } else {
+        home.join(leaf)
+    }
+}
+
+/// Production variant of [`oxi_deny_root_for`] reading the resolver.
+pub fn oxi_deny_root(leaf: &str, home: &Path) -> PathBuf {
+    oxi_deny_root_for(leaf, home, Some(&crate::oxi_home::oxi_home()))
+}
+
+/// Unified-home seam shared by the agent-runtime gate wiring and the
+/// gate parity tests: the oxios roots that carry the sensitive
+/// [`OXIOS_HOME_DENY_SUBPATHS`] sub-path denies.
+///
+/// Two roots can carry sensitive oxios state simultaneously during the
+/// unified-home transition (copy-only migration, removal deferred to
+/// the cutover release):
+///
+/// * `canonical` — the resolver root: `OXIOS_HOME` override or
+///   `oxi_home()/oxios`,
+/// * the legacy pre-unification `$HOME/.oxios`, while it exists.
+///
+/// Returns canonical-first, deduplicated. Tests construct both roots
+/// per-tempdir through this function so the production wiring and the
+/// tests cannot drift.
+pub fn oxios_deny_roots(canonical: &Path, legacy: Option<&Path>) -> Vec<PathBuf> {
+    let mut roots = vec![canonical.to_path_buf()];
+    if let Some(legacy) = legacy
+        && legacy != canonical
+    {
+        roots.push(legacy.to_path_buf());
+    }
+    roots
+}
+
 pub struct AccessGate {
     /// Agent permission manager (includes RBAC internally).
     access: Arc<Mutex<AccessManager>>,
@@ -1329,16 +1383,20 @@ mod tests {
     // ────────────────────────────────────────────────────────────────
 
     /// Construct an AccessGate wired with the T18 R4 production
-    /// policy. Mirrors `agent_runtime.rs` exactly:
+    /// policy. Mirrors `agent_runtime.rs` exactly, through the SAME
+    /// unified-home seams the production wiring calls:
     ///
-    /// * whole-root deny at `~/.oxi` (R1) and `~/.oxicode` (R4 —
-    ///   shared credential fallback)
-    /// * sub-path deny at `~/.oxios/<OXIOS_HOME_DENY_SUBPATHS>` (R2/R3)
+    /// * whole-root deny for every `OXI_HOME_DENY_ROOTS` leaf via
+    ///   [`oxi_deny_root_for`] (R1 `~/.oxi`, R4 `~/.oxicode`)
+    /// * sub-path deny at `<oxios root>/<OXIOS_HOME_DENY_SUBPATHS>`
+    ///   for BOTH roots returned by [`oxios_deny_roots`] (R2/R3):
+    ///   the canonical `~/.oxi/oxios` and the legacy `~/.oxios`
     ///
     /// The whole-root deny list and the sub-path list are the
     /// single-source-of-truth `OXI_HOME_DENY_ROOTS` /
     /// `OXIOS_HOME_DENY_SUBPATHS` constants from this module so the
-    /// production wiring and the parity test here cannot drift.
+    /// production wiring and the parity test here cannot drift. The
+    /// roots are constructed per-tempdir (no process-env mutation).
     ///
     /// Returns `(gate, ctx, canon_tmp)`. Callers MUST use the
     /// canonicalized path for any request path they intend to
@@ -1377,24 +1435,32 @@ mod tests {
             crate::access_manager::Role::Superuser,
         );
 
-        // Mirror the production wiring: install ALL deny-roots
-        // listed in `OXI_HOME_DENY_ROOTS` and ALL deny-subpaths
-        // listed in `OXIOS_HOME_DENY_SUBPATHS`. The directory
-        // existence check at canonicalize-time gates whether the
-        // root registers (a non-existing home/<leaf> simply
-        // canonicalizes-fails and is logged, not dropped).
+        // Mirror the production wiring through the shared seams:
+        // resolve EVERY `OXI_HOME_DENY_ROOTS` leaf via
+        // `oxi_deny_root_for` and install sub-path denies on BOTH
+        // roots from `oxios_deny_roots` (canonical `~/.oxi/oxios` +
+        // legacy `~/.oxios`). The directory existence check at
+        // canonicalize-time gates whether a root registers
+        // (a non-existing root simply canonicalizes-fails and is
+        // logged, not dropped — so the test creates them).
         for leaf in OXI_HOME_DENY_ROOTS {
-            std::fs::create_dir_all(canon_tmp.join(leaf)).unwrap();
+            std::fs::create_dir_all(oxi_deny_root_for(
+                leaf,
+                &canon_tmp,
+                Some(&canon_tmp.join(".oxi")),
+            ))
+            .unwrap();
         }
-        let oxios_root = canon_tmp.join(".oxios");
-        std::fs::create_dir_all(&oxios_root).unwrap();
+        let canonical_oxios = canon_tmp.join(".oxi").join("oxios");
+        let legacy_oxios = canon_tmp.join(".oxios");
+        std::fs::create_dir_all(&canonical_oxios).unwrap();
+        std::fs::create_dir_all(&legacy_oxios).unwrap();
         // Some entries in `OXIOS_HOME_DENY_SUBPATHS` reference
         // sub-paths that may not exist yet (the deny is
         // policy-level, not data-level). The directory is created
         // on demand; for the test, a no-op canonicalize on
-        // `home/<leaf>` is enough — `with_deny_subpath` invokes
-        // canonicalize on the root (here, `~/.oxios`), not the
-        // subpath.
+        // the root is enough — `with_deny_subpath` invokes
+        // canonicalize on the root, not the subpath.
         let mut gate = AccessGate::new(
             Arc::new(Mutex::new(access)),
             Arc::new(ExecConfig {
@@ -1404,10 +1470,16 @@ mod tests {
             Arc::new(NoOpAuditSink),
         );
         for leaf in OXI_HOME_DENY_ROOTS {
-            gate = gate.with_deny_root(canon_tmp.join(leaf));
+            gate = gate.with_deny_root(oxi_deny_root_for(
+                leaf,
+                &canon_tmp,
+                Some(&canon_tmp.join(".oxi")),
+            ));
         }
-        for sub in OXIOS_HOME_DENY_SUBPATHS {
-            gate = gate.with_deny_subpath(&oxios_root, sub);
+        for oxios_root in oxios_deny_roots(&canonical_oxios, Some(&legacy_oxios)) {
+            for sub in OXIOS_HOME_DENY_SUBPATHS {
+                gate = gate.with_deny_subpath(&oxios_root, sub);
+            }
         }
 
         (gate, ctx, canon_tmp)
@@ -1504,6 +1576,106 @@ mod tests {
             result.is_ok(),
             "~/.oxios/workspace/<session>/x must remain accessible; got {:?}",
             result,
+        );
+    }
+
+    #[test]
+    fn unified_home_deny_roots_cover_canonical_and_legacy_oxios() {
+        // Unified home: the sensitive sub-path deny must cover BOTH
+        // roots that can carry oxios state during the copy-only
+        // transition — the canonical `~/.oxi/oxios` AND the legacy
+        // `~/.oxios` — while `~/.oxios/workspace/**` stays accessible.
+        let tmp = tempfile::tempdir().unwrap();
+        let canon_tmp = tmp
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| tmp.path().to_path_buf());
+        let canonical_root = canon_tmp.join(".oxi").join("oxios");
+        let legacy_root = canon_tmp.join(".oxios");
+
+        // The seam returns canonical-first, deduplicated.
+        let roots = oxios_deny_roots(&canonical_root, Some(&legacy_root));
+        assert_eq!(roots, vec![canonical_root.clone(), legacy_root.clone()]);
+        assert_eq!(
+            oxios_deny_roots(&canonical_root, Some(&canonical_root)),
+            vec![canonical_root.clone()],
+            "identical roots are deduplicated"
+        );
+
+        // Wire ONLY the oxios sub-path denies (no `.oxi` whole-root)
+        // so this test exercises the canonical-root subpath policy in
+        // isolation — the whole-root deny would mask it.
+        let mut access = AccessManager::new();
+        let ctx = AgentContext::test_fixture("test-agent");
+        let mut perms = AgentPermissions::for_new_agent("test-agent");
+        perms.allowed_paths = vec![format!("{}/**", canon_tmp.display())];
+        access.set_permissions(perms);
+        access.rbac_manager_mut().assign_role(
+            Subject::Agent(ctx.agent_id),
+            crate::access_manager::Role::Superuser,
+        );
+        let mut gate = AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig {
+                allowlist_mode: AllowlistMode::Permissive,
+                ..Default::default()
+            }),
+            Arc::new(NoOpAuditSink),
+        );
+        std::fs::create_dir_all(&canonical_root).unwrap();
+        std::fs::create_dir_all(&legacy_root).unwrap();
+        for root in &roots {
+            for sub in OXIOS_HOME_DENY_SUBPATHS {
+                gate = gate.with_deny_subpath(root, sub);
+            }
+        }
+
+        for (label, root) in [("canonical", &canonical_root), ("legacy", &legacy_root)] {
+            let config = root.join("config.toml");
+            let result = gate.check(CheckRequest::Path {
+                context: &ctx,
+                path: &config,
+                mode: PathMode::Read,
+            });
+            assert!(
+                result.is_err(),
+                "{label} oxios home config.toml must be denied; got {result:?}"
+            );
+            // workspace stays accessible on both roots.
+            let ws = root.join("workspace").join("s").join("n.md");
+            std::fs::create_dir_all(ws.parent().unwrap()).unwrap();
+            std::fs::write(&ws, b"# session").unwrap();
+            let result = gate.check(CheckRequest::Path {
+                context: &ctx,
+                path: &ws,
+                mode: PathMode::Read,
+            });
+            assert!(
+                result.is_ok(),
+                "{label} oxios workspace must remain accessible; got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn oxi_deny_root_seam_resolves_unified_leaf_through_override() {
+        // The `.oxi` leaf resolves through the unified root (the
+        // `OXI_HOME` override in production); every other leaf stays
+        // joined onto `$HOME`.
+        let home = Path::new("/home/u");
+        let override_root = Path::new("/data/oxi");
+        assert_eq!(
+            oxi_deny_root_for(OXI_HOME_RESOLVED_LEAF, home, Some(override_root)),
+            override_root.to_path_buf()
+        );
+        assert_eq!(
+            oxi_deny_root_for(".oxicode", home, Some(override_root)),
+            home.join(".oxicode")
+        );
+        // No override → the default `$HOME/.oxi`.
+        assert_eq!(
+            oxi_deny_root_for(OXI_HOME_RESOLVED_LEAF, home, None),
+            home.join(".oxi")
         );
     }
 

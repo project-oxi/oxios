@@ -57,7 +57,7 @@ pub(crate) async fn handle_timeline_enable(
         cfg.timeline.db_path = body.db_path.clone();
     }
 
-    let config_path = oxios_kernel::config::expand_home("~/.oxios/config.toml");
+    let config_path = state.config_path.clone();
     if config_path.exists() {
         let _ = upsert_timeline_section_in_config(&config_path, &body.db_path, true);
     }
@@ -82,7 +82,7 @@ pub(crate) async fn handle_timeline_disable(
         cfg.timeline.db_path.clone()
     };
 
-    let config_path = oxios_kernel::config::expand_home("~/.oxios/config.toml");
+    let config_path = state.config_path.clone();
     if config_path.exists() {
         let _ = upsert_timeline_section_in_config(&config_path, &db_path, false);
     }

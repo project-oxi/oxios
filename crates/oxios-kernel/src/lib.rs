@@ -77,6 +77,7 @@ pub mod embedding;
 pub mod foundation;
 pub mod memory_agent;
 pub mod onboarding;
+pub mod oxi_home;
 pub mod persona;
 
 // ─── Tools & Skills ───────────────────────────────────────────────
@@ -95,6 +96,7 @@ pub mod backup;
 pub mod compression;
 pub mod config;
 pub use oxi_vault_git as git_layer;
+pub mod home_migrate;
 pub mod kernel_db;
 pub mod mount;
 pub mod project;

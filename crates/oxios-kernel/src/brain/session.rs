@@ -601,8 +601,10 @@ mod tests {
 
     fn op_session(body: &str) -> (BrainSession, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = stub_binary(body).display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: stub_binary(body).display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let session = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
@@ -651,10 +653,11 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         perm.set_mode(0o755);
         std::fs::set_permissions(&stub, perm).unwrap();
-
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = stub.display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let s = BrainSession::new(
             Arc::new(BrainInstaller::from_brain_section(tmp.path(), &section)),
             false,
@@ -874,8 +877,10 @@ mod tests {
 
     fn child_session(fail_spawn: bool) -> (BrainSession, Arc<FakeSpawn>) {
         let tmp = tempfile::tempdir().unwrap();
-        let mut section = crate::config::BrainSection::default();
-        section.binary_path = dummy_binary().display().to_string();
+        let section = crate::config::BrainSection {
+            binary_path: dummy_binary().display().to_string(),
+            ..crate::config::BrainSection::default()
+        };
         let fake = Arc::new(FakeSpawn {
             spawns: AtomicUsize::new(0),
             fail_spawn: AtomicBool::new(fail_spawn),
@@ -912,7 +917,7 @@ mod tests {
         assert!(s.space_overview("personal").await.is_some());
         let beliefs = s.get_entity("personal", "e1").await.unwrap();
         assert!(beliefs.as_array().unwrap().first().unwrap()["statement"] == "s1");
-        let timeline = s
+        let _timeline = s
             .timeline("personal", "e1", Some(1), Some(2))
             .await
             .unwrap();

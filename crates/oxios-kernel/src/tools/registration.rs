@@ -165,11 +165,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        crate::tools::KernelWebSearchTool::new(
-            search_cache.clone(),
-            bus.clone(),
-            search,
-        ),
+        crate::tools::KernelWebSearchTool::new(search_cache.clone(), bus.clone(), search),
         gate.clone(),
         context.clone(),
         approval_gate.clone(),
@@ -178,10 +174,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        crate::tools::KernelGetSearchResultsTool::new(
-            GetSearchResultsTool::new(search_cache),
-            bus,
-        ),
+        crate::tools::KernelGetSearchResultsTool::new(GetSearchResultsTool::new(search_cache), bus),
         gate,
         context,
         approval_gate,

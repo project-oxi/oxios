@@ -14,9 +14,9 @@ function fmtDate(ms: number): string {
  * (polarity, confidence, mention, recorded_at, episode). Shared by the
  * entity drill-down and the contradiction inbox.
  */
-export function WhyDetails({ statementId }: { statementId: string }) {
+export function WhyDetails({ statementId, space }: { statementId: string; space: string }) {
   const { t } = useTranslation()
-  const { data: why, isLoading } = useBrainWhy(statementId)
+  const { data: why, isLoading } = useBrainWhy(statementId, space)
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('brain.loading')}</p>
   if (!why) return <p className="text-sm text-muted-foreground">{t('brain.whyUnavailable')}</p>
   return (

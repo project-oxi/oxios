@@ -25,6 +25,7 @@ import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { api } from '@/lib/api-client'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
+import { useChatStore } from '@/stores/chat'
 import { ApprovalModeSelector } from './approval-mode-selector'
 import { BrainPickerContainer } from './brain-picker'
 import { FanOutButton } from './FanOutButton'
@@ -260,7 +261,10 @@ export function ChatInput({
       /* offline */
     }
     try {
-      const mRes = await mem.mutateAsync({ query, limit: 5 })
+      // Session brain binding: mention search runs against the bound space
+      // only — an unconnected turn (empty binding) has no brain surface.
+      const space = useChatStore.getState().activeBrainSpace ?? ''
+      const mRes = space ? await mem.mutateAsync({ query, limit: 5, space }) : null
       const memoryHits = mRes?.memory ?? []
       for (const hit of memoryHits) {
         results.push({

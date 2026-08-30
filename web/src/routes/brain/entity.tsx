@@ -9,22 +9,28 @@ export const Route = createFileRoute('/brain/entity')({
   component: EntityPage,
   validateSearch: (search: Record<string, unknown>) => ({
     id: (search.id as string) || undefined,
+    space: (search.space as string) ?? '',
   }),
 })
 
 function EntityPage() {
   const { t } = useTranslation()
   const { data: status } = useBrainStatus()
-  const { id } = Route.useSearch()
+  const { id, space } = Route.useSearch()
   const navigate = useNavigate({ from: Route.id })
   return (
     <div className="space-y-6">
       <PageHeader title={t('brain.entity')} subtitle={t('brain.subtitle')} />
       <StatusBanner status={status} />
       <BrainEntityDetail
+        space={space}
         initialEntityId={id}
         onNavigateEntity={(entityId) =>
-          navigate({ to: '/brain/entity', search: { id: entityId }, replace: true })
+          navigate({
+            to: '/brain/entity',
+            search: { id: entityId, space },
+            replace: true,
+          })
         }
       />
     </div>

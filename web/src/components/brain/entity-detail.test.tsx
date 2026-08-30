@@ -69,7 +69,7 @@ describe('BrainEntityDetail', () => {
       ),
     )
 
-    render(withQueryClient(<BrainEntityDetail initialEntityId={ENTITY_ID} />))
+    render(withQueryClient(<BrainEntityDetail space="personal" initialEntityId={ENTITY_ID} />))
 
     // Brief page renders as markdown with the entity link as an in-page button.
     expect(await screen.findByText('The user (Person)')).toBeInTheDocument()
@@ -106,7 +106,11 @@ describe('BrainEntityDetail', () => {
     const onNavigateEntity = vi.fn()
     render(
       withQueryClient(
-        <BrainEntityDetail initialEntityId="ent-rust-1" onNavigateEntity={onNavigateEntity} />,
+        <BrainEntityDetail
+          space="personal"
+          initialEntityId="ent-rust-1"
+          onNavigateEntity={onNavigateEntity}
+        />,
       ),
     )
 

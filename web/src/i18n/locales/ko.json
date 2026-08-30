@@ -2712,6 +2712,8 @@
     "spaces": "스페이스",
     "spaceName": "스페이스",
     "spaceCurrent": "현재",
+    "selectSpace": "스페이스 선택",
+    "defaultSpace": "기본 브레인",
     "notInstalled": "브레인 바이너리가 설치되지 않았습니다",
     "notInstalledHint": "`oxios brain install`로 번들된 oxibrain CLI를 설치하세요.",
     "documents": "문서",

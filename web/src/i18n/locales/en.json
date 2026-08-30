@@ -2712,6 +2712,8 @@
     "spaces": "Spaces",
     "spaceName": "Space",
     "spaceCurrent": "current",
+    "selectSpace": "Select space",
+    "defaultSpace": "Default brain",
     "notInstalled": "Brain binary not installed",
     "notInstalledHint": "Run `oxios brain install` to set up the bundled oxibrain CLI.",
     "documents": "Documents",

@@ -16,7 +16,14 @@ export function spaceParam(sp: SpaceSummary): string {
 function useSpaceOptions(): Array<{ label: string; value: string }> {
   const { data } = useBrainSpaces()
   const spaces = Array.isArray(data) ? data : []
-  return spaces.map((sp) => ({ label: spaceParam(sp), value: spaceParam(sp) }))
+  // oxibrain ops address spaces by NAME (ADR-013, `space://{name}`). A
+  // nameless space would be picked by its id, forwarded as `?space=` to
+  // the kernel, and rejected with no actionable error — exclude it from
+  // the picker options, mirroring the chat picker's `s.name === resolved`
+  // filter.
+  return spaces
+    .filter((sp) => sp.name)
+    .map((sp) => ({ label: spaceParam(sp), value: spaceParam(sp) }))
 }
 
 /**

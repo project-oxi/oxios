@@ -23,6 +23,7 @@ import { useKnowledgeSearch } from '@/hooks/use-knowledge'
 import { useMounts } from '@/hooks/use-mounts'
 import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
 import { api } from '@/lib/api-client'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
@@ -261,9 +262,15 @@ export function ChatInput({
       /* offline */
     }
     try {
-      // Session brain binding: mention search runs against the bound space
-      // only — an unconnected turn (empty binding) has no brain surface.
-      const space = useChatStore.getState().activeBrainSpace ?? ''
+      // Session brain binding: mention search runs against the RESOLVED
+      // binding (explicit picker choice, else project/global default;
+      // '' = unconnected turn) — same formula sendMessage uses to record
+      // the binding on the session. An inherited default displays the
+      // bound pill but `activeBrainSpace === null`; reading the raw value
+      // would silently no-op memory search on every default-bound turn.
+      const { activeBrainSpace, brainDefaults } = useChatStore.getState()
+      const space =
+        resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? ''
       const mRes = space ? await mem.mutateAsync({ query, limit: 5, space }) : null
       const memoryHits = mRes?.memory ?? []
       for (const hit of memoryHits) {

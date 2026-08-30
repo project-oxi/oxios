@@ -598,6 +598,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn release_session_is_idempotent_for_unknown_sessions() {
+        let api = IssueApi::new();
+        // Session-delete cleanup runs for every deleted session; most never
+        // claimed a liveness lock. Releasing twice must stay a quiet no-op.
+        api.release_session("never-seen");
+        api.release_session("never-seen");
+    }
+
     #[tokio::test]
     async fn issues_are_numbered_per_project() {
         let _home = temp_data_home();

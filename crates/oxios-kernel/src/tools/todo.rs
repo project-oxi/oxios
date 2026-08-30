@@ -323,6 +323,16 @@ mod tests {
         assert!(registry.peek("sess-1").is_none());
     }
 
+    #[test]
+    fn forget_is_idempotent_for_unknown_sessions() {
+        let registry = TodoRegistry::new();
+        // Session-delete cleanup runs for every deleted session; most never
+        // made a plan. Forgetting twice must stay a quiet no-op.
+        registry.forget("never-seen");
+        registry.forget("never-seen");
+        assert!(registry.peek("never-seen").is_none());
+    }
+
     #[tokio::test]
     async fn snapshot_reports_progress_and_current_task() {
         let state = OxiosTodoState::new();

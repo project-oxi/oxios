@@ -21,6 +21,7 @@ import { MountDetectionBadge } from '@/components/mount/mount-detection-badge'
 import { PortalPanel } from '@/components/portal/portal-panel'
 import { AiDetectionBadge } from '@/components/project/ai-detection-badge'
 import { Button } from '@/components/ui/button'
+import { useBrainBindingSync } from '@/hooks/use-brain-binding'
 import { useDraftPersistence } from '@/hooks/use-draft-persistence'
 import { useRoles } from '@/hooks/use-engine'
 import { useMounts } from '@/hooks/use-mounts'
@@ -37,6 +38,7 @@ export const Route = createFileRoute('/chat')({ component: ChatPage })
 // Chat UI — Claude-inspired centered layout
 // ---------------------------------------------------------------------------
 function ChatPage() {
+  useBrainBindingSync()
   const { t } = useTranslation()
   // Scope the subscription to exactly the fields the page renders — the
   // whole-store destructure re-rendered ChatPage on every store write (e.g.

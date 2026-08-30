@@ -19,6 +19,7 @@ import {
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ProjectBrainSelect } from '@/components/brain/space-select'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -90,12 +91,14 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
   const [icon, setIcon] = useState('package')
   const [instructions, setInstructions] = useState('')
   const [mountIds, setMountIds] = useState<string[]>([])
+  const [defaultBrainSpace, setDefaultBrainSpace] = useState<string | null>(null)
 
   const reset = () => {
     setName('')
     setIcon('package')
     setInstructions('')
     setMountIds([])
+    setDefaultBrainSpace(null)
   }
 
   const handleNameChange = (value: string) => {
@@ -117,12 +120,17 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
       },
       {
         onSuccess: (created) => {
-          // Attach any dropped mounts via a follow-up update — backend splits
-          // Mount references from the create payload (RFC-025).
+          // Apply the fields the create endpoint splits off via a follow-up
+          // update: dropped Mount references (RFC-025) and the default brain
+          // space (omitted when unset — a fresh project has none anyway).
           const toAttach = mountIds
-          if (toAttach.length > 0) {
+          if (toAttach.length > 0 || defaultBrainSpace !== null) {
             update.mutate(
-              { id: created.id, mount_ids: toAttach },
+              {
+                id: created.id,
+                ...(toAttach.length > 0 ? { mount_ids: toAttach } : {}),
+                ...(defaultBrainSpace !== null ? { default_brain_space: defaultBrainSpace } : {}),
+              },
               {
                 onSuccess: () => {
                   toast(t('projects.createSuccess'))
@@ -199,6 +207,16 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
               onChange={(e) => setInstructions(e.target.value)}
               rows={3}
               placeholder={t('projects.instructionsPlaceholder')}
+            />
+          </div>
+
+          {/* Default brain — inherited by new chats in this project */}
+          <div className="space-y-1">
+            <label className="text-sm font-medium">{t('projects.defaultBrain')}</label>
+            <ProjectBrainSelect
+              value={defaultBrainSpace}
+              onValueChange={setDefaultBrainSpace}
+              className="w-full"
             />
           </div>
 

@@ -6,11 +6,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { HttpResponse, http } from 'msw'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  BrainPicker,
-  BrainPickerContainer,
-  resolveBrainSpace,
-} from '@/components/chat/brain-picker'
+import { BrainPicker, BrainPickerContainer } from '@/components/chat/brain-picker'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { useChatStore } from '@/stores/chat'
 import type { SpaceSummary } from '@/types/brain'
 import { server } from '../../msw/server'
@@ -91,11 +88,23 @@ describe('BrainPicker', () => {
     expect(screen.getByRole('button', { name: 'chat.brain.label' })).toHaveTextContent('Work')
   })
 
-  it('marks an inherited default binding with the default suffix', () => {
+  it('displays the resolved default (name + suffix) when only defaults bind', () => {
     renderPicker({ activeBrainSpace: null, projectDefault: 'Work', globalDefault: '' })
-    expect(screen.getByRole('button', { name: 'chat.brain.label' })).toHaveTextContent(
-      'chat.brain.defaultSuffix',
-    )
+    const pill = screen.getByRole('button', { name: 'chat.brain.label' })
+    expect(pill).toHaveTextContent('Work')
+    expect(pill).toHaveTextContent('chat.brain.defaultSuffix')
+  })
+
+  it('checks the resolved space row in the dropdown when inherited', () => {
+    renderPicker({ activeBrainSpace: null, projectDefault: 'Work', globalDefault: '' })
+    fireEvent.click(screen.getByRole('button', { name: 'chat.brain.label' }))
+    // The pill also shows the resolved name — assert on the dropdown row,
+    // identified by its checked (bg-accent/60) styling.
+    const checkedRow = screen
+      .getAllByText('Work')
+      .map((el) => el.closest('button'))
+      .find((r) => r?.className.includes('bg-accent/60'))
+    expect(checkedRow).toBeDefined()
   })
 
   it('does not suffix an explicit selection', () => {
@@ -131,7 +140,10 @@ describe('BrainPicker', () => {
 describe('BrainPickerContainer', () => {
   beforeEach(() => {
     localStorage.clear()
-    useChatStore.setState({ activeBrainSpace: null })
+    useChatStore.setState({
+      activeBrainSpace: null,
+      brainDefaults: { project: null, global: '' },
+    })
   })
   afterEach(() => server.resetHandlers())
 
@@ -154,5 +166,50 @@ describe('BrainPickerContainer', () => {
     )
     const pill = await screen.findByRole('button', { name: 'chat.brain.label' })
     expect(pill).toHaveTextContent('Work')
+  })
+
+  it('normalizes a stale binding (not on the roster) to the off state', async () => {
+    server.use(http.get('/api/brain/spaces', () => HttpResponse.json(spaces)))
+    useChatStore.setState({ activeBrainSpace: 'Ghost' })
+    render(
+      <Wrapper>
+        <BrainPickerContainer />
+      </Wrapper>,
+    )
+    const pill = await screen.findByRole('button', { name: 'chat.brain.label' })
+    expect(pill).toHaveTextContent('chat.brain.toolsOff')
+    expect(pill).not.toHaveTextContent('Ghost')
+  })
+
+  it('marks an inherited project default from the store brainDefaults', async () => {
+    server.use(http.get('/api/brain/spaces', () => HttpResponse.json(spaces)))
+    useChatStore.setState({
+      activeBrainSpace: null,
+      brainDefaults: { project: 'Work', global: '' },
+    })
+    render(
+      <Wrapper>
+        <BrainPickerContainer />
+      </Wrapper>,
+    )
+    const pill = await screen.findByRole('button', { name: 'chat.brain.label' })
+    expect(pill).toHaveTextContent('Work')
+    expect(pill).toHaveTextContent('chat.brain.defaultSuffix')
+  })
+
+  it('falls back to the global default when the project has none', async () => {
+    server.use(http.get('/api/brain/spaces', () => HttpResponse.json(spaces)))
+    useChatStore.setState({
+      activeBrainSpace: null,
+      brainDefaults: { project: null, global: 'Personal' },
+    })
+    render(
+      <Wrapper>
+        <BrainPickerContainer />
+      </Wrapper>,
+    )
+    const pill = await screen.findByRole('button', { name: 'chat.brain.label' })
+    expect(pill).toHaveTextContent('Personal')
+    expect(pill).toHaveTextContent('chat.brain.defaultSuffix')
   })
 })

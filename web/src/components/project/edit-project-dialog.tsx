@@ -3,6 +3,7 @@ import { FolderOpen } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ProjectBrainSelect } from '@/components/brain/space-select'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -40,6 +41,7 @@ export function EditProjectDialog({
   const [icon, setIcon] = useState('package')
   // RFC-025: mount_ids + instructions
   const [mountIds, setMountIds] = useState<string[]>([])
+  const [defaultBrainSpace, setDefaultBrainSpace] = useState<string | null>(null)
   const [instructions, setInstructions] = useState('')
   const { data: mountsData } = useMounts()
   const availableMounts = useMemo(() => mountsData?.items ?? [], [mountsData?.items])
@@ -50,7 +52,7 @@ export function EditProjectDialog({
       setName(project.name)
       setIcon(project.emoji ?? 'package')
       setMountIds(project.mount_ids ?? [])
-      setInstructions(project.instructions ?? '')
+      setDefaultBrainSpace(project.default_brain_space ?? null)
     }
   }, [project?.id, open])
 
@@ -64,6 +66,7 @@ export function EditProjectDialog({
         emoji: icon,
         mount_ids: mountIds,
         instructions: instructions.trim() || undefined,
+        default_brain_space: defaultBrainSpace,
       },
       {
         onSuccess: () => {
@@ -165,6 +168,16 @@ export function EditProjectDialog({
               onChange={(e) => setInstructions(e.target.value)}
               rows={3}
               placeholder={t('projects.instructionsPlaceholder')}
+            />
+          </div>
+
+          {/* Default brain — inherited by new chats in this project */}
+          <div className="space-y-1">
+            <label className="text-sm font-medium">{t('projects.defaultBrain')}</label>
+            <ProjectBrainSelect
+              value={defaultBrainSpace}
+              onValueChange={setDefaultBrainSpace}
+              className="w-full"
             />
           </div>
         </div>

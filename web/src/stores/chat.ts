@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { adaptChunk } from '@/lib/stream/adapter'
 import type { ProcessorResult } from '@/lib/stream/StreamProcessor'
 import { StreamProcessor } from '@/lib/stream/StreamProcessor'
@@ -120,6 +121,11 @@ interface ChatRuntimeState {
    *  retryLoadSession to re-fire the same fetch without remembering the id
    *  outside the store. */
   _lastLoadedSessionId: string | null
+  /** Default-brain resolution inputs (Task 9 inheritance): the active
+   *  project's `default_brain_space` and the global config
+   *  `brain.default_space` ('' = none). Seeded by useBrainBindingSync on the
+   *  chat page; sendMessage resolves the effective binding from these. */
+  brainDefaults: { project: string | null; global: string }
 
   // ── WebSocket lifecycle (encapsulated, not persisted) ──
   /** WebSocket instance managed by the store. */
@@ -177,8 +183,11 @@ interface ChatActions {
   setActiveRole: (role: string | null) => void
   /** Session persona override (null = inherit global active persona). */
   setActivePersona: (personaId: string | null) => void
-  /** Session brain-space binding (null = unconnected turn). */
+  /** Session brain-space binding (null = unconnected turn; defaults may
+   *  still apply — see brainDefaults). */
   setActiveBrainSpace: (brainSpaceId: string | null) => void
+  /** Seed the default-brain resolution inputs (used by useBrainBindingSync). */
+  setBrainDefaults: (next: { project: string | null; global: string }) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
@@ -862,6 +871,7 @@ export const useChatStore = create<ChatStore>()(
       isStreaming: false,
       streamStartedAt: null as number | null,
       pendingModel: null as string | null,
+      brainDefaults: { project: null, global: '' },
       connected: false,
       _sendQueue: [],
       _pendingQueue: [],
@@ -1150,6 +1160,7 @@ export const useChatStore = create<ChatStore>()(
           connected,
           connect,
           _ws,
+          brainDefaults,
         } = get()
 
         // Ensure WS is connected first
@@ -1207,9 +1218,12 @@ export const useChatStore = create<ChatStore>()(
           // Session persona override — backend validates against the
           // registry and threads it to ExecEnv::persona_id for the turn.
           persona_id: activePersonaId ?? '',
-          // Session brain binding — empty string = unconnected turn. The
-          // backend validates the space and persists it on the session.
-          brain_space: activeBrainSpace ?? '',
+          // Session brain binding — the RESOLVED value (explicit picker
+          // choice, else project/global default; '' = unconnected turn) so
+          // the kernel records the effective binding on the session. The
+          // backend validates the space and persists it.
+          brain_space:
+            resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? '',
           // Per-message model override (or last-picked persistent one).
           model: activeModelId ?? '',
         }
@@ -1474,6 +1488,10 @@ export const useChatStore = create<ChatStore>()(
 
       setTemperature(temperature: number | null) {
         set({ temperature })
+      },
+
+      setBrainDefaults(next: { project: string | null; global: string }) {
+        set({ brainDefaults: next })
       },
 
       setMaxTokens(maxTokens: number | null) {

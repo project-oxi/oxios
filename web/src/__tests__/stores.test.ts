@@ -960,8 +960,9 @@ describe('useChatStore sendMessage turn start', () => {
 
 // Task 7 — session brain-space binding: persisted store field, picker
 // action, and the `brain_space` key the chat ingress validates (empty
-// string = unconnected turn). Explicit selection only here; Task 9 moves
-// the payload to the resolved (default-aware) value.
+// string = unconnected turn). Since Task 9 the payload carries the
+// RESOLVED binding — with no defaults seeded these tests still exercise
+// the explicit-selection layer alone.
 describe('useChatStore activeBrainSpace (task 7)', () => {
   let sendSpy: Mock
   const mockWs = (): WebSocket =>
@@ -982,6 +983,7 @@ describe('useChatStore activeBrainSpace (task 7)', () => {
       _pingTimer: null,
       activeSessionId: 's1',
       activeBrainSpace: null,
+      brainDefaults: { project: null, global: '' },
     })
   })
 
@@ -1064,6 +1066,62 @@ describe('useChatStore activeBrainSpace (task 7)', () => {
     )
     await useChatStore.getState().loadSession('s-free')
     expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+})
+
+// Task 9 — default-brain inheritance: the payload carries the RESOLVED
+// binding (explicit ?? project default ?? global default) so the kernel
+// records the effective binding, and '' when no layer provides a space.
+describe('useChatStore resolved brain_space payload (task 9)', () => {
+  let sendSpy: Mock
+  const mockWs = (): WebSocket =>
+    ({ readyState: 1, send: sendSpy, close: vi.fn() }) as unknown as WebSocket
+
+  beforeEach(() => {
+    localStorage.clear()
+    __clearStreamProcessorsForTesting()
+    sendSpy = vi.fn()
+    useChatStore.setState({
+      messages: [],
+      isStreaming: false,
+      streamStartedAt: null,
+      connected: true,
+      _ws: mockWs(),
+      _pendingQueue: [],
+      _reconnectTimer: null,
+      _pingTimer: null,
+      activeSessionId: 's1',
+      activeBrainSpace: null,
+      brainDefaults: { project: null, global: '' },
+    })
+  })
+
+  const sendBrainSpace = () => {
+    useChatStore.getState().sendMessage('hello')
+    return JSON.parse(sendSpy.mock.calls[0]![0]!).brain_space as string
+  }
+
+  it('explicit selection wins over both defaults', () => {
+    useChatStore.setState({
+      activeBrainSpace: 'personal',
+      brainDefaults: { project: 'work', global: 'global-space' },
+    })
+    expect(sendBrainSpace()).toBe('personal')
+  })
+
+  it('project default applies when nothing is picked', () => {
+    useChatStore.setState({ brainDefaults: { project: 'work', global: 'global-space' } })
+    expect(sendBrainSpace()).toBe('work')
+  })
+
+  it('global default applies when the project has none', () => {
+    useChatStore.setState({ brainDefaults: { project: null, global: 'global-space' } })
+    expect(sendBrainSpace()).toBe('global-space')
+  })
+
+  it('resolves to empty string (unconnected) when no layer provides a space', () => {
+    useChatStore.setState({ brainDefaults: { project: null, global: '' } })
+    expect(sendBrainSpace()).toBe('')
   })
 })
 

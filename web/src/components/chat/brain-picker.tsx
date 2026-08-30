@@ -3,26 +3,9 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useBrainSpaces } from '@/hooks/use-brain'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
-
-// ─── Default resolution ───────────────────────────────────────
-
-/**
- * Chat brain binding resolution order: the explicit session picker choice
- * wins; otherwise the project default, then the global default. An empty
- * global default means "no default" → null (unconnected turn).
- *
- * Pure helper (unit-tested); Task 9 feeds the resolved value into the
- * sendMessage payload instead of the raw explicit selection.
- */
-export function resolveBrainSpace(
-  explicit: string | null,
-  projectDefault: string | null | undefined,
-  globalDefault: string,
-): string | null {
-  return explicit ?? projectDefault ?? (globalDefault || null)
-}
 
 // ─── Component ────────────────────────────────────────────────
 
@@ -55,12 +38,12 @@ export function BrainPicker({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
 
-  const active = spaces.find((s) => s.name === activeBrainSpace) ?? null
-  // Inherited binding (project/global default) while nothing is picked
-  // explicitly → mark the pill so the user can tell where the binding came
-  // from. Task 9 starts passing the defaults; until then this stays quiet.
-  const inherited = resolveBrainSpace(activeBrainSpace, projectDefault, globalDefault)
-  const showDefaultSuffix = activeBrainSpace === null && inherited !== null
+  // The pill and the checked rows reflect the RESOLVED binding (explicit
+  // pick, else project/global default); an inherited — non-explicit —
+  // binding is marked with the "(default)" suffix so its origin is obvious.
+  const resolved = resolveBrainSpace(activeBrainSpace, projectDefault, globalDefault)
+  const inherited = activeBrainSpace === null && resolved !== null
+  const active = spaces.find((s) => s.name === resolved) ?? null
 
   const pick = (name: string | null) => {
     setActiveBrainSpace(name)
@@ -79,14 +62,14 @@ export function BrainPicker({
           className={cn(
             'flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground',
             'transition-colors hover:bg-accent hover:text-foreground',
-            activeBrainSpace && 'bg-accent text-foreground',
+            resolved && 'bg-accent text-foreground',
           )}
         >
           <Brain className="h-3.5 w-3.5" />
           <span className="max-w-28 truncate">
             {active ? active.name : t('chat.brain.toolsOff')}
           </span>
-          {showDefaultSuffix && <span className="opacity-60">{t('chat.brain.defaultSuffix')}</span>}
+          {inherited && <span className="opacity-60">{t('chat.brain.defaultSuffix')}</span>}
           <ChevronDown className="h-3 w-3 opacity-60" />
         </button>
       </PopoverTrigger>
@@ -101,11 +84,11 @@ export function BrainPicker({
             className={cn(
               'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
               'hover:bg-accent',
-              activeBrainSpace === null && 'bg-accent/60',
+              resolved === null && 'bg-accent/60',
             )}
           >
             <span>{t('chat.brain.none')}</span>
-            {activeBrainSpace === null && <Check className="h-3.5 w-3.5 shrink-0" />}
+            {resolved === null && <Check className="h-3.5 w-3.5 shrink-0" />}
           </button>
 
           {spaces.map((s) => (
@@ -116,11 +99,11 @@ export function BrainPicker({
               className={cn(
                 'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
                 'hover:bg-accent',
-                s.name === activeBrainSpace && 'bg-accent/60',
+                s.name === resolved && 'bg-accent/60',
               )}
             >
               <span className="truncate">{s.name}</span>
-              {s.name === activeBrainSpace && <Check className="h-3.5 w-3.5" />}
+              {s.name === resolved && <Check className="h-3.5 w-3.5" />}
             </button>
           ))}
 
@@ -147,17 +130,25 @@ export function BrainPicker({
 export function BrainPickerContainer() {
   const activeBrainSpace = useChatStore((s) => s.activeBrainSpace)
   const setActiveBrainSpace = useChatStore((s) => s.setActiveBrainSpace)
+  const brainDefaults = useChatStore((s) => s.brainDefaults)
 
   const spacesQuery = useBrainSpaces()
   const spaces = Array.isArray(spacesQuery.data) ? spacesQuery.data : []
+
+  // Stale-binding normalization: a rehydrated binding may name a space that
+  // no longer exists (renamed/deleted in oxibrain). Display AND resolve as
+  // null in that case; useBrainBindingSync clears the stored binding too.
+  const bound = spaces.some((s) => s.name === activeBrainSpace) ? activeBrainSpace : null
 
   if (spaces.length === 0) return null
 
   return (
     <BrainPicker
       spaces={spaces}
-      activeBrainSpace={activeBrainSpace}
+      activeBrainSpace={bound}
       setActiveBrainSpace={setActiveBrainSpace}
+      projectDefault={brainDefaults.project}
+      globalDefault={brainDefaults.global}
     />
   )
 }

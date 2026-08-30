@@ -22,6 +22,9 @@ export interface UpdateProjectInput {
   mount_ids?: string[]
   /** RFC-025: custom instructions injected into the system prompt. */
   instructions?: string
+  /** Default brain space. Tri-state on the wire: omit = keep current,
+   *  `null` = clear, string = set (mirrors PUT /api/projects/:id). */
+  default_brain_space?: string | null
 }
 
 // ─── Hooks ────────────────────────────────────────────────────

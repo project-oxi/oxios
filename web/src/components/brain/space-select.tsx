@@ -79,3 +79,30 @@ export function DefaultBrainSelect({ className }: { className?: string }) {
     />
   )
 }
+
+/**
+ * Project-level default-brain selector (`Project.default_brain_space`).
+ * Controlled: `null` = no default; the project dialogs persist the choice
+ * with the project (tri-state on the wire: `null` clears, string sets).
+ */
+export function ProjectBrainSelect({
+  value,
+  onValueChange,
+  className,
+}: {
+  value: string | null
+  onValueChange: (space: string | null) => void
+  className?: string
+}) {
+  const { t } = useTranslation()
+  const options = useSpaceOptions()
+  return (
+    <Select
+      value={value ?? NONE}
+      onValueChange={(v) => onValueChange(v === NONE ? null : v)}
+      options={[{ label: t('brain.none'), value: NONE }, ...options]}
+      aria-label={t('projects.defaultBrain')}
+      className={className}
+    />
+  )
+}

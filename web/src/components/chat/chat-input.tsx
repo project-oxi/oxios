@@ -6,7 +6,6 @@ import {
   Brain,
   Clock,
   FileText,
-  HardDrive,
   Image,
   Paperclip,
   Send,
@@ -18,18 +17,22 @@ import { type ChangeEvent, type DragEvent, useCallback, useEffect, useRef, useSt
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { useBrainSearchMutation } from '@/hooks/use-brain'
+import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useIsTouch } from '@/hooks/use-is-touch'
 import { useKnowledgeSearch } from '@/hooks/use-knowledge'
-import { useMounts } from '@/hooks/use-mounts'
-import { usePersonaCapabilities } from '@/hooks/usePersonaCapabilities'
+import { has } from '@/lib/affordances'
 import { api } from '@/lib/api-client'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { getInputHistory } from '@/lib/input-history-storage'
 import { cn } from '@/lib/utils'
+import { useChatStore } from '@/stores/chat'
 import { ApprovalModeSelector } from './approval-mode-selector'
+import { BrainPickerContainer } from './brain-picker'
 import { FanOutButton } from './FanOutButton'
 import { LiveActivityBar } from './live-activity-bar'
 import { ModelParamsPopover } from './model-params-popover'
 import { ModelPickerContainer } from './model-picker'
+import { PersonaPickerContainer } from './persona-picker'
 
 // ── Types ──
 
@@ -49,7 +52,7 @@ export interface ContextAttachment {
 }
 
 interface MentionResult {
-  type: 'mount' | 'knowledge' | 'memory' | 'role'
+  type: 'knowledge' | 'memory' | 'role'
   id: string
   label: string
   snippet: string
@@ -65,14 +68,18 @@ interface ChatInputProps {
   isStreaming?: boolean
   connected?: boolean
   queuedCount?: number
+  /**
+   * `'chat'` (default) — full composer with persona picker, files, mentions,
+   * model params, and fan-out. `'copilot'` restricts the UI to match the
+   * locked-persona Copilot dialog boundary: no persona/files/mentions/params/
+   * fan-out; model picker and approval mode stay.
+   */
+  variant?: 'chat' | 'copilot'
   roles?: { name: string; model: string }[]
   activeRole?: string | null
   setActiveRole?: (role: string | null) => void
   activeModelId?: string | null
   setActiveModelId?: (id: string | null) => void
-  activeMounts?: { id: string; label: string }[]
-  onAttachMount?: (id: string) => void
-  onRemoveMount?: (id: string) => void
   placeholder?: string
 }
 
@@ -170,24 +177,27 @@ export function ChatInput({
   isStreaming,
   connected,
   queuedCount = 0,
+  variant = 'chat',
   roles = [],
   activeRole = null,
   setActiveRole = () => {},
   activeModelId = null,
   setActiveModelId = () => {},
-  activeMounts = [],
-  onAttachMount = () => {},
-  onRemoveMount = () => {},
   placeholder,
 }: ChatInputProps) {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
-
+  // Copilot dialog boundary: hide persona / files / mentions / params / fan-out.
+  const isCopilot = variant === 'copilot'
   // State
   const [contextAttachments, setContextAttachments] = useState<ContextAttachment[]>([])
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const dragCounter = useRef(0)
+  // Mirror isCopilot so memoized file/drag handlers can early-return without
+  // re-creating their identity (they are passed as DOM props).
+  const isCopilotRef = useRef(false)
+  isCopilotRef.current = isCopilot
   const fileInputRef = useRef<HTMLInputElement>(null)
   const maxFileSize = 10 * 1024 * 1024
   const [showSlashMenu, setShowSlashMenu] = useState(false)
@@ -200,10 +210,9 @@ export function ChatInput({
   // Search hooks
   const knowledgeSearch = useKnowledgeSearch()
   const memorySearch = useBrainSearchMutation()
-  const { data: mountsData } = useMounts()
-  // RFC-044 Phase 3: persona capabilities drive composer affordances.
-  const { capabilities } = usePersonaCapabilities()
-
+  // Server-derived persona affordances (design §6.1) drive the composer's
+  // conditional controls.
+  const profile = useEffectiveProfile()
   // Mention search
   // searchMentions must stay referentially stable: it is a dependency of the
   // mention effect below. useMutation() returns a NEW result object every
@@ -211,17 +220,20 @@ export function ChatInput({
   // as useCallback deps recreated searchMentions every render, re-running the
   // effect every render. Its `setMentionResults([])` (a new array ref) then
   // never bailed, producing a setState→render loop (React #185). Mirror the
-  // latest inputs in a ref and read them inside a stable callback.
-  const searchInputsRef = useRef({ knowledgeSearch, memorySearch, mountsData, roles })
-  searchInputsRef.current = { knowledgeSearch, memorySearch, mountsData, roles }
+  // latest inputs — and the copilot variant flag — in a ref and read them
+  // inside a stable callback (copilot early-returns [] so the @ popover
+  // never opens).
+  const searchInputsRef = useRef({
+    knowledgeSearch,
+    memorySearch,
+    roles,
+    isCopilot: false,
+  })
+  searchInputsRef.current = { knowledgeSearch, memorySearch, roles, isCopilot }
 
   const searchMentions = useCallback(async (query: string): Promise<MentionResult[]> => {
-    const {
-      knowledgeSearch: k,
-      memorySearch: mem,
-      mountsData: mounts,
-      roles: roleList,
-    } = searchInputsRef.current
+    if (searchInputsRef.current.isCopilot) return []
+    const { knowledgeSearch: k, memorySearch: mem, roles: roleList } = searchInputsRef.current
     const results: MentionResult[] = []
     try {
       const kRes = await k.mutateAsync({ query, limit: 5 })
@@ -236,30 +248,32 @@ export function ChatInput({
       /* offline */
     }
     try {
-      const mRes = await mem.mutateAsync({ query, limit: 5 })
-      for (const hit of mRes.items ?? []) {
-        const id = hit.target?.id ?? ''
+      // Session brain binding: mention search runs against the RESOLVED
+      // binding (explicit picker choice, else project/global default;
+      // '' = unconnected turn) — same formula sendMessage uses to record
+      // the binding on the session. An inherited default displays the
+      // bound pill but `activeBrainSpace === null`; reading the raw value
+      // would silently no-op memory search on every default-bound turn.
+      const { activeBrainSpace, brainDefaults } = useChatStore.getState()
+      const space =
+        resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? ''
+      const mRes = space ? await mem.mutateAsync({ query, limit: 5, space }) : null
+      const memoryHits = mRes?.memory ?? []
+      for (const hit of memoryHits) {
         results.push({
           type: 'memory',
-          id,
-          label: id.slice(0, 12),
-          snippet: `${hit.target?.kind ?? 'memory'} · score ${hit.fused_score?.toFixed(3) ?? '—'}`,
-          score: hit.fused_score,
+          id: hit.entity_id,
+          label: hit.entity_surface,
+          snippet: hit.snippet
+            ? hit.snippet.slice(0, 80)
+            : `${hit.entity_type} · score ${hit.score.toFixed(2)}`,
+          score: hit.score,
         })
       }
     } catch {
       /* offline */
     }
     const mq = query.toLowerCase()
-    for (const m of mounts?.items ?? []) {
-      if (m.name.toLowerCase().includes(mq) || m.auto_description.toLowerCase().includes(mq))
-        results.push({
-          type: 'mount',
-          id: m.id,
-          label: m.name,
-          snippet: m.auto_description.slice(0, 80),
-        })
-    }
     for (const r of roleList) {
       if (r.name.toLowerCase().includes(mq))
         results.push({ type: 'role', id: r.model, label: r.name, snippet: r.model })
@@ -268,12 +282,10 @@ export function ChatInput({
       switch (t) {
         case 'role':
           return 0
-        case 'mount':
-          return 1
         case 'knowledge':
-          return 2
+          return 1
         default:
-          return 3
+          return 2
       }
     }
     results.sort((a, b) => kindRank(a.type) - kindRank(b.type) || (b.score ?? 0) - (a.score ?? 0))
@@ -409,8 +421,12 @@ export function ChatInput({
       } else {
         setShowSlashMenu(false)
       }
-      // @mentions
-      const mentionMatch = textBefore.match(/@(\S*)$/)
+      // @mentions — suppressed in the copilot variant: searchMentions
+      // early-returns [] there, and letting mentionQuery go non-null would
+      // render a stray "no results" popover and block Enter-to-send. The
+      // editor config is captured once at mount, so gate via the ref (same
+      // pattern as the file/drag handlers).
+      const mentionMatch = isCopilotRef.current ? null : textBefore.match(/@(\S*)$/)
       if (mentionMatch) {
         setMentionQuery(mentionMatch[1] || '')
       } else {
@@ -516,6 +532,7 @@ export function ChatInput({
   )
   const handleFilePick = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
+      if (isCopilotRef.current) return
       if (e.target.files) addFiles(e.target.files)
       // Reset so the same file can be re-selected
       e.target.value = ''
@@ -523,14 +540,25 @@ export function ChatInput({
     [addFiles],
   )
 
-  // Drag-drop
+  // Drag-drop — Copilot dialog drops nothing; just swallow the event so the
+  // browser does not navigate to the file URL.
   const handleDragEnter = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     dragCounter.current++
     if (e.dataTransfer?.types.includes('Files')) setIsDragOver(true)
   }, [])
   const handleDragLeave = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     dragCounter.current--
@@ -540,11 +568,21 @@ export function ChatInput({
     }
   }, [])
   const handleDragOver = useCallback((e: DragEvent) => {
+    if (isCopilotRef.current) {
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
   }, [])
   const handleDrop = useCallback(
     (e: DragEvent) => {
+      if (isCopilotRef.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
@@ -600,24 +638,8 @@ export function ChatInput({
         </div>
       )}
       {/* Context chips */}
-      {(activeMounts.length > 0 || contextAttachments.length > 0) && (
+      {contextAttachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2">
-          {activeMounts.map((m) => (
-            <span
-              key={`mount-${m.id}`}
-              className="inline-flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs text-primary"
-            >
-              <HardDrive className="h-3 w-3" />
-              <span className="truncate max-w-[140px]">{m.label}</span>
-              <button
-                type="button"
-                onClick={() => onRemoveMount(m.id)}
-                className="ml-0.5 -mr-1 rounded-full p-0.5 hover:bg-primary/20"
-              >
-                <X className="h-2.5 w-2.5" />
-              </button>
-            </span>
-          ))}
           {contextAttachments.map((ctx) => (
             <span
               key={`${ctx.type}-${ctx.id}`}
@@ -650,9 +672,7 @@ export function ChatInput({
                   key={`${result.type}-${result.id}`}
                   type="button"
                   onClick={() => {
-                    if (result.type === 'mount') {
-                      onAttachMount(result.id)
-                    } else if (result.type === 'role') {
+                    if (result.type === 'role') {
                       setActiveRole(result.label)
                     } else {
                       const ctx: ContextAttachment = {
@@ -677,9 +697,7 @@ export function ChatInput({
                       : 'hover:bg-accent/50',
                   )}
                 >
-                  {result.type === 'mount' ? (
-                    <HardDrive className="h-4 w-4 mt-0.5 shrink-0 text-status-success" />
-                  ) : result.type === 'knowledge' ? (
+                  {result.type === 'knowledge' ? (
                     <FileText className="h-4 w-4 mt-0.5 shrink-0 text-status-info" />
                   ) : result.type === 'role' ? (
                     <Sparkles className="h-4 w-4 mt-0.5 shrink-0 text-status-warning" />
@@ -693,13 +711,11 @@ export function ChatInput({
                     )}
                   </div>
                   <span className="text-2xs text-muted-foreground/60 shrink-0 mt-0.5">
-                    {result.type === 'mount'
-                      ? t('mention.mount')
-                      : result.type === 'knowledge'
-                        ? t('mention.knowledge')
-                        : result.type === 'role'
-                          ? t('mention.agent')
-                          : t('mention.memory')}
+                    {result.type === 'knowledge'
+                      ? t('mention.knowledge')
+                      : result.type === 'role'
+                        ? t('mention.agent')
+                        : t('mention.memory')}
                   </span>
                 </button>
               ))
@@ -787,29 +803,35 @@ export function ChatInput({
             <ModelPickerContainer
               activeModelId={activeModelId}
               setActiveModelId={setActiveModelId}
-              roles={roles}
-              activeRole={activeRole}
+              roles={isCopilot ? [] : roles}
+              activeRole={isCopilot ? null : activeRole}
               setActiveRole={setActiveRole}
             />
+            {!isCopilot && <PersonaPickerContainer />}
+            {!isCopilot && <BrainPickerContainer />}
             <ApprovalModeSelector />
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={handleFilePick}
-              className="hidden"
-              aria-label={t('chat.attachFiles')}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              title={t('chat.attachFiles')}
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
-            <ModelParamsPopover />
-            {capabilities.has('worktree-fanout') && <FanOutButton />}
+            {!isCopilot && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleFilePick}
+                  className="hidden"
+                  aria-label={t('chat.attachFiles')}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={t('chat.attachFiles')}
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+            {!isCopilot && <ModelParamsPopover />}
+            {!isCopilot && has(profile, 'worktree-fanout') && <FanOutButton />}
           </div>
           {/* Right: queue + send */}
           <div className="flex items-center shrink-0 gap-1.5">

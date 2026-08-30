@@ -1,4 +1,4 @@
-import { Pencil, Power, PowerOff, Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -14,7 +14,6 @@ import {
   type TimeRange,
 } from '@/lib/cron-timeline'
 import { cn } from '@/lib/utils'
-import type { CronJob } from '@/types'
 
 interface HoveredMarker {
   rect: DOMRect
@@ -23,24 +22,33 @@ interface HoveredMarker {
   isPrimary: boolean
 }
 
+/** Minimal structural shape the timeline renders — cron jobs and scheduled
+ * tasks both satisfy it. */
+export interface TimelineEntry {
+  id: string
+  name: string
+  schedule: string
+  next_run?: string
+  /** Optional — tasks map `status !== 'canceled'` semantics onto it. */
+  enabled?: boolean
+}
+
 /**
- * Gantt-style timeline view for cron jobs.
+ * Gantt-style timeline view for scheduled work (tasks with a cron schedule).
  *
- * Shows each job as a row with fire-time markers projected across a
- * selectable time window (24h / 48h / 7d). The `next_run` from the
- * backend is always shown as a highlighted primary marker; additional
- * projected fire times visualize the schedule pattern.
+ * Shows each entry as a row with fire-time markers projected across a
+ * selectable time window (24h / 48h / 7d). The authoritative `next_run`
+ * from the backend is always shown as a highlighted primary marker;
+ * additional projected fire times visualize the schedule pattern.
  */
 export function CronTimelineView({
   jobs,
   onEdit,
-  onToggle,
   onDelete,
 }: {
-  jobs: CronJob[]
-  onEdit?: (job: CronJob) => void
-  onToggle?: (job: CronJob) => void
-  onDelete?: (job: CronJob) => void
+  jobs: TimelineEntry[]
+  onEdit?: (job: TimelineEntry) => void
+  onDelete?: (job: TimelineEntry) => void
 }) {
   const { t } = useTranslation()
   const [range, setRange] = useState<TimeRange>('24h')
@@ -137,7 +145,7 @@ export function CronTimelineView({
                     <span
                       className={cn(
                         'truncate text-sm font-medium',
-                        !job.enabled && 'text-muted-foreground',
+                        job.enabled === false && 'text-muted-foreground',
                       )}
                     >
                       {job.name}
@@ -145,7 +153,7 @@ export function CronTimelineView({
                   </div>
                   <div className="mt-0.5 flex items-center gap-1">
                     <code className="rounded bg-muted px-1 py-0.5 text-[10px]">{job.schedule}</code>
-                    {!job.enabled && (
+                    {job.enabled === false && (
                       <Badge variant="secondary" className="h-4 px-1 text-[9px]">
                         {t('cronJobs.timeline.disabled')}
                       </Badge>
@@ -156,7 +164,7 @@ export function CronTimelineView({
                       </span>
                     )}
                   </div>
-                  {(onEdit || onToggle || onDelete) && (
+                  {(onEdit || onDelete) && (
                     <div className="mt-1 flex gap-0.5">
                       {onEdit && (
                         <button
@@ -166,22 +174,6 @@ export function CronTimelineView({
                           className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <Pencil className="h-3 w-3" />
-                        </button>
-                      )}
-                      {onToggle && (
-                        <button
-                          type="button"
-                          onClick={() => onToggle(job)}
-                          aria-label={
-                            job.enabled ? t('cronJobs.disableJob') : t('cronJobs.enableJob')
-                          }
-                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        >
-                          {job.enabled ? (
-                            <PowerOff className="h-3 w-3" />
-                          ) : (
-                            <Power className="h-3 w-3" />
-                          )}
                         </button>
                       )}
                       {onDelete && (
@@ -235,7 +227,7 @@ export function CronTimelineView({
                             height: ft.isPrimary ? 22 : 14,
                             marginLeft: ft.isPrimary ? -3 : -1.5,
                             backgroundColor: color,
-                            opacity: job.enabled ? 1 : 0.3,
+                            opacity: job.enabled === false ? 0.3 : 1,
                             zIndex: ft.isPrimary ? 5 : 1,
                             outline: ft.isPrimary
                               ? `2px solid color-mix(in oklch, ${color} 30%, transparent)`
@@ -251,7 +243,6 @@ export function CronTimelineView({
                             })
                           }
                           onMouseLeave={() => setHovered(null)}
-                          tabIndex={ft.isPrimary ? 0 : undefined}
                           role={ft.isPrimary ? 'img' : undefined}
                           aria-hidden={ft.isPrimary ? undefined : true}
                           aria-label={

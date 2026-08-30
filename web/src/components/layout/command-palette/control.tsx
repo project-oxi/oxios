@@ -37,10 +37,10 @@ export function useControlProvider(): CommandProvider {
     refetchInterval: 10_000,
   })
   const cronQ = useQuery({
-    queryKey: ['cron-jobs'],
+    queryKey: ['tasks'],
     queryFn: async (): Promise<CronJob[]> => {
-      const res = await api.get<{ jobs: CronJob[] }>('/api/cron-jobs')
-      return Array.isArray(res?.jobs) ? res.jobs : []
+      const res = await api.get<{ tasks: CronJob[] }>('/api/tasks')
+      return Array.isArray(res?.tasks) ? res.tasks : []
     },
     refetchInterval: 30_000,
   })
@@ -59,9 +59,9 @@ export function useControlProvider(): CommandProvider {
     onError: () => toast.error(t('commandPalette.controlFailed')),
   })
   const triggerMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/cron-jobs/${id}/trigger`),
+    mutationFn: (id: string) => api.post(`/api/tasks/${id}/run`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cron-jobs'] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
       toast.success(t('commandPalette.triggeredCron'))
     },
     onError: () => toast.error(t('commandPalette.controlFailed')),

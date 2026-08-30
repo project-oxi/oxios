@@ -517,12 +517,15 @@ impl Surface for WebSurface {
         // the OS supervisor restarts; the non-panic Err path is what the
         // supervisor intercepts here.
         let handle = tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    shutdown.cancelled().await;
-                    tracing::info!("Web server shutting down (graceful)");
-                })
-                .await
+            if let Err(e) = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                shutdown.cancelled().await;
+                tracing::info!("Web server shutting down (graceful)");
+            })
+            .await
             {
                 tracing::error!(error = %e, "Web server error");
             }

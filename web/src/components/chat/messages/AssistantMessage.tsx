@@ -1,16 +1,3 @@
-import { useEffect, useState } from 'react'
-import { ReactionsBar } from './components/reactions-bar'
-
-function MessageReactionsRow({ messageId }: { messageId: string }) {
-  const [version, setVersion] = useState(0)
-  useEffect(() => {
-    const onChange = () => setVersion((v) => v + 1)
-    window.addEventListener('reactions-changed', onChange)
-    return () => window.removeEventListener('reactions-changed', onChange)
-  }, [])
-  return <ReactionsBar messageId={messageId} version={version} />
-}
-
 // messages/AssistantMessage — pipeline renderer for assistant role.
 //
 // LobeHub analogue: src/features/Conversation/Messages/Assistant/ +
@@ -110,7 +97,6 @@ function AssistantMessageImpl({
             onSelect={(s) => sendMessage(s)}
           />
         )}
-        {!message.generating && <MessageReactionsRow messageId={message.id} />}
       </div>
     </ChatItem>
   )

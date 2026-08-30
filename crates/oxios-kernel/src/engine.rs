@@ -251,9 +251,7 @@ impl OxiosEngine {
     /// left empty — wire it later if oxios wants to auto-discover local
     /// models.
     pub fn catalog_config() -> CatalogConfig {
-        let home = dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".oxios");
+        let home = crate::oxi_home::oxios_home();
         CatalogConfig {
             cache_path: home.join("cache/models-dev.json"),
             etag_path: home.join("cache/models-dev.json.etag"),

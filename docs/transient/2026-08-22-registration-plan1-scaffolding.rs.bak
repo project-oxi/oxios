@@ -1,0 +1,556 @@
+
+    /// Lightweight `KernelHandle` construction mirroring
+    /// `tools::kernel_bridge::tests::test_tool_names_length`.
+    /// Only the fields the registration code touches need real values; the
+    /// rest are inert defaults — the test never invokes any tool.
+    fn make_test_kernel(base: &std::path::Path) -> Arc<KernelHandle> {
+        let state_store = Arc::new(
+            crate::state_store::StateStore::new(base.join("workspace")).unwrap(),
+        );
+        Arc::new(crate::KernelHandle::new(
+            crate::StateApi::new(state_store.clone()),
+            crate::AgentApi::new(
+                Arc::new(crate::supervisor::NoOpSupervisor),
+                Arc::new(crate::budget::BudgetManager::new()),
+            ),
+            crate::SecurityApi::new(
+                Arc::new(parking_lot::Mutex::new(crate::auth::AuthManager::new())),
+                Arc::new(oxicode_sdk::observability::AuditTrail::new(100)),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+                state_store.clone(),
+            ),
+            crate::PersonaApi::new(Arc::new(crate::persona::PersonaManager::new())),
+            crate::ExtensionApi::new(Arc::new(crate::skill::SkillManager::new(
+                base.join("skills"),
+                base.join("share/skills"),
+            ))),
+            crate::McpApi::new(Arc::new(crate::mcp::McpBridge::new())),
+            crate::InfraApi::new(
+                Arc::new(crate::git_layer::GitLayer::new(base.join("git"), false).unwrap()),
+                Arc::new(crate::cron::CronScheduler::new(state_store.clone(), 60)),
+                Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 60)),
+                crate::event_bus::EventBus::new(256),
+                crate::OxiosConfig::default(),
+                std::time::Instant::now(),
+                Arc::new(crate::tools::PendingToolApprovals::new()),
+                Arc::new(crate::tools::PendingAskUser::new()),
+                Arc::new(parking_lot::RwLock::new(crate::approval::ApprovalConfig::default())),
+                Arc::new(crate::tools::PendingPathAccess::new()),
+            ),
+            None,
+            crate::ExecApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::config::ExecConfig::default())),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+            ),
+            crate::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
+                crate::event_bus::EventBus::new(256),
+            ))),
+            crate::EngineApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::OxiosConfig::default())),
+                base.join("config.toml"),
+                Arc::new(crate::kernel_handle::RoutingStats::new()),
+                Arc::new(crate::engine::EngineHandle::new(Arc::new(
+                    crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
+                ))),
+            ),
+            Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
+            Arc::new(
+                crate::kernel_handle::KnowledgeLens::new(
+                    Arc::new(
+                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
+                    ),
+                    None,
+                )
+                .unwrap(),
+            ),
+            crate::MarketplaceApi::new(
+                Arc::new(crate::skill::clawhub::ClawHubInstaller::new(
+                    base.join("skills"),
+                    base.join("workspace"),
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::clawhub::ClawHubClient::new(None)
+                        .expect("valid ClawHub client"),
+                ),
+                Arc::new(crate::skill::skills_sh::SkillsShInstaller::new(
+                    base.join("skills"),
+                    None,
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::skills_sh::SkillsShClient::new(None, None)
+                        .expect("valid Skills.sh client"),
+                ),
+            ),
+            None,                                     // calendar
+            Arc::new(parking_lot::RwLock::new(None)), // email
+        ))
+    }
+
+    /// Build the same worker bounding CSpace the resolver tests use.
+    fn worker_bounding(agent_id: crate::types::AgentId) -> crate::capability::CSpace {
+        use crate::capability::{Capability, ResourceRef, Rights};
+        let mut c = crate::capability::CSpace::new(agent_id);
+        c.insert(Capability::kernel(
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::WebSearch, Rights::EXECUTE));
+        c.insert(Capability::kernel(
+            ResourceRef::Exec {
+                mode: "shell".into(),
+            },
+            Rights::EXECUTE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::Browser, Rights::EXECUTE));
+        c
+    }
+
+    /// Lightweight access gate — same shape `register_always_on_gated`
+    /// tests construct via `make_gate_for_test`.
+    fn make_test_gate() -> Arc<AccessGate> {
+        use crate::access_manager::{
+            AccessManager, AgentPermissions, NoOpAuditSink, Role, Subject,
+        };
+        use crate::config::ExecConfig;
+        use parking_lot::Mutex;
+        let mut access = AccessManager::new();
+        let perms = AgentPermissions::for_new_agent("test-agent");
+        access.set_permissions(perms);
+        access
+            .rbac_manager_mut()
+            .assign_role(Subject::Agent(uuid::Uuid::new_v4()), Role::Superuser);
+        Arc::new(AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig::default()),
+            Arc::new(NoOpAuditSink),
+        ))
+    }
+
+    #[test]
+    fn register_from_resolved_worker_profile_registers_nine_tools() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kernel = make_test_kernel(tmp.path());
+        let agent = AgentId::new_v4();
+        let bounding = worker_bounding(agent);
+        let resolved = crate::capability::resolver::resolve(
+            crate::capability::builtin_profiles::builtin_profile("worker")
+                .expect("worker preset"),
+            &bounding,
+            agent,
+            None,
+        );
+
+        let registry = ToolRegistry::new();
+        let cache = Arc::new(SearchCache::new());
+        let gate = make_test_gate();
+        let context = AgentContext::test_fixture_with_cspace("worker-test", bounding.clone());
+
+        register_from_resolved_profile(
+            &registry,
+            &kernel,
+            &resolved,
+            cache,
+            agent,
+            gate,
+            context,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let names = registry.names();
+        for expected in [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "web_search",
+            "get_search_results",
+            "exec",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "worker missing {expected}: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"memory_read".to_string()),
+            "worker must NOT include memory_read: {names:?}"
+        );
+    }
+
+    /// Lightweight `KernelHandle` construction mirroring
+    /// `tools::kernel_bridge::tests::test_tool_names_length`.
+    /// Only the fields the registration code touches need real values; the
+    /// rest are inert defaults — the test never invokes any tool.
+    fn make_test_kernel(base: &std::path::Path) -> Arc<KernelHandle> {
+        let state_store = Arc::new(
+            crate::state_store::StateStore::new(base.join("workspace")).unwrap(),
+        );
+        Arc::new(crate::KernelHandle::new(
+            crate::StateApi::new(state_store.clone()),
+            crate::AgentApi::new(
+                Arc::new(crate::supervisor::NoOpSupervisor),
+                Arc::new(crate::budget::BudgetManager::new()),
+            ),
+            crate::SecurityApi::new(
+                Arc::new(parking_lot::Mutex::new(crate::auth::AuthManager::new())),
+                Arc::new(oxicode_sdk::observability::AuditTrail::new(100)),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+                state_store.clone(),
+            ),
+            crate::PersonaApi::new(Arc::new(crate::persona::PersonaManager::new())),
+            crate::ExtensionApi::new(Arc::new(crate::skill::SkillManager::new(
+                base.join("skills"),
+                base.join("share/skills"),
+            ))),
+            crate::McpApi::new(Arc::new(crate::mcp::McpBridge::new())),
+            crate::InfraApi::new(
+                Arc::new(crate::git_layer::GitLayer::new(base.join("git"), false).unwrap()),
+                Arc::new(crate::cron::CronScheduler::new(state_store.clone(), 60)),
+                Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 60)),
+                crate::event_bus::EventBus::new(256),
+                crate::OxiosConfig::default(),
+                std::time::Instant::now(),
+                Arc::new(crate::tools::PendingToolApprovals::new()),
+                Arc::new(crate::tools::PendingAskUser::new()),
+                Arc::new(parking_lot::RwLock::new(crate::approval::ApprovalConfig::default())),
+                Arc::new(crate::tools::PendingPathAccess::new()),
+            ),
+            None,
+            crate::ExecApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::config::ExecConfig::default())),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+            ),
+            crate::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
+                crate::event_bus::EventBus::new(256),
+            ))),
+            crate::EngineApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::OxiosConfig::default())),
+                base.join("config.toml"),
+                Arc::new(crate::kernel_handle::RoutingStats::new()),
+                Arc::new(crate::engine::EngineHandle::new(Arc::new(
+                    crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
+                ))),
+            ),
+            Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
+            Arc::new(
+                crate::kernel_handle::KnowledgeLens::new(
+                    Arc::new(
+                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
+                    ),
+                    None,
+                )
+                .unwrap(),
+            ),
+            crate::MarketplaceApi::new(
+                Arc::new(crate::skill::clawhub::ClawHubInstaller::new(
+                    base.join("skills"),
+                    base.join("workspace"),
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::clawhub::ClawHubClient::new(None)
+                        .expect("valid ClawHub client"),
+                ),
+                Arc::new(crate::skill::skills_sh::SkillsShInstaller::new(
+                    base.join("skills"),
+                    None,
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::skills_sh::SkillsShClient::new(None, None)
+                        .expect("valid Skills.sh client"),
+                ),
+            ),
+            None,                                     // calendar
+            Arc::new(parking_lot::RwLock::new(None)), // email
+        ))
+    }
+
+    /// Build the same worker bounding CSpace the resolver tests use.
+    fn worker_bounding(agent_id: crate::types::AgentId) -> crate::capability::CSpace {
+        use crate::capability::{Capability, ResourceRef, Rights};
+        let mut c = crate::capability::CSpace::new(agent_id);
+        c.insert(Capability::kernel(
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::WebSearch, Rights::EXECUTE));
+        c.insert(Capability::kernel(
+            ResourceRef::Exec {
+                mode: "shell".into(),
+            },
+            Rights::EXECUTE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::Browser, Rights::EXECUTE));
+        c
+    }
+
+    /// Lightweight access gate — same shape `register_always_on_gated`
+    /// tests construct via `make_gate_for_test`.
+    fn make_test_gate() -> Arc<AccessGate> {
+        use crate::access_manager::{
+            AccessManager, AgentPermissions, NoOpAuditSink, Role, Subject,
+        };
+        use crate::config::ExecConfig;
+        use parking_lot::Mutex;
+        let mut access = AccessManager::new();
+        let perms = AgentPermissions::for_new_agent("test-agent");
+        access.set_permissions(perms);
+        access
+            .rbac_manager_mut()
+            .assign_role(Subject::Agent(uuid::Uuid::new_v4()), Role::Superuser);
+        Arc::new(AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig::default()),
+            Arc::new(NoOpAuditSink),
+        ))
+    }
+
+    #[test]
+    fn register_from_resolved_worker_profile_registers_nine_tools() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kernel = make_test_kernel(tmp.path());
+        let agent = AgentId::new_v4();
+        let bounding = worker_bounding(agent);
+        let resolved = crate::capability::resolver::resolve(
+            crate::capability::builtin_profiles::builtin_profile("worker")
+                .expect("worker preset"),
+            &bounding,
+            agent,
+            None,
+        );
+
+        let registry = ToolRegistry::new();
+        let cache = Arc::new(SearchCache::new());
+        let gate = make_test_gate();
+        let context = AgentContext::test_fixture_with_cspace("worker-test", bounding.clone());
+
+        register_from_resolved_profile(
+            &registry,
+            &kernel,
+            &resolved,
+            cache,
+            agent,
+            gate,
+            context,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let names = registry.names();
+        for expected in [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "web_search",
+            "get_search_results",
+            "exec",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "worker missing {expected}: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"memory_read".to_string()),
+            "worker must NOT include memory_read: {names:?}"
+        );
+    }
+
+    /// Lightweight `KernelHandle` construction mirroring
+    /// `tools::kernel_bridge::tests::test_tool_names_length`.
+    /// Only the fields the registration code touches need real values; the
+    /// rest are inert defaults — the test never invokes any tool.
+    fn make_test_kernel(base: &std::path::Path) -> Arc<KernelHandle> {
+        let state_store = Arc::new(
+            crate::state_store::StateStore::new(base.join("workspace")).unwrap(),
+        );
+        Arc::new(crate::KernelHandle::new(
+            crate::StateApi::new(state_store.clone()),
+            crate::AgentApi::new(
+                Arc::new(crate::supervisor::NoOpSupervisor),
+                Arc::new(crate::budget::BudgetManager::new()),
+            ),
+            crate::SecurityApi::new(
+                Arc::new(parking_lot::Mutex::new(crate::auth::AuthManager::new())),
+                Arc::new(oxicode_sdk::observability::AuditTrail::new(100)),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+                state_store.clone(),
+            ),
+            crate::PersonaApi::new(Arc::new(crate::persona::PersonaManager::new())),
+            crate::ExtensionApi::new(Arc::new(crate::skill::SkillManager::new(
+                base.join("skills"),
+                base.join("share/skills"),
+            ))),
+            crate::McpApi::new(Arc::new(crate::mcp::McpBridge::new())),
+            crate::InfraApi::new(
+                Arc::new(crate::git_layer::GitLayer::new(base.join("git"), false).unwrap()),
+                Arc::new(crate::cron::CronScheduler::new(state_store.clone(), 60)),
+                Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 60)),
+                crate::event_bus::EventBus::new(256),
+                crate::OxiosConfig::default(),
+                std::time::Instant::now(),
+                Arc::new(crate::tools::PendingToolApprovals::new()),
+                Arc::new(crate::tools::PendingAskUser::new()),
+                Arc::new(parking_lot::RwLock::new(crate::approval::ApprovalConfig::default())),
+                Arc::new(crate::tools::PendingPathAccess::new()),
+            ),
+            None,
+            crate::ExecApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::config::ExecConfig::default())),
+                Arc::new(parking_lot::Mutex::new(crate::access_manager::AccessManager::new())),
+            ),
+            crate::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
+                crate::event_bus::EventBus::new(256),
+            ))),
+            crate::EngineApi::new(
+                Arc::new(parking_lot::RwLock::new(crate::OxiosConfig::default())),
+                base.join("config.toml"),
+                Arc::new(crate::kernel_handle::RoutingStats::new()),
+                Arc::new(crate::engine::EngineHandle::new(Arc::new(
+                    crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
+                ))),
+            ),
+            Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
+            Arc::new(
+                crate::kernel_handle::KnowledgeLens::new(
+                    Arc::new(
+                        oxios_markdown::KnowledgeBase::new(base.join("knowledge_lens")).unwrap(),
+                    ),
+                    None,
+                )
+                .unwrap(),
+            ),
+            crate::MarketplaceApi::new(
+                Arc::new(crate::skill::clawhub::ClawHubInstaller::new(
+                    base.join("skills"),
+                    base.join("workspace"),
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::clawhub::ClawHubClient::new(None)
+                        .expect("valid ClawHub client"),
+                ),
+                Arc::new(crate::skill::skills_sh::SkillsShInstaller::new(
+                    base.join("skills"),
+                    None,
+                    None,
+                )),
+                Arc::new(
+                    crate::skill::skills_sh::SkillsShClient::new(None, None)
+                        .expect("valid Skills.sh client"),
+                ),
+            ),
+            None,                                     // calendar
+            Arc::new(parking_lot::RwLock::new(None)), // email
+        ))
+    }
+
+    /// Build the same worker bounding CSpace the resolver tests use.
+    fn worker_bounding(agent_id: crate::types::AgentId) -> crate::capability::CSpace {
+        use crate::capability::{Capability, ResourceRef, Rights};
+        let mut c = crate::capability::CSpace::new(agent_id);
+        c.insert(Capability::kernel(
+            ResourceRef::Fs,
+            Rights::READ | Rights::WRITE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::WebSearch, Rights::EXECUTE));
+        c.insert(Capability::kernel(
+            ResourceRef::Exec {
+                mode: "shell".into(),
+            },
+            Rights::EXECUTE,
+        ));
+        c.insert(Capability::kernel(ResourceRef::Browser, Rights::EXECUTE));
+        c
+    }
+
+    /// Lightweight access gate — same shape `register_always_on_gated`
+    /// tests construct via `make_gate_for_test`.
+    fn make_test_gate() -> Arc<AccessGate> {
+        use crate::access_manager::{
+            AccessManager, AgentPermissions, NoOpAuditSink, Role, Subject,
+        };
+        use crate::config::ExecConfig;
+        use parking_lot::Mutex;
+        let mut access = AccessManager::new();
+        let perms = AgentPermissions::for_new_agent("test-agent");
+        access.set_permissions(perms);
+        access
+            .rbac_manager_mut()
+            .assign_role(Subject::Agent(uuid::Uuid::new_v4()), Role::Superuser);
+        Arc::new(AccessGate::new(
+            Arc::new(Mutex::new(access)),
+            Arc::new(ExecConfig::default()),
+            Arc::new(NoOpAuditSink),
+        ))
+    }
+
+    #[test]
+    fn register_from_resolved_worker_profile_registers_nine_tools() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kernel = make_test_kernel(tmp.path());
+        let agent = AgentId::new_v4();
+        let bounding = worker_bounding(agent);
+        let resolved = crate::capability::resolver::resolve(
+            crate::capability::builtin_profiles::builtin_profile("worker")
+                .expect("worker preset"),
+            &bounding,
+            agent,
+            None,
+        );
+
+        let registry = ToolRegistry::new();
+        let cache = Arc::new(SearchCache::new());
+        let gate = make_test_gate();
+        let context = AgentContext::test_fixture_with_cspace("worker-test", bounding.clone());
+
+        register_from_resolved_profile(
+            &registry,
+            &kernel,
+            &resolved,
+            cache,
+            agent,
+            gate,
+            context,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let names = registry.names();
+        for expected in [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "web_search",
+            "get_search_results",
+            "exec",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "worker missing {expected}: {names:?}"
+            );
+        }
+        assert!(
+            !names.contains(&"memory_read".to_string()),
+            "worker must NOT include memory_read: {names:?}"
+        );
+    }
+}

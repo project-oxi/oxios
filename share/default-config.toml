@@ -28,6 +28,12 @@
 [kernel]
 # Path to the workspace directory.
 # workspace = "~/.oxios/workspace"
+# Explicit override for the markdown knowledge base root.
+# Resolution order (see KernelConfig::resolved_knowledge_root):
+#   1. this key (after `~/` expansion)
+#   2. `~/.oxi/config.toml [vault].path` (ecosystem-canonical; shared with oximemo)
+#   3. fallback `~/.oxi/vault`
+# knowledge_root = "~/vault"
 event_bus_capacity = 256
 max_agents = 10
 
@@ -215,30 +221,17 @@ ttl_hours = 168
 # Enable automatic pruning on every session save.
 auto_prune = true
 
-# ── Mounts (RFC-025) ───────────────────────────────────────────────────────
-# Auto-promote frequently-used paths into Mounts. A background scanner counts
-# how often each path appears in session trajectories (tool calls) and user
-# messages; paths that cross the threshold within the window become Mounts.
-
-[mounts]
-auto_promote_enabled = true
-# Minimum distinct touches within the window to trigger promotion.
-auto_promote_threshold = 3
-# How far back to look, in days.
-auto_promote_window_days = 14
-# Seconds between promotion scans (background cadence).
-auto_promote_interval_secs = 3600
-
-# ── Brain daemon (RFC-047) ────────────────────────────────────────────────
-# oxios delegates all agent memory to the standalone oxibrain daemon over a
-# Unix-domain socket. When the daemon is unreachable, memory operations
+# ── Brain (oxibrain 0.8 daemonless) ────────────────────────────────────────
+# oxios spawns a caller-owned `oxibrain serve --stdio` child against an
+# explicit data directory. When the binary is missing, memory operations
 # degrade gracefully (return empty) and agent turns complete normally.
 [brain]
 enabled = true
-auto_manage = true
-# socket_path = ""  # Empty = ~/.oxi/brain/oxibrain.sock
-# binary_path = ""  # Explicit daemon binary; non-empty skips auto-install
-space = "personal"
+auto_install = true
+# dir = ""          # Empty = ~/.oxi/brain ($OXI_BRAIN_DIR honored)
+# binary_path = ""  # Explicit binary; non-empty skips auto-install
+# Default brain space offered to new chats without a project binding.
+# default_space = ""   # Empty = chats start unconnected
 # Uncomment to customize settings; when the section is omitted, defaults below apply.
 # Events are stored as .ics files in ~/.oxios/workspace/calendar/events/
 # [calendar]
@@ -249,6 +242,20 @@ space = "personal"
 # journal_sync = "on_open"
 # system_calendar = true
 # archive_after_days = 365
+
+# Web search provider for the `web_search` tool ([search]).
+# provider = "scrape"  → zero-config multi-engine scraping (DuckDuckGo /
+#                        Wikipedia / Bing). Best-effort quality.
+# provider = "tavily"  → Tavily Search API (LLM-oriented, structured results).
+# provider = "brave"   → Brave Search API (independent index, region control).
+# When a managed provider is configured but the call fails (bad key, network,
+# quota), the tool automatically falls back to the scraping engines.
+# [search]
+# provider = "scrape"
+# tavily_api_key = ""
+# brave_api_key = ""
+# timeout_secs = 15
+# region = "kr-KR"     # Brave country/search_lang hint (e.g. "kr-KR", "en-US")
 
 # Agent history log (enabled by default).
 # Controls how past agent executions are retained for transparent observation.

@@ -2,7 +2,7 @@
 //
 // Oxios WS chunks (StreamChunk) are converted to ChatEvents by adapter.ts.
 // Only "content streaming" chunks become ChatEvents; Oxios-semantic chunks
-// (model, memory, interview_question, tool_approval, mount_detected) are
+// (model, memory, interview_question, tool_approval) are
 // passed through as raw StreamChunk for the store's existing reducer arms.
 //
 // Phase 1 of LobeHub port (2026-07-21). See

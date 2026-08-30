@@ -5,14 +5,14 @@ import { InfoPanel } from '@/components/knowledge/info-panel'
 import { MoveModal } from '@/components/knowledge/move-modal'
 import { SearchModal } from '@/components/knowledge/search-modal'
 import { CommandPalette } from '@/components/layout/command-palette'
-import { QuickAskDialog } from '@/components/quick-ask/quick-ask-dialog'
+import { OxiosCopilotDialog } from '@/components/oxios-copilot/oxios-copilot-dialog'
 import {
   useApprovalWatcher,
   useGlobalEvents,
   useReconnectOnVisible,
 } from '@/hooks/use-global-events'
 import { useKnowledgeShortcuts } from '@/hooks/use-knowledge-shortcuts'
-import { useQuickAskShortcut } from '@/hooks/use-quick-ask-shortcut'
+import { useOxiosCopilotShortcut } from '@/hooks/use-oxios-copilot-shortcut'
 import { useTabShortcuts } from '@/hooks/use-tab-shortcuts'
 import { cn } from '@/lib/utils'
 import { useEventStore } from '@/stores/events'
@@ -44,7 +44,7 @@ export function AppLayout() {
   useKnowledgeShortcuts()
   useGlobalEvents()
   useApprovalWatcher()
-  useQuickAskShortcut()
+  useOxiosCopilotShortcut()
   useTabShortcuts()
   useReconnectOnVisible()
 
@@ -133,7 +133,7 @@ export function AppLayout() {
       {/* Global Notification Center slide-over (schedule + notifications) */}
       <NotificationCenter />
       <CommandPalette />
-      <QuickAskDialog />
+      <OxiosCopilotDialog />
     </div>
   )
 }

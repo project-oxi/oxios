@@ -425,12 +425,12 @@ pub struct MetricsHandles {
     /// `ReadinessGate` when a subsystem changes state.
     pub readiness_state: GaugeHandle,
 
-    /// Brain daemon reachable (1/0, RFC-047). Set from boot after the
-    /// initial `BrainConnection::connect`.
+    /// Brain session child spawned and last call OK (1/0, RFC-047). Set on
+    /// spawn success and cleared on call failure.
     pub oxibrain_available: GaugeHandle,
 
     /// Brain recall operations (RFC-047). Incremented on each successful
-    /// `BrainConnection::recall`.
+    /// `BrainSession::recall`.
     pub oxibrain_recall_total: CounterHandle,
 }
 

@@ -2,41 +2,36 @@
 //!
 //! The first-run path is:
 //!   1. Ensure `~/.oxi/foundation/v1` exists.
-//!   2. Verify or install a compatible `oxibrain` daemon.
-//!   3. Handshake with the daemon and classify it as
-//!      [`DaemonState::Compatible`] / [`DaemonState::Unavailable`] /
-//!      [`DaemonState::Incompatible`].
+//!   2. Locate an `oxibrain` binary (installing on demand when the caller
+//!      allows it).
+//!   3. Run a one-shot `oxibrain --dir <dir> describe` probe and classify
+//!      the data plane as [`DaemonState::Compatible`] or
+//!      [`DaemonState::Unavailable`].
 //!   4. Report the result. Never write the lockfile from a turn — the lock
 //!      file is owned by Foundation imports, not by agent execution.
 
 use anyhow::{Context, Result};
-use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
 
-use super::{DaemonState, default_brain_socket, versioned_root};
+use super::{DaemonState, default_brain_dir, versioned_root};
+use crate::brain::BrainInstaller;
 
-/// Optional hook invoked once when the first connect attempt fails, before
-/// the retry. Lets the bootstrap step delegate to a host-specific daemon
-/// starter (e.g. the `BrainSupervisor`) without coupling the Foundation
-/// module to the kernel's install machinery.
-pub type Starter = Arc<dyn Fn(&Path) -> BoxFuture<'static, ()> + Send + Sync>;
+/// Upper bound on one probe process (`describe` is a read-only store open).
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Minimum protocol version accepted from the oxibrain daemon.
-pub const MIN_BRAIN_PROTOCOL_VERSION: u32 = 1;
-/// Maximum protocol version accepted from the oxibrain daemon.
-pub const MAX_BRAIN_PROTOCOL_VERSION: u32 = 2;
-
-/// Brain handshake result. Carries the daemon's reported protocol version
-/// so a future bump can give actionable diagnostics.
+/// Brain probe result. `protocol_version` is the envelope `api` field —
+/// the contract version the binary speaks (spec `agent-first-cli-v1` §3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrainHandshake {
+pub struct BrainProbe {
     pub state: DaemonState,
-    pub socket_path: PathBuf,
+    /// Brain data directory the probe ran against.
+    pub dir: PathBuf,
+    /// Envelope protocol version; `None` when no envelope came back.
     pub protocol_version: Option<u32>,
-    pub daemon_build: Option<String>,
 }
 
 /// Foundation bootstrap report. Returned from [`bootstrap`] so CLI
@@ -45,38 +40,37 @@ pub struct BrainHandshake {
 pub struct BootstrapReport {
     pub foundation_dir: PathBuf,
     pub profiles_loaded: usize,
-    pub brain: BrainHandshake,
+    pub brain: BrainProbe,
     /// `true` when the bootstrap was a no-op because everything was
     /// already in place. Lets the CLI distinguish a fresh install from a
     /// routine re-run.
     pub idempotent: bool,
 }
 
-/// Configuration for a single bootstrap run. The `socket_path` mirrors
-/// `BrainSection::socket_path`; when empty, the Foundation default is used.
+/// Configuration for a single bootstrap run. The `brain_dir` mirrors
+/// `FoundationConfig.brain_dir`; when empty, the Foundation default is used.
 #[derive(Clone)]
 pub struct BootstrapConfig {
     pub home: PathBuf,
-    pub socket_path: Option<PathBuf>,
-    /// When `true`, the bootstrap step is allowed to (idempotently) start
-    /// a missing compatible daemon. `false` (default) reports
-    /// `Unavailable` and lets the user run `foundation bootstrap`
-    /// explicitly.
-    pub may_start_daemon: bool,
-    /// Optional hook invoked exactly once when the first connect attempt
-    /// fails, before the retry. Hosts that want a self-managed daemon
-    /// wire this to their supervisor. `None` (default) leaves the
-    /// handshake in its two-attempt read-only shape.
-    pub starter: Option<Starter>,
+    pub brain_dir: Option<PathBuf>,
+    /// When `true`, the bootstrap step is allowed to (idempotently) install
+    /// a missing compatible binary through the supplied `installer`.
+    /// `false` (default) reports `Unavailable` and lets the user run
+    /// `oxios brain install` explicitly.
+    pub may_install: bool,
+    /// Installer consulted to resolve — and, when `may_install` is set,
+    /// fetch — the `oxibrain` binary. `None` (default) probes only the
+    /// managed `~/.oxi/bin/oxibrain` location.
+    pub installer: Option<Arc<BrainInstaller>>,
 }
 
 impl std::fmt::Debug for BootstrapConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BootstrapConfig")
             .field("home", &self.home)
-            .field("socket_path", &self.socket_path)
-            .field("may_start_daemon", &self.may_start_daemon)
-            .field("starter", &self.starter.as_ref().map(|_| "Some(<starter>)"))
+            .field("brain_dir", &self.brain_dir)
+            .field("may_install", &self.may_install)
+            .field("installer", &self.installer.as_ref().map(|_| "<installer>"))
             .finish()
     }
 }
@@ -85,9 +79,9 @@ impl Default for BootstrapConfig {
     fn default() -> Self {
         Self {
             home: dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
-            socket_path: None,
-            may_start_daemon: false,
-            starter: None,
+            brain_dir: None,
+            may_install: false,
+            installer: None,
         }
     }
 }
@@ -97,10 +91,10 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
     let foundation_dir = versioned_root(&cfg.home);
     ensure_directory(&foundation_dir)
         .with_context(|| format!("create foundation directory {}", foundation_dir.display()))?;
-    let socket = cfg
-        .socket_path
+    let dir = cfg
+        .brain_dir
         .clone()
-        .unwrap_or_else(|| default_brain_socket(&cfg.home));
+        .unwrap_or_else(|| default_brain_dir(&cfg.home));
 
     // The first time we see an empty Foundation dir we are *not* idempotent.
     let fresh = std::fs::read_dir(&foundation_dir)
@@ -113,19 +107,20 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
         );
     }
 
-    let brain = handshake_brain_with(&socket, cfg.may_start_daemon, cfg.starter.clone()).await?;
+    let exe = brain_executable(&cfg.home, cfg.installer.as_deref());
+    let brain = probe_brain_with(&exe, &dir, cfg.may_install, cfg.installer.as_deref()).await;
     match brain.state {
         DaemonState::Compatible => info!(
-            socket = %socket.display(),
-            "brain daemon handshake ok"
+            dir = %brain.dir.display(),
+            "brain probe ok"
         ),
         DaemonState::Unavailable => warn!(
-            socket = %socket.display(),
-            "brain daemon unavailable — degraded mode is expected (RFC-047)"
+            dir = %brain.dir.display(),
+            "brain unavailable — degraded mode is expected (RFC-047)"
         ),
         DaemonState::Incompatible => warn!(
-            socket = %socket.display(),
-            "brain daemon protocol incompatible — install a compatible release"
+            dir = %brain.dir.display(),
+            "brain protocol incompatible — install a compatible release"
         ),
     }
 
@@ -137,98 +132,96 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
     })
 }
 
-/// Perform the Brain handshake and classify the daemon.
-pub async fn handshake_brain(socket: &Path, may_start: bool) -> Result<BrainHandshake> {
-    handshake_brain_with(socket, may_start, None).await
+/// Resolve the `oxibrain` executable for probes: installer resolution
+/// (explicit config → managed root → `PATH`) with the managed
+/// `~/.oxi/bin/oxibrain` location as the fallback, so a post-install retry
+/// can succeed.
+pub fn brain_executable(home: &Path, installer: Option<&BrainInstaller>) -> PathBuf {
+    installer
+        .and_then(|i| i.locate_binary())
+        .unwrap_or_else(|| home.join(".oxi").join("bin").join("oxibrain"))
 }
 
-/// Connect to the daemon, optionally call `starter` once on first failure,
-/// retry the connect once, then classify via [`finish_handshake`]. This is
-/// the testable core of the bootstrap handshake.
-///
-/// When `may_start` is `false` OR `starter` is `None`, the function is
-/// read-only: a single connect attempt is made and any failure is reported
-/// as `Unavailable`.
-pub async fn handshake_brain_with(
-    socket: &Path,
-    may_start: bool,
-    starter: Option<Starter>,
-) -> Result<BrainHandshake> {
-    use oxibrain_client::BrainClient;
+/// Run one `describe` probe and classify. A failed attempt (spawn error or
+/// non-zero exit) triggers exactly one install pass when `may_install` is
+/// set, then retries once; `ensure_binary` cannot fix a broken store, but
+/// it does recover a partial/corrupt release.
+pub async fn probe_brain_with(
+    exe: &Path,
+    dir: &Path,
+    may_install: bool,
+    installer: Option<&BrainInstaller>,
+) -> BrainProbe {
+    let mut probe = describe_probe(exe, dir).await;
+    if probe.state == DaemonState::Compatible {
+        return probe;
+    }
+    if may_install
+        && let Some(installer) = installer
+        && installer.ensure_binary(true).await.is_some()
+    {
+        probe = describe_probe(exe, dir).await;
+    }
+    probe
+}
 
-    let client = match BrainClient::connect(socket).await {
-        Ok(c) => c,
+/// One `oxibrain --dir D describe` attempt with failures classified.
+async fn describe_probe(exe: &Path, dir: &Path) -> BrainProbe {
+    let unavailable = |dir: &Path| BrainProbe {
+        state: DaemonState::Unavailable,
+        dir: dir.to_path_buf(),
+        protocol_version: None,
+    };
+    let Ok(out) = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        tokio::process::Command::new(exe)
+            .arg("--dir")
+            .arg(dir)
+            .arg("describe")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    else {
+        warn!(dir = %dir.display(), "brain describe probe timed out");
+        return unavailable(dir);
+    };
+    let out = match out {
+        Ok(out) => out,
         Err(e) => {
-            if !(may_start && starter.is_some()) {
-                if may_start {
-                    warn!(
-                        socket = %socket.display(),
-                        error = %e,
-                        "may_start_daemon=true but no starter is wired — reporting unavailable"
-                    );
-                }
-                return Ok(BrainHandshake {
-                    state: DaemonState::Unavailable,
-                    socket_path: socket.to_path_buf(),
-                    protocol_version: None,
-                    daemon_build: None,
-                });
-            }
-            // Invoke the (host-supplied) daemon starter exactly once, then
-            // retry the connect. If the retry still fails the daemon is
-            // genuinely missing — surface Unavailable.
-            let starter = starter.expect("checked is_some above");
-            tracing::info!(
-                socket = %socket.display(),
-                "first connect failed — invoking starter before retry"
+            warn!(
+                dir = %dir.display(),
+                error = %e,
+                "brain probe spawn failed — degraded (RFC-047)"
             );
-            starter(socket).await;
-            match BrainClient::connect(socket).await {
-                Ok(c) => c,
-                Err(e2) => {
-                    warn!(
-                        socket = %socket.display(),
-                        error = %e2,
-                        "starter ran but daemon still unreachable — reporting unavailable"
-                    );
-                    return Ok(BrainHandshake {
-                        state: DaemonState::Unavailable,
-                        socket_path: socket.to_path_buf(),
-                        protocol_version: None,
-                        daemon_build: None,
-                    });
-                }
-            }
+            return unavailable(dir);
         }
     };
-
-    finish_handshake(client, socket).await
-}
-
-/// Classify an already-connected daemon via a `ping`. `ping` returns Ok on
-/// a compatible daemon; on Err we report `Incompatible`. The function
-/// emits no warnings — callers wrap into their own context.
-async fn finish_handshake(
-    mut client: oxibrain_client::BrainClient,
-    socket: &Path,
-) -> Result<BrainHandshake> {
-    // `ping` returns Ok on a compatible daemon. There is no explicit
-    // version handshake in oxibrain-client 0.2 yet; we treat any
-    // successful handshake as Compatible and reserve Incompatible for a
-    // future protocol version mismatch field.
-    match client.ping().await {
-        Ok(()) => Ok(BrainHandshake {
-            state: DaemonState::Compatible,
-            socket_path: socket.to_path_buf(),
-            protocol_version: Some(1),
-            daemon_build: None,
-        }),
-        Err(_) => Ok(BrainHandshake {
-            state: DaemonState::Incompatible,
-            socket_path: socket.to_path_buf(),
-            protocol_version: None,
-            daemon_build: None,
-        }),
+    if !out.status.success() {
+        warn!(
+            dir = %dir.display(),
+            stderr = %String::from_utf8_lossy(&out.stderr),
+            "brain describe probe failed — degraded (RFC-047)"
+        );
+        return unavailable(dir);
+    }
+    let Ok(envelope) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+        warn!(
+            dir = %dir.display(),
+            "brain describe probe printed no envelope — degraded"
+        );
+        return unavailable(dir);
+    };
+    BrainProbe {
+        state: DaemonState::Compatible,
+        dir: dir.to_path_buf(),
+        protocol_version: envelope
+            .get("api")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
     }
 }
 
@@ -246,17 +239,16 @@ fn ensure_directory(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Quick non-async readiness probe used by `foundation status`. Does not
-/// open a connection — just inspects the socket path and returns
-/// [`DaemonState::Unavailable`] when nothing is listening.
-pub async fn quick_probe(socket: &Path) -> DaemonState {
-    use oxibrain_client::BrainClient;
-    match BrainClient::connect(socket).await {
-        Ok(mut c) => match c.ping().await {
-            Ok(()) => DaemonState::Compatible,
-            Err(_) => DaemonState::Incompatible,
-        },
-        Err(_) => DaemonState::Unavailable,
+/// Quick non-spawning readiness probe used by `foundation status`.
+///
+/// Process-per-operation readiness is binary presence: `Compatible` means a
+/// spawnable `oxibrain` exists at `binary`. The full classification comes
+/// from [`probe_brain_with`].
+pub fn quick_probe(binary: &Path) -> DaemonState {
+    if binary.is_file() {
+        DaemonState::Compatible
+    } else {
+        DaemonState::Unavailable
     }
 }
 
@@ -283,26 +275,102 @@ mod tests {
         assert!(err.contains("not a directory"), "got: {err}");
     }
 
-    /// When a connection fails and a `starter` is provided, the starter
-    /// must be invoked exactly once and the second connect attempt must
-    /// be made (still failing here → `Unavailable`). TDD guard for the
-    /// foundation `Starter` hook.
+    /// Probing a path with no binary degrades to `Unavailable` without
+    /// ever running anything.
     #[tokio::test]
-    async fn starter_is_invoked_on_connect_failure_and_retried_once() {
+    async fn probe_unavailable_when_binary_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let sock = tmp.path().join("no.sock");
-        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let calls_hook = Arc::clone(&calls);
-        let starter: Starter = Arc::new(move |_path| {
-            let calls = Arc::clone(&calls_hook);
-            Box::pin(async move {
-                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            })
-        });
-        let hs = handshake_brain_with(&sock, true, Some(starter))
-            .await
-            .unwrap();
+        let hs = probe_brain_with(
+            &tmp.path().join("missing-oxibrain"),
+            &tmp.path().join("brain"),
+            false,
+            None,
+        )
+        .await;
         assert_eq!(hs.state, DaemonState::Unavailable);
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(hs.protocol_version, None);
+        assert_eq!(hs.dir, tmp.path().join("brain"));
+    }
+
+    #[cfg(unix)]
+    fn write_stub(path: &Path, body: &str) {
+        std::fs::write(path, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A stub `oxibrain` shell script: counts runs in `counter`, exits
+    /// non-zero on the first run, answers `describe` after.
+    #[cfg(unix)]
+    fn flaky_stub(dir: &Path) -> (PathBuf, PathBuf) {
+        let stub = dir.join("oxibrain");
+        let counter = dir.join("runs");
+        write_stub(
+            &stub,
+            &format!(
+                "#!/bin/sh\n\
+                 n=$(cat {counter} 2>/dev/null || echo 0)\n\
+                 n=$((n+1))\n\
+                 echo $n > {counter}\n\
+                 if [ \"$n\" -eq 1 ]; then exit 1; fi\n\
+                 printf '%s' '{{\"api\":1,\"ok\":true,\"op\":\"describe\",\"data\":{{}}}}'\n",
+                counter = counter.display()
+            ),
+        );
+        (stub, counter)
+    }
+
+    #[cfg(unix)]
+    fn stub_installer(dir: &Path, stub: &Path) -> Arc<BrainInstaller> {
+        let section = crate::config::BrainSection {
+            binary_path: stub.display().to_string(),
+            ..Default::default()
+        };
+        Arc::new(BrainInstaller::from_brain_section(dir, &section))
+    }
+
+    /// The installer hook runs exactly once when `may_install` is set:
+    /// `ensure_binary` resolves the (already present) stub without any
+    /// network access, and the single retry completes the probe — exactly
+    /// two runs in total.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_retries_once_after_installer_hook() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (stub, counter) = flaky_stub(tmp.path());
+        let installer = stub_installer(tmp.path(), &stub);
+        let hs = probe_brain_with(&stub, &tmp.path().join("brain"), true, Some(&installer)).await;
+        assert_eq!(hs.state, DaemonState::Compatible);
+        assert_eq!(hs.protocol_version, Some(1));
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "2");
+    }
+
+    /// Without `may_install` there is no hook and no retry: one run, then
+    /// `Unavailable`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_does_not_retry_without_may_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (stub, counter) = flaky_stub(tmp.path());
+        let installer = stub_installer(tmp.path(), &stub);
+        let hs = probe_brain_with(&stub, &tmp.path().join("brain"), false, Some(&installer)).await;
+        assert_eq!(hs.state, DaemonState::Unavailable);
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().trim(), "1");
+    }
+
+    /// A healthy stub classifies `Compatible` on the first run.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_compatible_on_describe_envelope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stub = tmp.path().join("oxibrain");
+        write_stub(
+            &stub,
+            "#!/bin/sh\nprintf '%s' '{\"api\":1,\"ok\":true,\"op\":\"describe\",\"data\":{}}'\n",
+        );
+        let hs = probe_brain_with(&stub, &tmp.path().join("brain"), false, None).await;
+        assert_eq!(hs.state, DaemonState::Compatible);
+        assert_eq!(hs.protocol_version, Some(1));
+        assert_eq!(hs.dir, tmp.path().join("brain"));
     }
 }

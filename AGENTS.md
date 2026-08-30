@@ -21,7 +21,7 @@ oxios/
 │   ├── oxios-ouroboros/   # Unified intent handling (assess → crystallize → execute → review)
 │   ├── oxios-gateway/     # Channel-agnostic message hub
 │   ├── oxios-mcp/         # MCP client (JSON-RPC 2.0 over stdio)
-│   ├── oxibrain (external daemon, RFC-047)  # agent memory (Unix-socket JSON-RPC) — separate repo
+│   ├── oxibrain (external CLI+store)  # agent memory (per-op CLI + per-call stdio child) — separate repo
 │   └── oxios-calendar/    # .ics-based calendar event management
 ├── src/                   # Binary: HTTP API server, CLI/Telegram channels, main()
 │   ├── api/               # REST/WebSocket/SSE (was surface/oxios-web)
@@ -31,7 +31,7 @@ oxios/
 └── docs/                  # Architecture, RFCs, design documents
 ```
 
-**Dependencies:** `oxios → oxios-kernel → {oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`, plus `oxibrain-client` (crates.io). `oxicode-sdk` is a crates.io dependency — never reimplement what it provides. Agent memory is served by the external `oxibrain` daemon over a Unix socket; the kernel holds a `BrainConnection` (`KernelHandle::brain`).
+**Dependencies:** `oxios → oxios-kernel → {oxios-ouroboros, oxios-markdown, oxios-calendar, oxios-mcp, oxicode-sdk}`, plus `oxibrain-client` (crates.io). `oxicode-sdk` is a crates.io dependency — never reimplement what it provides. Agent memory is served by the standalone `oxibrain` binary (oxibrain 0.10, agent-first CLI): the kernel's `BrainSession` runs agent ops as one-shot `oxibrain <op> --json -` processes (response envelope) and console-only native RPCs over a `serve --stdio` child spawned per call; a `BrainInstaller` manages the binary.
 
 ## Quick Facts
 
@@ -79,23 +79,24 @@ oxios/
 
 | Path | Purpose |
 |------|---------|
-| `~/.oxios/` | Oxios home |
-| `~/.oxios/config.toml` | Configuration |
-| `~/.oxios/workspace/` | Agent working directory (sessions, skills) |
-| `~/.oxios/knowledge/` | User markdown knowledge base |
-| `~/.oxicode/auth.json` | oxicode-cli credentials (separate from Oxios) |
+| `~/.oxi/oxios/` | Oxios home (canonical; `$OXIOS_HOME` / `$OXI_HOME/oxios` override; legacy `~/.oxios/` read-only until `oxios migrate`) |
+| `~/.oxi/oxios/config.toml` | Configuration |
+| `~/.oxi/oxios/workspace/` | Agent working directory (sessions, skills) |
+| `~/.oxi/spaces/<space>/vault/` | Shared user knowledge vault (oxi ecosystem) |
+| `~/.oxi/oxios/backups/` | Backup tarballs (denied to agents) |
+| `~/.oxi/oxicode/auth.json` | oxicode-cli credentials (canonical; legacy `~/.oxicode/auth.json` read-only fallback, separate from Oxios) |
 
 ## Architecture (summary)
 
 See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, dependency graph).
 
 - **Kernel** (`oxios-kernel`) — intentionally monolithic single crate. Star topology around `AgentId`, `EventBus`, `StateStore`. No circular deps. Internal boundaries via `pub(crate)` + directory mod files. See ARCHITECTURE.md §10 for rationale.
-- **KernelHandle** — Facade with 22 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in ARCHITECTURE.md §4). `ProjectApi` replaces the former `SpaceApi`; there is no `KnowledgeBaseApi` (knowledge surface is `KnowledgeLens`).
+- **KernelHandle** — Facade with 21 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in ARCHITECTURE.md §4). `ProjectApi` replaces the former `SpaceApi`; there is no `KnowledgeBaseApi` (knowledge surface is `KnowledgeLens`).
 - **Supervisor** — Agent lifecycle: fork/exec/wait/kill.
 - **Orchestrator** — Ouroboros protocol end-to-end. The "brain".
 - **AgentRuntime** — Wraps oxicode-sdk tool-calling loop.
-- **OxiosEngine** — Wraps oxicode-sdk's `Oxicode`. Provider/model resolution goes through `OxicodeBuilder`. The **catalog port** (`oxicode-sdk` `ModelCatalog`) is initialized once at boot (`OxiosEngine::init_file_catalog`, self-hosted under `~/.oxios/cache/`) and attached to every engine — including across hot-swaps — so `resolve_model` and Web UI introspection (`EngineApi`) consult dynamic models.dev metadata (live price/limit refresh, user overrides) before falling back to the static registry. Static free-fns (`get_provider_models`, etc.) remain as fallbacks (the static `model_db` is itself backed by the embedded models.dev snapshot, so it carries real prices).
-- **Memory** — externalized to the standalone `oxibrain` daemon (RFC-047). The kernel connects via `BrainConnection` (`KernelHandle::brain: BrainApi`); SONA (trajectory pattern engine) and embedding traits remain in-kernel. Degradation contract: unreachable daemon → empty results, turns still complete.
+- **OxiosEngine** — Wraps oxicode-sdk's `Oxicode`. Provider/model resolution goes through `OxicodeBuilder`. The **catalog port** (`oxicode-sdk` `ModelCatalog`) is initialized once at boot (`OxiosEngine::init_file_catalog`, self-hosted under `~/.oxi/oxios/cache/`) and attached to every engine — including across hot-swaps — so `resolve_model` and Web UI introspection (`EngineApi`) consult dynamic models.dev metadata (live price/limit refresh, user overrides) before falling back to the static registry. Static free-fns (`get_provider_models`, etc.) remain as fallbacks (the static `model_db` is itself backed by the embedded models.dev snapshot, so it carries real prices).
+- **Memory** — externalized to the standalone `oxibrain` binary (oxibrain 0.10 agent-first CLI; supersedes RFC-047/049 and the 0.8 stdio-session cutover). One process per operation: agent ops (`recall`/`ingest`/`search`/`brief`/…) run as one-shot `oxibrain <op> --json -` subprocesses; console-only native RPCs (`stats`, `document_history`, `pending_stats`, entity/timeline resources) ride a `serve --stdio` child spawned per call (`KernelHandle::brain: BrainApi`). Agents use the `brain` skill + allowlisted `oxibrain` CLI. The target space is a per-chat binding (`ExecEnv.brain_space`); chats with no binding have the brain surface off (`oxibrain` exec denied, no brain skill), while `[brain].default_space` and `Project.default_brain_space` seed new chats. Degradation contract: missing binary or failed op → empty results, turns still complete.
 - **AccessManager** — OWASP RBAC + path sandboxing + Merkle audit trail.
 - **Skill** — Unified system (RFC-009). Each skill = `SKILL.md` with YAML frontmatter.
 
@@ -103,7 +104,7 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 
 1. Define in `crates/oxios-kernel/src/tools/<name>_tool.rs` — implement `AgentTool` from `oxicode_sdk`
 2. Add a `ToolDescriptor` to the kernel catalog in `capability/descriptor.rs` — `registered_name` must equal the tool's `name()` impl
-3. Add the registration arm in `tools/registration.rs::register_from_resolved_profile` (keyed by descriptor id)
+3. Add the registration arm in `tools/registration.rs::register_from_resolved_profile` (keyed by descriptor id); turn-scoped tools also need an arm in `register_tools_from_cspace_gated`
 4. If it wraps a KernelHandle API, add `*_api.rs` in `kernel_handle/`
 5. Test: `oxios run --json "<command that triggers tool>"`
 
@@ -115,8 +116,10 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 | `DESIGN.md` | Oxi brand design system (UI tokens, color, typography) — canonical for frontend/UI work. Unix↔Oxios mapping lives in `docs/ARCHITECTURE.md` §8 |
 | `docs/rfc-008-memory-consolidation.md` | Modifying memory system |
 | `docs/rfc-009-skill-unification.md` | Modifying skill system |
+| `docs/designs/2026-08-29-issues-milestones-todo-design.md` | Modifying project issues, milestones, or the session todo plan |
 | `docs/rfc-010-clawhub-marketplace.md` | Marketplace feature |
 | `docs/rfc-024-web-daemon-reliability.md` | Modifying web↔daemon delivery, SSE/WS, static asset serving, readiness |
+| `docs/rfc-050-vault-unification.md` | Modifying the shared vault path, format (`oxi-frontmatter`), or migration binary |
 | `docs/design-knowledge-ui.md` | Knowledge UI (frontend components, shortcuts, architecture) |
 | `docs/channel-plugin-guide.md` | Adding a new channel |
 | `docs/USER-GUIDE.md` | Changing user-facing features or CLI behavior |
@@ -151,7 +154,7 @@ Topological order:
 ④ oxios-gateway     → oxios-kernel
 ⑤ oxios (binary)    → {kernel, gateway, markdown, ouroboros, calendar}
 ```
-`oxios-memory` was retired in RFC-047 (agent memory now lives in the `oxibrain` daemon, a separate repo). The crates.io entry is deprecated, not yanked.
+`oxios-memory` was retired in RFC-047 (agent memory now lives in the `oxibrain` store (daemonless, separate repo)). The crates.io entry is deprecated, not yanked.
 
 `oxios-web`/`oxios-cli`/`oxios-telegram` were merged into the binary as
 in-process modules per RFC-026 — no separate crates to publish.
@@ -159,8 +162,13 @@ in-process modules per RFC-026 — no separate crates to publish.
 - **oxicode-sdk is crates.io only.** Never add as path dep. Never reimplement what it provides.
 - **Kernel binary vs library.** `src/kernel.rs` (assembler) is in the binary crate, not `oxios-kernel`.
 - **Agent lifecycle split.** `Supervisor` = low-level process. `AgentLifecycleManager` = full lifecycle (A2A, scheduling, permissions). Don't add lifecycle logic to Orchestrator.
-- **Tool registration.** Catalog entry in `capability/descriptor.rs`, registration arm in `tools/registration.rs::register_from_resolved_profile`. Descriptor `registered_name` must match the tool's `name()` impl.
-- **Two knowledge systems.** Agent memory = `oxibrain` daemon (Unix-socket JSON-RPC, RFC-047). User notes = KnowledgeBase (`.md` files, `~/.oxios/knowledge/`). See `docs/rfc-003-knowledge-separation.md`.
+- **Tool registration.** Catalog entry in `capability/descriptor.rs` (`registered_name` must match the tool's `name()` impl), registration arms in `tools/registration.rs` — `register_from_resolved_profile` for the execution-profile path, `register_tools_from_cspace_gated` for the turn path.
+- **Issues are Oxios's own, not shared with oxicode.** Project issues live at `~/.oxi/oxios/projects/<id>/issues/` and are never written to a folder's `.oxicode/issues/`. The two products track different scopes — a terminal agent tracks the folder it was launched in, Oxios tracks a Project that may span zero or many folders — and converging them would reduce oxicode to a TUI skin over Oxios. We reuse the SDK *implementation* (`FileIssueStore`, `cas_retry`, `liveness`) without sharing its *data*. See `docs/designs/2026-08-29-issues-milestones-todo-design.md`.
+- **Issue ownership identity.** `IssueApi::ownership_id` is `oxios-<pid>-<session>` and `AgentConfig.session_id` carries it into `ToolContext.session_id`. The SDK's assignment lock only protects anything when that identity is **non-empty** and backed by a `flock` this process holds (`IssueApi` keeps one `AliveGuard` per `(project, session)`). Do NOT set `AgentConfig.session_id` back to `None` — that was the pre-0.77 state and it made every claim instantly reclaimable, the same defect oxicode documents as #13. The session id must also be the *stable* turn key, not a per-request id; `ownership_id_is_stable_across_turns` pins it.
+- **Milestones ride a reserved label.** `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write, so membership is the `milestone:<slug>` label and the milestone's own record lives in `milestones.yaml`. Progress is always derived by listing labelled issues, never stored. Don't add a `milestone` field to the issue file — the next SDK write would delete it.
+- **Always-on tools have two lists that must agree.** `registration::register_always_on` registers the tier; `gate::LAYER0_EXEMPT_TOOLS` exempts it from the Layer-0 CSpace check. A tool in the first but not the second is registered (so the LLM calls it) and then hard-denied on every call — the documented `web_search` catch-22. `registration::tests::always_on_tools_are_all_exempt_from_layer_zero` fails if they drift. The descriptor catalog in `capability/descriptor.rs` is a third, hand-maintained list; it advertises metadata and does not register anything.
+- **Structured tool results ride one bus.** The SDK strips `AgentToolResult::metadata` at the agent-loop event boundary, so a tool that wants to send the Web UI more than text stashes a payload in `tools::StructuredResultBus` keyed by `tool_call_id`; the runtime completion callback publishes it on `KernelEvent::ToolExecutionFinished.results` → WS `tool_end.results` → the tool render. Consumers: `web_search`/`get_search_results`, `todo`, `issue`. Add to the bus rather than inventing a second channel.
+- **Two knowledge systems.** Agent memory = `oxibrain` store (per-op CLI contract, see docs/designs/2026-08-29-brain-cli-op-cutover-design.md). User notes = KnowledgeBase (`.md` files, `~/.oxi/spaces/<space>/vault/` per RFC-050 + the unified home layout). The retired `~/.oxios/workspace/knowledge/` path was replaced by the shared vault — see `docs/rfc-050-vault-unification.md` for the migration runbook.
 - **Unified skill model.** No separate `program/` module or `program.toml`. `SkillManager` handles everything. Each skill = `SKILL.md` + YAML frontmatter.
 - **Feature gates.** Web, CLI, Telegram, browser, telemetry are feature-gated. Check `cargo build -p oxios --features <feature>`.
 - **`--all-features` works.** oxicode-sdk 0.66.0 + wasmtime 24 migration — `cargo build/clippy --workspace --all-features` compiles. As of oxicode-sdk 0.45.x, `AgentConfig` gained `ttsr_engine`/`memory`/`todo`/`agent_pool` fields (all `#[serde(skip, default)]`); fill with `..Default::default()` to keep sites working. CI still uses per-crate features (`.github/workflows/ci.yml`) for precision. The prior wasm-sandbox `ResourceLimiter` regression (missing `table_growing` on wasmtime 24) is fixed in `crates/oxios-kernel/src/wasm_sandbox.rs`. As of oxicode-sdk 0.66.0, the project was renamed from `oxi` to `oxicode` (CHANGELOG §0.65.0 Breaking) — `oxi-sdk`/`oxi-ai`/`oxi-agent` → `oxicode-sdk`/`oxicode-ai`/`oxicode-agent`; `Oxi`/`OxiBuilder`/`OxiBrowserEngine` → `Oxicode`/`OxicodeBuilder`/`OxicodeBrowserEngine`; `OXI_*` → `OXICODE_*`; `~/.oxi/` → `~/.oxicode/`. oxibrowser-core bumped to 0.17. CI pulls oxicode-sdk from crates.io (no path dep, no separate `a7garden/oxicode` checkout — `Cargo.toml` `[patch.crates-io]` is intentionally uncommented).

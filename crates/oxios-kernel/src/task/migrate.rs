@@ -1,12 +1,12 @@
-//! Cron → task migration (RFC-043 Phase 5).
+//! Legacy cron → task migration (RFC-043 Phase 5).
 //!
-//! Copies each `CronScheduler` job into a Task with
-//! `automation_mode = schedule`. Copy-based by design: the original cron
-//! job is left in place — retiring it stays an explicit user decision.
+//! Copies each retired-scheduler [`CronJob`] into a Task with
+//! `automation_mode = schedule`. Run once at boot by the kernel assembler;
+//! identifier-collision skips make it idempotent.
 
 use anyhow::Result;
 
-use crate::cron::CronJob;
+use crate::task::legacy::CronJob;
 use crate::task::model::{CreateTaskParams, SetScheduleParams, Task, TaskAutomationMode};
 use crate::task::store::TaskStore;
 
@@ -95,30 +95,20 @@ pub async fn migrate_cron_to_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cron::CronScheduler;
-    use crate::state_store::StateStore;
 
-    async fn scheduler_with(job_name: &str) -> CronScheduler {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(tmp.path().to_path_buf()).unwrap();
-        let cron = CronScheduler::new(std::sync::Arc::new(store), 60);
-        cron.add_job(CronJob::new(
+    fn jobs_with(job_name: &str) -> Vec<CronJob> {
+        vec![CronJob::new(
             job_name.into(),
             "0 */6 * * *".into(),
             "do the thing".into(),
-        ))
-        .await
-        .unwrap();
-        cron
+        )]
     }
 
     #[tokio::test]
     async fn migrates_jobs_as_scheduled_tasks() {
-        let cron = scheduler_with("nightly-digest").await;
+        let jobs = jobs_with("nightly-digest");
         let store = TaskStore::in_memory().unwrap();
-        let report = migrate_cron_to_tasks(&cron.list_jobs(), &store, false)
-            .await
-            .unwrap();
+        let report = migrate_cron_to_tasks(&jobs, &store, false).await.unwrap();
         assert_eq!(report.created.len(), 1);
         assert!(report.skipped.is_empty());
         let t = &report.created[0];
@@ -130,7 +120,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_existing_identifier_and_dry_run_creates_nothing() {
-        let cron = scheduler_with("nightly-digest").await;
+        let jobs = jobs_with("nightly-digest");
         let store = TaskStore::in_memory().unwrap();
         // Pre-create a task with the same slug identifier.
         store
@@ -148,18 +138,14 @@ mod tests {
             })
             .await
             .unwrap();
-        let report = migrate_cron_to_tasks(&cron.list_jobs(), &store, false)
-            .await
-            .unwrap();
+        let report = migrate_cron_to_tasks(&jobs, &store, false).await.unwrap();
         assert!(report.created.is_empty());
         assert_eq!(report.skipped.len(), 1);
         assert!(report.skipped[0].reason.contains("already exists"));
 
         // Dry run with no collision reports the would-migrate job, creates nothing.
         let store2 = TaskStore::in_memory().unwrap();
-        let dry = migrate_cron_to_tasks(&cron.list_jobs(), &store2, true)
-            .await
-            .unwrap();
+        let dry = migrate_cron_to_tasks(&jobs, &store2, true).await.unwrap();
         assert!(dry.dry_run);
         assert!(dry.created.is_empty());
         assert_eq!(dry.skipped.len(), 1);

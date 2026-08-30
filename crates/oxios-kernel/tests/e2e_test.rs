@@ -183,10 +183,11 @@ async fn test_orchestrator_happy_path() {
             "Fix the bug in main.rs",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -218,10 +219,11 @@ async fn test_session_continuation() {
             "Work on the project",
             Some(session_id),
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -235,10 +237,11 @@ async fn test_session_continuation() {
             "Make it production ready",
             Some(session_id),
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -258,10 +261,11 @@ async fn test_multiple_sessions_independent() {
             "Task A",
             Some("session-a"),
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -272,10 +276,11 @@ async fn test_multiple_sessions_independent() {
             "Task B",
             Some("session-b"),
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -301,10 +306,11 @@ async fn test_session_cleaned_after_completion() {
             "Simple task",
             Some(session_id),
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -317,10 +323,11 @@ async fn test_session_cleaned_after_completion() {
             "Another task",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -342,10 +349,11 @@ async fn test_phase_events_published() {
             "Test events",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await

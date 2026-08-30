@@ -1,7 +1,7 @@
 // ActionTool render — generic renderer for Oxios action-based kernel tools.
 //
 // Many kernel tools (knowledge, persona, cron, budget, security, project,
-// resource, mount, marketplace, skill_forge) use an `action` parameter to
+// resource, marketplace, skill_forge) use an `action` parameter to
 // dispatch operations. This render shows the action name + key args inline,
 // then the result in a compact formatted block.
 

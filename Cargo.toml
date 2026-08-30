@@ -1,6 +1,6 @@
 [package]
 name = "oxios"
-version = "1.43.0"
+version = "1.44.0"
 edition = "2024"
 description = "Oxios Agent OS — Agent Operating System powered by oxicode-sdk"
 license = "MIT"
@@ -95,7 +95,9 @@ serde_json = "1"
 toml = "0.8"
 
 # IDs
-uuid = { version = "1", features = ["v4", "serde"] }
+# IDs. v7 is needed by the migration binary (time-ordered synthesized
+# note ids — the same shape `oxi-frontmatter::write_document` mints).
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 
 # Logging
 tracing = "0.1"
@@ -121,12 +123,18 @@ parking_lot = "0.12"
 arc-swap = "1.7"
 
 
-# Brain daemon client (RFC-047)
-oxibrain-client = "0.3"
+# oxibrain 0.10 agent-first CLI contract (ADR-012/013): the kernel drives
+# `oxibrain <op>` one-shot processes for the agent path and uses the client's
+# caller-owned `serve --stdio` child per call for console-only native RPCs
+# (stats, document_history, pending_stats, entity/timeline resources).
+oxibrain-client = "0.10"
 # 0.73.0: oxicode-sdk 0.72 dropped browsing re-exports (BrowseTool/BrowseSessionTool
 # factories + browser/native-browser features). 0.73.0 added BrowseProgress::PdfExported.
 # oxibrowser-core is a direct dep — products own browsing themselves (RFC-046).
-oxicode-sdk = { version = "0.73.0", features = ["delegation", "circuit-breaker", "router"] }
+oxicode-sdk = { version = "0.77.0", features = ["delegation", "circuit-breaker", "router"] }
+# Vault-unification: shared frontmatter contract crate (oximemo 0.9.3).
+oxi-frontmatter = "0.1"
+oxi-vault-git = "0.1"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
@@ -208,11 +216,15 @@ timeline = ["oxios-kernel/timeline"]
 remote = ["dep:snow", "dep:tokio-tungstenite", "dep:base64", "dep:qrcode", "dep:local-ip-address", "dep:hostname"]
 
 [dependencies]
-oxios-kernel = { version = "1.43.0", path = "crates/oxios-kernel", default-features = false }
-oxios-calendar = { version = "1.43.0", path = "crates/oxios-calendar" }
-oxios-markdown = { version = "1.43.0", path = "crates/oxios-markdown" }
-oxios-ouroboros = { version = "1.43.0", path = "crates/oxios-ouroboros" }
-oxios-gateway = { version = "1.43.0", path = "crates/oxios-gateway" }
+oxios-kernel = { version = "1.44.0", path = "crates/oxios-kernel", default-features = false }
+oxios-calendar = { version = "1.44.0", path = "crates/oxios-calendar" }
+oxios-markdown = { version = "1.44.0", path = "crates/oxios-markdown" }
+# Vault-unification (T19): the one-time `oxios-migrate-vault` binary
+# converts oximemo v3 TOML frontmatter and synthesizes v4 blocks through
+# the shared frontmatter contract crate directly.
+oxi-frontmatter = { workspace = true }
+oxios-ouroboros = { version = "1.44.0", path = "crates/oxios-ouroboros" }
+oxios-gateway = { version = "1.44.0", path = "crates/oxios-gateway" }
 oxicode-sdk = { workspace = true }
 
 # RFC-026: optional deps gated by features (were separate crates)
@@ -255,6 +267,8 @@ reqwest = { workspace = true }
 zip = { workspace = true }
 dirs = { workspace = true }
 sha2 = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
 toml_edit = "0.22"
 include_dir = "0.7"
 
@@ -262,7 +276,6 @@ include_dir = "0.7"
 # in oxios-kernel's `browser` feature via the direct oxibrowser-core 0.21 dep.
 # 0.21 adds Tab::print_to_pdf + WebAssembly support (wasmi ↔ boa_engine bridge).
 oxibrowser = "0.21"
-oxibrain-client = { workspace = true }
 
 snow = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
@@ -272,11 +285,19 @@ local-ip-address = { workspace = true, optional = true }
 hostname = { workspace = true, optional = true }
 
 [dev-dependencies]
-oxios-ouroboros = { version = "1.43.0", path = "crates/oxios-ouroboros" }
-chrono = { workspace = true }
+oxios-ouroboros = { version = "1.44.0", path = "crates/oxios-ouroboros" }
+oxibrain-client = { workspace = true }  # DTO shape-guard tests (workspace.rs)
 tokio = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+
+# Vault-unification (T19): one-time ecosystem migration binary. Default
+# invocation is a dry-run; `--apply` performs backup -> move/convert -> git
+# history import. Separate bin target so it never ships inside the main
+# `oxios` runtime surface.
+[[bin]]
+name = "oxios-migrate-vault"
+path = "src/bin/migrate_vault.rs"
 
 [[example]]
 name = "remote_probe"

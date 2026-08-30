@@ -1,5 +1,5 @@
 import { useRouter } from '@tanstack/react-router'
-import { FilePlus, FolderKanban, FolderPlus, Theater, Timer, Zap } from 'lucide-react'
+import { FilePlus, FolderKanban, Theater, Timer, Zap } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -41,7 +41,7 @@ const TARGETS: NewTarget[] = [
   {
     key: 'cron',
     titleKey: 'commandPalette.newCron',
-    href: '/cron-jobs',
+    href: '/tasks',
     icon: <Timer className="h-4 w-4" />,
   },
   {
@@ -49,12 +49,6 @@ const TARGETS: NewTarget[] = [
     titleKey: 'commandPalette.newNote',
     href: '/brain/knowledge',
     icon: <FilePlus className="h-4 w-4" />,
-  },
-  {
-    key: 'mount',
-    titleKey: 'commandPalette.newMount',
-    href: '/mounts',
-    icon: <FolderPlus className="h-4 w-4" />,
   },
 ]
 

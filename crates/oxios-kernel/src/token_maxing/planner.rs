@@ -6,7 +6,7 @@
 //!
 //! - **Source A — autonomous skills**: skills with frontmatter `autonomous:
 //!   true`. This is the "자주 실행되던 스킬" axis.
-//! - **Source B — registered projects/mounts**: a bounded, read-mostly review
+//! - **Source B — registered projects**: a bounded, read-mostly review
 //!   task synthesized from each project's paths.
 //! - **Source C — recurring patterns**: stubbed (lowest priority; avoids
 //!   inventing work).
@@ -26,30 +26,22 @@ pub struct PlannedTask {
     pub source_name: String,
     /// The synthesized goal prompt handed to the agent.
     pub goal: String,
-    /// Workspace paths to sandbox the agent to (project tasks only).
-    pub mount_paths: Vec<PathBuf>,
+    /// Workspace roots to sandbox the agent to (project tasks only).
+    pub root_paths: Vec<PathBuf>,
 }
 
 /// Selects the next task for a maxing run.
 pub struct WorkPlanner {
     skills: Arc<crate::skill::SkillManager>,
     projects: Option<Arc<crate::project::ProjectManager>>,
-    /// Mount manager — resolves a project's `mount_ids` into filesystem
-    /// paths (RFC-025: paths live on Mounts, not Projects).
-    mounts: Option<Arc<crate::mount::MountManager>>,
 }
 
 impl WorkPlanner {
     pub fn new(
         skills: Arc<crate::skill::SkillManager>,
         projects: Option<Arc<crate::project::ProjectManager>>,
-        mounts: Option<Arc<crate::mount::MountManager>>,
     ) -> Self {
-        Self {
-            skills,
-            projects,
-            mounts,
-        }
+        Self { skills, projects }
     }
 
     /// Pick the next task not already done this session (`done_goals`).
@@ -79,21 +71,15 @@ impl WorkPlanner {
                 source: TaskSource::Skill,
                 source_name: entry.skill.name.clone(),
                 goal,
-                mount_paths: Vec::new(),
+                root_paths: Vec::new(),
             });
         }
 
-        // Source B — registered projects (read-mostly review).
         if let Some(pm) = &self.projects {
             for proj in pm.list_projects() {
-                // RFC-025: a project's filesystem scope is its referenced
-                // Mounts. Skip projects with no Mounts (non-code, or
-                // pre-migration) — there is nothing on disk to review.
-                if proj.mount_ids.is_empty() {
-                    continue;
-                }
-                let mount_paths = self.resolve_mount_paths(&proj.mount_ids);
-                if mount_paths.is_empty() {
+                // A project's filesystem scope is its own root_paths. Skip
+                // projects with no roots — there is nothing on disk to review.
+                if proj.root_paths.is_empty() {
                     continue;
                 }
                 let goal = format!(
@@ -109,29 +95,12 @@ impl WorkPlanner {
                     source: TaskSource::Project,
                     source_name: proj.name.clone(),
                     goal,
-                    mount_paths,
+                    root_paths: proj.root_paths.clone(),
                 });
             }
         }
 
         // Source C — recurring patterns: intentionally stubbed (RFC-031 §7).
         None
-    }
-
-    /// Resolve a project's `mount_ids` into deduplicated filesystem paths via
-    /// the Mount manager (RFC-025: paths live on Mounts, not Projects).
-    fn resolve_mount_paths(&self, mount_ids: &[crate::mount::MountId]) -> Vec<PathBuf> {
-        let Some(mm) = &self.mounts else {
-            return Vec::new();
-        };
-        let mut paths = Vec::new();
-        for mount in mm.get_mounts_ordered(mount_ids) {
-            for p in &mount.paths {
-                if !paths.contains(p) {
-                    paths.push(p.clone());
-                }
-            }
-        }
-        paths
     }
 }

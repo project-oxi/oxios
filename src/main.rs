@@ -12,6 +12,7 @@ mod commands;
 mod default_skills;
 mod embedded_web;
 mod kernel;
+mod managed_install;
 mod surface;
 mod web_dist;
 
@@ -63,7 +64,7 @@ use cli::{
 
 const DEFAULT_CONFIG: &str = include_str!("../share/default-config.toml");
 
-fn ensure_workspace(oxios_home: &Path) -> Result<()> {
+fn ensure_workspace(oxios_home: &Path, config_source: &Path) -> Result<()> {
     if !oxios_home.exists() {
         tracing::info!(path = %oxios_home.display(), "Creating Oxios home directory");
         std::fs::create_dir_all(oxios_home)?;
@@ -74,8 +75,13 @@ fn ensure_workspace(oxios_home: &Path) -> Result<()> {
             std::fs::create_dir_all(&dir)?;
         }
     }
+    // Materialize the default config at the canonical path ONLY when no
+    // config source exists at all. When the effective source is the
+    // legacy pre-unification `~/.oxios/config.toml` (unified-home
+    // read-only compatibility), writing a fresh default here would
+    // shadow it on the next load.
     let config_path = oxios_home.join("config.toml");
-    if !config_path.exists() {
+    if !config_path.exists() && !config_source.exists() {
         tracing::info!(path = %config_path.display(), "Writing default config");
         std::fs::write(&config_path, DEFAULT_CONFIG)?;
     }
@@ -86,10 +92,7 @@ fn oxios_home_from_config(config_path: &Path) -> PathBuf {
     config_path
         .parent()
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(format!("{home}/.oxios"))
-        })
+        .unwrap_or_else(oxios_kernel::oxi_home::oxios_home)
 }
 
 /// Read the last `n` lines from a file without external commands.
@@ -794,7 +797,13 @@ fn cmd_reset(oxios_home: &Path, skip_confirm: bool, pid_file: &Path) -> Result<(
 
 // ─── Doctor command ──────────────────────────────────────────────────────────
 
-async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
+async fn cmd_doctor(
+    kernel: &Kernel,
+    config_path: &Path,
+    oxios_home: &Path,
+    cleanup: bool,
+    yes: bool,
+) -> Result<()> {
     let config = kernel.config();
     let mut issues = Vec::new();
     let mut checks = 0u32;
@@ -805,11 +814,15 @@ async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
 
     // 1. Config file exists
     checks += 1;
-    if config_path.exists() {
+    // Unified home: the effective source may be the legacy
+    // pre-unification config (read-only) while the canonical file has
+    // not been materialized yet — that is "present", not missing.
+    let effective_config = oxios_kernel::oxi_home::effective_config_path(config_path);
+    if effective_config.exists() {
         println!(
             "  {} Config file present ({})",
             style("✓").green(),
-            style(config_path.display()).dim()
+            style(effective_config.display()).dim()
         );
     } else {
         println!("  {} Config file missing", style("✗").red().bold());
@@ -875,6 +888,55 @@ async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
             workspace.display()
         );
         issues.push("Workspace directory not found. It will be created on first run.".to_string());
+    }
+
+    // 3b. Unified home layout (oxi_home resolver).
+    checks += 1;
+    let unified_oxi = oxios_kernel::oxi_home::oxi_home();
+    let unified_oxios = oxios_kernel::oxi_home::oxios_home();
+    let legacy_home = oxios_kernel::oxi_home::legacy_home_dir();
+    use oxios_kernel::home_migrate::MigrationState;
+    let layout_plan = oxios_kernel::home_migrate::preflight();
+    println!(
+        "  {} Oxios home ({})",
+        style("✓").green(),
+        style(unified_oxios.display()).dim()
+    );
+    println!("      oxi root: {}", unified_oxi.display());
+    match &legacy_home {
+        Some(legacy) => println!(
+            "      {} legacy home present: {}",
+            style("⚠").yellow().bold(),
+            legacy.display()
+        ),
+        None => println!("      legacy ~/.oxios: none"),
+    }
+    println!(
+        "      migration: {} ({} file(s), {})",
+        layout_plan.state,
+        layout_plan.file_count,
+        human_bytes(layout_plan.total_bytes)
+    );
+    match oxios_kernel::home_migrate::read_journal(&oxios_kernel::home_migrate::journal_path()) {
+        Some(j) => println!(
+            "      journal: {:?} (started at {})",
+            j.status, j.started_at
+        ),
+        None => println!("      journal: none"),
+    }
+    match layout_plan.state {
+        MigrationState::Ready => issues.push(format!(
+            "Legacy home pending migration: run `oxios migrate` to copy {} into {}.",
+            layout_plan.source.display(),
+            layout_plan.destination.display()
+        )),
+        MigrationState::Conflict => issues.push(format!(
+            "Migration conflict between {} and {} ({} differing file(s)); nothing was modified. Compare both, resolve, then rerun `oxios migrate --dry-run`.",
+            layout_plan.source.display(),
+            layout_plan.destination.display(),
+            layout_plan.conflicts.len()
+        )),
+        MigrationState::NothingToDo | MigrationState::AlreadyMigrated => {}
     }
 
     // 4. Daemon status
@@ -1011,9 +1073,206 @@ async fn cmd_doctor(kernel: &Kernel, config_path: &Path) -> Result<()> {
             println!("    {}. {}", i + 1, issue);
         }
     }
+
+    // ── Managed install shadow report + --cleanup ──
+    // `oxios_home` is supplied by the dispatch site so we reuse the same
+    // resolution pattern as the Update handler (no `std::env` mutation here).
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let shadows = managed_install::audit_shadows(oxios_home, &path_env);
+    if !shadows.is_empty() {
+        println!("  {}", "─".repeat(48));
+        println!(
+            "  {}",
+            style(format!("Shadow binaries ({})", shadows.len())).bold()
+        );
+        println!("  {}", "─".repeat(48));
+        for line in managed_install::render_doctor_report(&shadows).lines() {
+            println!("  {line}");
+        }
+    }
+
+    if cleanup {
+        // Build the cleanup target list: every `.bak.<date>` produced by the
+        // last `plan_migration` for the shadows we just reported, plus any
+        // stale versioned oxios copies sitting on PATH (e.g. `oxios-1.43.1`
+        // left behind by an old `cargo install`). We derive the targets
+        // directly here so callers without the migration module still get
+        // useful output.
+        let targets = managed_install::doctor_cleanup_targets(&shadows);
+        // Only offer files that actually exist — the bak projections above
+        // name FUTURE paths that a later migration may create; deleting a
+        // not-yet-existing file would just print noise.
+        let targets: Vec<_> = targets.into_iter().filter(|p| p.exists()).collect();
+        let is_tty = console::Term::stderr().is_term();
+        if targets.is_empty() {
+            println!("  {} No stale shadow files to clean.", style("✓").green());
+        } else if !is_tty && !yes {
+            // Non-TTY without --yes: print the `rm` lines so the operator can
+            // pipe them. With --yes, explicit consent replaces the TTY prompt —
+            // scripts must be able to run cleanup unattended.
+            for path in &targets {
+                println!("rm {}", path.display());
+            }
+        } else {
+            // TTY (or --yes): confirm before deletion.
+            println!(
+                "  {} About to delete {} file(s):",
+                style("⚠").yellow().bold(),
+                style(targets.len()).bold()
+            );
+            for path in &targets {
+                println!("    rm {}", path.display());
+            }
+            let proceed = if yes {
+                true
+            } else {
+                inquire::Confirm::new("  Proceed?")
+                    .with_default(false)
+                    .prompt()
+                    .unwrap_or(false)
+            };
+            if !proceed {
+                println!("  {} Cleanup cancelled.", style("✗").yellow().bold());
+            } else {
+                let mut removed = 0usize;
+                for path in &targets {
+                    match std::fs::remove_file(path) {
+                        Ok(()) => {
+                            println!(
+                                "  {} removed {}",
+                                style("✓").green(),
+                                style(path.display()).dim()
+                            );
+                            removed += 1;
+                        }
+                        Err(e) => {
+                            println!(
+                                "  {} failed to remove {}: {e}",
+                                style("✗").red(),
+                                style(path.display()).dim()
+                            );
+                        }
+                    }
+                }
+                println!(
+                    "  {} removed {}/{} file(s)",
+                    style("✓").green(),
+                    removed,
+                    targets.len()
+                );
+            }
+        }
+    }
+
     println!();
 
     Ok(())
+}
+
+// ─── Migrate command ─────────────────────────────────────────────────────────
+
+/// `oxios migrate` — journaled, resumable migration of the legacy
+/// `~/.oxios` home into the canonical unified home (`~/.oxi/oxios`).
+/// Copy-only: the source is never deleted or modified. An explicit
+/// `OXIOS_HOME` never merges with the legacy home (migration no-ops).
+fn cmd_migrate(dry_run: bool) -> Result<()> {
+    use oxios_kernel::home_migrate::{self, MigrationState};
+
+    println!();
+    println!("  {}", style("⬡ Oxios Home Migration").bold());
+    println!("  {}", "─".repeat(48));
+
+    if dry_run {
+        let plan = home_migrate::preflight();
+        print_migration_plan(&plan);
+        match plan.state {
+            MigrationState::Conflict => anyhow::bail!(
+                "Migration conflict: {} file(s) differ between\n    {}\n  and\n    {}\n  Nothing was modified — compare both paths and resolve manually.",
+                plan.conflicts.len(),
+                plan.source.display(),
+                plan.destination.display()
+            ),
+            MigrationState::Ready => println!("  Required action: run `oxios migrate` to apply."),
+            MigrationState::AlreadyMigrated => {
+                println!("  Required action: none (already migrated).")
+            }
+            MigrationState::NothingToDo => {
+                println!("  Required action: none (nothing to migrate).")
+            }
+        }
+        println!("  Dry run — nothing was modified.");
+        println!();
+        return Ok(());
+    }
+
+    let report = home_migrate::migrate(false)?;
+    print_migration_plan(&report.plan);
+    match report.plan.state {
+        MigrationState::Conflict => anyhow::bail!(
+            "Migration conflict: {} file(s) differ between\n    {}\n  and\n    {}\n  Nothing was modified — compare both paths and resolve manually.",
+            report.plan.conflicts.len(),
+            report.plan.source.display(),
+            report.plan.destination.display()
+        ),
+        MigrationState::NothingToDo => println!("  Nothing to migrate."),
+        // `report.plan` reflects the POST-RUN state: a run that copied
+        // files finishes already_migrated, so the "did we do work?"
+        // question is answered by the copy counters, not the state.
+        MigrationState::Ready | MigrationState::AlreadyMigrated
+            if report.files_copied > 0 || report.resumed =>
+        {
+            if report.resumed {
+                println!("  Resumed previous migration.");
+            }
+            println!(
+                "  Copied {} file(s), skipped {} already identical.",
+                report.files_copied, report.files_skipped
+            );
+            println!("  Source left untouched (copy-only; removal is a later cutover release).");
+        }
+        MigrationState::AlreadyMigrated => println!("  Already migrated — nothing to copy."),
+        MigrationState::Ready => unreachable!("verified run cannot stay ready"),
+    }
+    if report.journal_written {
+        println!("  Journal: {}", home_migrate::journal_path().display());
+    }
+    println!();
+    Ok(())
+}
+
+fn print_migration_plan(plan: &oxios_kernel::home_migrate::PreflightPlan) {
+    println!("  source:      {}", plan.source.display());
+    println!("  destination: {}", plan.destination.display());
+    println!(
+        "  files:       {} ({})",
+        plan.file_count,
+        human_bytes(plan.total_bytes)
+    );
+    println!("  state:       {}", plan.state);
+    if !plan.conflicts.is_empty() {
+        println!("  conflicts:");
+        for rel in plan.conflicts.iter().take(10) {
+            println!("    - {}", rel.display());
+        }
+        if plan.conflicts.len() > 10 {
+            println!("    … and {} more", plan.conflicts.len() - 10);
+        }
+    }
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 // ─── Models command ──────────────────────────────────────────────────────────
@@ -1024,9 +1283,7 @@ fn cmd_models(provider: Option<&str>) -> Result<()> {
         Some(p) => p.to_string(),
         None => {
             // Try reading from config
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            let config_path =
-                oxios_kernel::config::expand_home(&format!("{home}/.oxios/config.toml"));
+            let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
             if config_path.exists() {
                 let config = oxios_kernel::config::load_config(&config_path)?;
                 if config.engine.default_model.is_empty() {
@@ -1297,10 +1554,7 @@ async fn cmd_email_setup(kernel: &Kernel) {
                     return;
                 }
                 // Save to config.toml
-                let config_path = oxios_kernel::config::expand_home(&format!(
-                    "{}/.oxios/config.toml",
-                    std::env::var("HOME").unwrap_or_default()
-                ));
+                let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
                 if config_path.exists() {
                     let _ = upsert_email_section_in_config_main(&config_path, &config);
                 }
@@ -1389,10 +1643,7 @@ fn cmd_web(config: &OxiosConfig, port_override: Option<u16>) -> Result<()> {
 
     if !was_running {
         println!("  {} Daemon not running — starting...", style("⠋").cyan());
-        let config_path = oxios_kernel::config::expand_home(&format!(
-            "{}/.oxios/config.toml",
-            std::env::var("HOME").unwrap_or_default()
-        ));
+        let config_path = oxios_kernel::oxi_home::oxios_home().join("config.toml");
         daemon.start(&config_path, port)?;
 
         // Give the server a moment to bind the port
@@ -1493,213 +1744,122 @@ fn main() {
     }
 }
 
-/// Resolve the brain daemon socket path from config (empty → default).
-fn brain_socket_path(config: &OxiosConfig) -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    oxios_kernel::brain::resolved_socket_path(
-        &home,
-        &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
-    )
-}
-
-/// `oxios brain` — talk to the oxibrain daemon directly (RFC-047).
+/// `oxios brain` — manage the oxibrain integration (one process per
+/// operation; oxibrain 0.10 agent-first CLI).
 async fn cmd_brain(config: &OxiosConfig, cmd: &BrainCmd) -> Result<()> {
-    use oxibrain_client::BrainClient;
-
-    let socket = brain_socket_path(config);
-    let space = config.brain.space.clone();
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let installer = oxios_kernel::BrainInstaller::from_brain_section(&home, &config.brain);
+    let dir = oxios_kernel::brain::resolved_brain_dir(
+        &home,
+        &oxios_kernel::config::expand_home(&config.brain.dir).to_string_lossy(),
+    );
 
     match cmd {
         BrainCmd::Status => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            let sup = sv.status();
-            let mut online = false;
-            match BrainClient::connect(&socket).await {
-                Ok(mut client) => {
-                    let episodes = client
-                        .stats(&space)
-                        .await
-                        .ok()
-                        .and_then(|s| s.get("episodes").and_then(|e| e.as_i64()))
-                        .unwrap_or(0);
-                    println!("brain: online");
-                    println!("space: {space}");
-                    println!("episodes: {episodes}");
-                    online = true;
-                }
-                Err(e) => {
-                    println!("brain: unavailable ({e})");
-                }
-            }
-            println!("supervisor: {:?}", sup.state);
-            println!("managed_by: {:?}", sup.managed_by);
-            if let Some(v) = &sup.installed_version {
-                println!("installed: {v}");
-            }
-            if let Some(v) = &sup.daemon_version {
-                println!("daemon: {v}");
-            }
-            if let Some(e) = &sup.last_error {
-                println!("last_error: {e}");
-            }
-            if !online {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
-        BrainCmd::Ingest { path } => {
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
-                    std::process::exit(1);
-                }
-            };
-            let content = if path.to_string_lossy() == "-" {
-                use std::io::Read;
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf)?;
-                buf
-            } else {
-                std::fs::read_to_string(path)
-                    .with_context(|| format!("reading {}", path.display()))?
-            };
-            let source = if path.to_string_lossy() == "-" {
-                "stdin".to_string()
-            } else {
-                path.display().to_string()
-            };
-            let id = client
-                .ingest(&content, &space, &source)
-                .await
-                .context("brain ingest failed")?;
-            println!("ingested episode {id}");
-            Ok(())
-        }
-        BrainCmd::Ask { query } => {
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("brain daemon unavailable at {} ({e})", socket.display());
-                    std::process::exit(1);
-                }
-            };
-            let value = client
-                .recall(query, &space, 3000)
-                .await
-                .context("brain recall failed")?;
-            let layers = value
-                .get("layers")
-                .and_then(|l| l.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if layers.is_empty() {
-                println!("no context found");
-                return Ok(());
-            }
-            for layer in layers {
-                let kind = layer
-                    .get("kind")
-                    .and_then(|k| k.as_str())
-                    .unwrap_or("context");
-                let text = layer.get("text").and_then(|t| t.as_str()).unwrap_or("");
-                if !text.is_empty() {
-                    println!("## {kind}\n{text}\n");
-                }
-            }
-            Ok(())
-        }
-        BrainCmd::Export { .. } => {
-            anyhow::bail!(
-                "oxios brain export is unsupported in this release — use the oxibrain CLI: oxibrain export"
-            );
-        }
-        BrainCmd::Consolidate { .. } => {
-            // RFC-048 §5: explicit Brain consolidation command — delegates to
-            // the oxibrain daemon's consolidation semantics and never writes
-            // KnowledgeBase files. oxibrain-client 0.2 does not expose a
-            // typed consolidation method yet; the call is documented and
-            // guarded by the existing handshake so the operator sees an
-            // actionable error when the daemon lacks the verb.
-            let mut client = match BrainClient::connect(&socket).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "brain daemon unavailable at {} ({e}); brain consolidate requires a compatible oxibrain daemon",
-                        socket.display()
+            let binary = installer.locate_binary();
+            match &binary {
+                Some(b) => {
+                    println!("binary: {}", b.display());
+                    println!(
+                        "version: {}",
+                        oxios_kernel::BrainInstaller::version_of(b)
+                            .as_deref()
+                            .unwrap_or("<unknown>")
                     );
-                    std::process::exit(1);
                 }
-            };
-            let stats = client.stats(&space).await.unwrap_or_else(|e| {
-                eprintln!("brain stats failed: {e}");
-                serde_json::json!({"episodes": 0})
-            });
-            println!(
-                "brain consolidate: delegated to oxibrain daemon (episodes in space: {})",
-                stats
-                    .get("episodes")
-                    .cloned()
-                    .unwrap_or(serde_json::json!(0))
-            );
+                None => println!("binary: not installed (run `oxios brain install`)"),
+            }
+            println!("dir: {}", dir.display());
+            if let Some(b) = binary {
+                // Store stats come from the one-shot `admin stats` verb —
+                // no session child, matching the kernel's per-op transport.
+                match oxios_kernel::brain::run_cli(&b, &dir, &["admin", "stats"]).await {
+                    Ok(out) if out.status.success() => {
+                        print!("{}", String::from_utf8_lossy(&out.stdout));
+                    }
+                    Ok(out) => println!(
+                        "stats: unavailable (exit {})",
+                        out.status.code().unwrap_or(-1)
+                    ),
+                    Err(e) => println!("stats: unavailable ({e})"),
+                }
+            }
             Ok(())
-        }
-        BrainCmd::Curate { max } => {
-            // RFC-048 §5: knowledge-note curation runs entirely inside Oxios.
-            // It reads raw KnowledgeBase notes, refines them via the embedded
-            // SDK agent, and writes app-owned notes only. It does NOT touch
-            // the Brain connector.
-            let _ = max;
-            eprintln!(
-                "knowledge curate runs inside Oxios against the KnowledgeBase; \
-                 use `oxios brain consolidate` to consolidate Brain episodes."
-            );
-            std::process::exit(0);
-        }
-        BrainCmd::Dream => {
-            eprintln!(
-                "`oxios brain dream` is deprecated by RFC-048 — use `oxios brain curate` for note curation \
-                 or `oxios brain consolidate` for Brain episode consolidation."
-            );
-            std::process::exit(2);
         }
         BrainCmd::Install => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            let bin = sv.install().await?;
+            let bin = installer.install().await?;
             println!("installed oxibrain -> {}", bin.display());
             Ok(())
         }
-        BrainCmd::Start => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            sv.start().await?;
-            println!("oxibrain started");
-            Ok(())
-        }
-        BrainCmd::Stop => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
-            );
-            sv.stop().await?;
-            println!("oxibrain stopped");
-            Ok(())
-        }
         BrainCmd::Uninstall => {
-            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            let sv = oxios_kernel::BrainSupervisor::new(
-                oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+            installer.remove_managed()?;
+            installer.legacy_cleanup(&dir).await;
+            println!(
+                "oxibrain binary removed (data at {} untouched)",
+                dir.display()
             );
-            sv.uninstall().await?;
-            println!("oxibrain uninstalled");
+            Ok(())
+        }
+        BrainCmd::Reindex => {
+            let bin = installer
+                .locate_binary()
+                .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
+            // `--embed` is best-effort (boot degrades the same way). Stock
+            // oxibrain never attaches an embedder in the CLI, so the embed
+            // step reports "no embedding port configured" even though the
+            // lexical reconcile above it already committed. Degrade exactly
+            // that case: rerun without `--embed` so the reconcile report
+            // prints and the verb exits 0. Any other failure propagates.
+            let out = oxios_kernel::brain::run_cli(
+                &bin,
+                &dir,
+                &["admin", "index", "--documents", "--embed"],
+            )
+            .await?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if oxios_kernel::brain::embed_gap(&stderr) {
+                    let retry = oxios_kernel::brain::run_cli(
+                        &bin,
+                        &dir,
+                        &["admin", "index", "--documents"],
+                    )
+                    .await?;
+                    if !retry.status.success() {
+                        anyhow::bail!(
+                            "`oxibrain admin index --documents` exited with status {}: {}",
+                            retry.status,
+                            String::from_utf8_lossy(&retry.stderr).trim_end()
+                        );
+                    }
+                    println!("{}", String::from_utf8_lossy(&retry.stdout));
+                    println!("dense embed: skipped (no embedding port configured)");
+                    return Ok(());
+                }
+                anyhow::bail!(
+                    "`oxibrain admin index --documents --embed` exited with status {}: {}",
+                    out.status,
+                    stderr.trim_end()
+                );
+            }
+            println!("{}", String::from_utf8_lossy(&out.stdout));
+            Ok(())
+        }
+        BrainCmd::Extract => {
+            let bin = installer
+                .locate_binary()
+                .with_context(|| "oxibrain binary not found — run `oxios brain install` first")?;
+            let out = oxios_kernel::brain::run_cli(&bin, &dir, &["admin", "extract", "--pending"])
+                .await?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                anyhow::bail!(
+                    "`oxibrain admin extract --pending` exited with status {}: {}",
+                    out.status,
+                    stderr.trim_end()
+                );
+            }
+            println!("{}", String::from_utf8_lossy(&out.stdout));
             Ok(())
         }
     }
@@ -1712,15 +1872,17 @@ async fn cmd_foundation(
     cmd: &crate::cli::FoundationCmd,
 ) -> Result<()> {
     use oxios_kernel::foundation;
-    use oxios_kernel::foundation::bootstrap::{BootstrapConfig, bootstrap, quick_probe};
+    use oxios_kernel::foundation::bootstrap::{
+        BootstrapConfig, bootstrap, brain_executable, quick_probe,
+    };
     use oxios_kernel::foundation::migrate::InMemoryKeychain;
     use oxios_kernel::foundation::profile::ProfileRegistry;
 
     let home = oxios_home.parent().unwrap_or(oxios_home);
-    let socket = if config.foundation.brain_socket.is_empty() {
-        foundation::default_brain_socket(home)
+    let dir = if config.foundation.brain_dir.is_empty() {
+        foundation::default_brain_dir(home)
     } else {
-        oxios_kernel::config::expand_home(&config.foundation.brain_socket)
+        oxios_kernel::config::expand_home(&config.foundation.brain_dir)
     };
     let registry_path = if config.foundation.registry_path.is_empty() {
         foundation::versioned_root(home).join(foundation::PROFILES_FILE)
@@ -1735,8 +1897,14 @@ async fn cmd_foundation(
                 foundation::versioned_root(home).display()
             );
             println!("registry:       {}", registry_path.display());
-            println!("brain socket:   {}", socket.display());
-            let state = quick_probe(&socket).await;
+            println!("brain dir:      {}", dir.display());
+            let installer = oxios_kernel::BrainInstaller::from_brain_section(home, &config.brain);
+            match installer.locate_binary() {
+                Some(binary) => println!("brain binary:   {}", binary.display()),
+                None => println!("brain binary:   (missing — run `oxios brain install`)"),
+            }
+            let exe = brain_executable(home, Some(&installer));
+            let state = quick_probe(&exe);
             println!("brain state:    {state:?}");
             if registry_path.exists() {
                 match std::fs::read_to_string(&registry_path) {
@@ -1751,12 +1919,16 @@ async fn cmd_foundation(
             }
             Ok(())
         }
-        crate::cli::FoundationCmd::Bootstrap { may_start } => {
+        crate::cli::FoundationCmd::Bootstrap { may_install } => {
+            let installer = Arc::new(oxios_kernel::BrainInstaller::from_brain_section(
+                home,
+                &config.brain,
+            ));
             let cfg = BootstrapConfig {
                 home: home.to_path_buf(),
-                socket_path: Some(socket.clone()),
-                may_start_daemon: *may_start,
-                starter: None,
+                brain_dir: Some(dir.clone()),
+                may_install: *may_install,
+                installer: Some(installer),
             };
             let report = bootstrap(&cfg).await.context("foundation bootstrap")?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1807,15 +1979,37 @@ async fn run(cli: Cli) -> Result<()> {
     let oxios_home = oxios_home_from_config(&config_path);
     // OXICODE_HOME was set in main() before the tokio runtime started — Rust 2024
     // requires single-threaded env mutation.
+    // ── Pre-boot home migration (BEFORE ensure_workspace) ──
+    // `oxios migrate` must observe the canonical home exactly as it
+    // stands: if ensure_workspace ran first, the freshly-created
+    // skeleton (workspace dirs, default config.toml) would read as a
+    // diverged destination and the plan would report a spurious
+    // conflict against itself.
+    if let Some(Command::Migrate { dry_run }) = cli.command.as_ref() {
+        return cmd_migrate(*dry_run);
+    }
 
-    // Detect first run (before ensure_workspace creates the dir).
-    let is_first_run = !oxios_home.join("config.toml").exists();
+    // Unified home: canonical-first, legacy READ-ONLY fallback. When
+    // the canonical config is missing but a pre-unification
+    // `~/.oxios/config.toml` exists, it becomes the load source;
+    // every write (config PUT, onboarding) still targets the
+    // canonical `config_path`.
+    let config_source = oxios_kernel::oxi_home::effective_config_path(&config_path);
+    if config_source != config_path {
+        tracing::info!(
+            canonical = %config_path.display(),
+            legacy = %config_source.display(),
+            "canonical config missing; loading legacy pre-unification config (read-only)"
+        );
+    }
+    // Detect first run (no usable config anywhere).
+    let is_first_run = !config_source.exists();
 
-    ensure_workspace(&oxios_home)?;
+    ensure_workspace(&oxios_home, &config_source)?;
 
     // ── Load config ──
-    let mut config = if config_path.exists() {
-        oxios_kernel::config::load_config(&config_path)?
+    let mut config = if config_source.exists() {
+        oxios_kernel::config::load_config(&config_source)?
     } else {
         OxiosConfig::default()
     };
@@ -1898,7 +2092,14 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Some(Command::Config { action }) => {
             let action = action.clone().unwrap_or(ConfigAction::Show);
-            return cmd_config(&action, &config_path).await;
+            // Unified home: reads (show/get/list) honor the legacy
+            // read-only fallback; writes (set/reset) always target the
+            // canonical path.
+            let read_path = match &action {
+                ConfigAction::Set { .. } | ConfigAction::Reset { .. } => config_path.clone(),
+                _ => config_source.clone(),
+            };
+            return cmd_config(&action, &read_path).await;
         }
         Some(Command::Onboard) => {
             let result = oxios_kernel::onboarding::run_onboarding(&oxios_home, &mut config, false)?;
@@ -1924,13 +2125,24 @@ async fn run(cli: Cli) -> Result<()> {
             dry_run,
             yes,
             no_restart,
+            via,
+            adopt,
+            rollback,
         }) => {
+            let via = match via.as_deref() {
+                Some("cargo") => commands::update::Via::Cargo,
+                _ => commands::update::Via::Auto,
+            };
             let outcome = commands::update::run_update(
+                &oxios_home,
                 *web_only,
                 *binary_only,
                 version.as_deref(),
                 *dry_run,
                 *yes,
+                via,
+                *adopt,
+                *rollback,
             )
             .await?;
 
@@ -1940,8 +2152,27 @@ async fn run(cli: Cli) -> Result<()> {
             if !*no_restart && outcome.any() {
                 println!();
                 let port = config.gateway.port;
-                let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
-                    .with_probe_port(port);
+                // F4: post-update exe gate. We override the restart exe with
+                // the launcher path ONLY when the update actually produced a
+                // new launcher — `outcome.used_managed_store && launcher.exists()`.
+                // Pre-update classification is unreliable: an Unmanaged install
+                // that just got migrated is now Managed, but the OLD exe (now
+                // possibly renamed `.bak.<date>` by `apply_migration_plan`)
+                // would still be what `current_exe()` resolves to. Restricting
+                // the override to "the launcher actually exists right now"
+                // converges the executed binary to the new launcher regardless
+                // of which channel the user started from (Managed stays
+                // Managed; Unmanaged→Managed transitions pick up the launcher;
+                // Brew/Cargo/Dev stay on `current_exe()`).
+                let mut daemon =
+                    DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir)
+                        .with_probe_port(port);
+                let launcher_exists = managed_install::launcher_path(&oxios_home)
+                    .try_exists()
+                    .unwrap_or(false);
+                if outcome.used_managed_store && launcher_exists {
+                    daemon = daemon.with_exe(managed_install::launcher_path(&oxios_home));
+                }
                 if matches!(daemon.status(), oxios_kernel::DaemonStatus::Running { .. }) {
                     println!(
                         "  {} Restarting daemon to activate the update...",
@@ -1996,7 +2227,7 @@ async fn run(cli: Cli) -> Result<()> {
             | Some(Command::Run { .. })
             | Some(Command::Chat)
             | Some(Command::Status)
-            | Some(Command::Doctor)
+            | Some(Command::Doctor { .. })
             | Some(Command::Agent { .. })
             | Some(Command::Backup { .. })
             | Some(Command::Restore { .. })
@@ -2025,8 +2256,17 @@ async fn run(cli: Cli) -> Result<()> {
     let _ = term.write_str(&format!("  {} Starting Oxios...\r", style("⠋").cyan()));
     let _ = term.flush();
 
+    // RFC-050 §3 vault watcher and the daemonless-brain boot work
+    // (legacy cleanup, documents seed + warm index, extraction drain
+    // timer) are daemon-surface concerns only: one-shot commands
+    // (run/chat/status/doctor/…) would pay the FSEvents subscription +
+    // debounce thread + join — and overlapping `index --documents
+    // --embed` children on the same brain dir — for nothing.
+    let daemon_command = matches!(cli.command.as_ref(), None | Some(Command::Start { .. }));
     let mut kernel = Kernel::builder()
         .config_path(config_path.clone())
+        .watch_vault(daemon_command)
+        .daemon(daemon_command)
         .build()
         .await?;
 
@@ -2090,7 +2330,9 @@ async fn run(cli: Cli) -> Result<()> {
 
         Some(Command::Status) => cmd_status(&kernel).await,
 
-        Some(Command::Doctor) => cmd_doctor(&kernel, &config_path).await,
+        Some(Command::Doctor { cleanup, yes }) => {
+            cmd_doctor(&kernel, &config_path, &oxios_home, *cleanup, *yes).await
+        }
 
         Some(Command::Chat) => {
             #[cfg(feature = "cli")]
@@ -2475,18 +2717,18 @@ async fn run(cli: Cli) -> Result<()> {
                         );
                         println!("{}", "─".repeat(50));
                         for p in &projects {
-                            let paths_str = if p.paths.is_empty() {
-                                "(no paths)".to_string()
+                            let roots_str = if p.root_paths.is_empty() {
+                                "(no roots)".to_string()
                             } else {
-                                p.paths
+                                p.root_paths
                                     .iter()
                                     .map(|x| x.to_string_lossy().to_string())
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             };
-                            println!("  {} {} — {}", p.emoji, style(&p.name).bold(), &paths_str);
-                            if !p.tags.is_empty() {
-                                println!("     tags: {}", p.tags.join(", "));
+                            println!("  {} — {}", style(&p.name).bold(), &roots_str);
+                            if !p.instructions.is_empty() {
+                                println!("     instructions: {}", p.instructions);
                             }
                         }
                     }
@@ -2499,27 +2741,23 @@ async fn run(cli: Cli) -> Result<()> {
                     };
                     match project {
                         Some(p) => {
-                            println!("{}", style(format!("{} {}", p.emoji, p.name)).bold());
+                            println!("{}", style(&p.name).bold());
                             println!("{}", "─".repeat(30));
                             println!("  ID:          {}", p.id);
-                            if !p.description.is_empty() {
-                                println!("  Description: {}", p.description);
-                            }
-                            println!("  Source:       {}", p.source);
                             println!(
-                                "  Paths:       {}",
-                                if p.paths.is_empty() {
+                                "  Roots:       {}",
+                                if p.root_paths.is_empty() {
                                     "(none)".to_string()
                                 } else {
-                                    p.paths
+                                    p.root_paths
                                         .iter()
                                         .map(|x| x.to_string_lossy().to_string())
                                         .collect::<Vec<_>>()
                                         .join(", ")
                                 }
                             );
-                            if !p.tags.is_empty() {
-                                println!("  Tags:        {}", p.tags.join(", "));
+                            if !p.instructions.is_empty() {
+                                println!("  Instructions: {}", p.instructions);
                             }
                             println!("  Created:     {}", p.created_at.to_rfc3339());
                             println!("  Last active: {}", p.last_active_at.to_rfc3339());
@@ -2532,67 +2770,14 @@ async fn run(cli: Cli) -> Result<()> {
                 ProjectAction::Add {
                     name,
                     paths,
-                    tags,
-                    emoji,
-                    description,
+                    instructions,
                 } => {
-                    // RFC-025: paths live on Mounts. Create the Project, then
-                    // promote any provided paths into Mounts and link them via
-                    // `mount_ids` so the project is a usable code context in one
-                    // step. When the mount system is unavailable, paths are
-                    // ignored with a warning.
-                    match pm.create_project(
-                        name.clone(),
-                        tags.clone(),
-                        Some(emoji.clone()),
-                        description.clone(),
-                        oxios_kernel::ProjectSource::Manual,
-                    ) {
+                    // The project record owns its roots directly; each path is
+                    // validated (absolute, existing directory) before creation.
+                    let root_paths: Vec<std::path::PathBuf> =
+                        paths.iter().map(std::path::PathBuf::from).collect();
+                    match pm.create(name, root_paths, instructions.as_deref().unwrap_or("")) {
                         Ok(p) => {
-                            if !paths.is_empty() {
-                                if let Some(mm) = kernel.mount_manager() {
-                                    let mut mount_ids: Vec<oxios_kernel::MountId> = Vec::new();
-                                    for raw in paths {
-                                        let root = std::path::PathBuf::from(raw);
-                                        match mm.covering_mount_id(&root) {
-                                            Some(mid) => {
-                                                if !mount_ids.contains(&mid) {
-                                                    mount_ids.push(mid);
-                                                }
-                                            }
-                                            None => match mm.create_mount(
-                                                p.name.clone(),
-                                                vec![root],
-                                                oxios_kernel::MountSource::Manual,
-                                            ) {
-                                                Ok(m) => mount_ids.push(m.id),
-                                                Err(e) => eprintln!(
-                                                    "{} Could not create mount for '{}': {}",
-                                                    style("✗").red().bold(),
-                                                    raw,
-                                                    e
-                                                ),
-                                            },
-                                        }
-                                    }
-                                    if !mount_ids.is_empty()
-                                        && let Err(e) =
-                                            pm.update_project_bundle(p.id, Some(mount_ids), None)
-                                    {
-                                        eprintln!(
-                                            "{} Project created but mount link failed: {}",
-                                            style("✗").red().bold(),
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    eprintln!(
-                                        "{} Mount system unavailable — paths ignored. \
-                                         Use `oxios mount add` and link separately.",
-                                        style("⚠").yellow().bold()
-                                    );
-                                }
-                            }
                             println!(
                                 "{} Project '{}' created ({})",
                                 style("✓").green().bold(),
@@ -2913,9 +3098,10 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Stop)
         | Some(Command::Daemon { .. })
         | Some(Command::Log { .. })
+        | Some(Command::Reset { .. })
+        | Some(Command::Migrate { .. })
         | Some(Command::Config { .. })
         | Some(Command::Onboard)
-        | Some(Command::Reset { .. })
         | Some(Command::Models { .. })
         | Some(Command::Web { .. })
         | Some(Command::Completion { .. })
@@ -3031,7 +3217,12 @@ async fn start_daemon(
     }
     let daemon = DaemonManager::new(&config.daemon.pid_file, &config.daemon.log_dir);
     if foreground || effective_remote {
-        cmd_serve(kernel, config_path).await
+        let result = cmd_serve(kernel, config_path).await;
+        // RFC-050: stop the vault watcher after the supervised
+        // lifetime ends (both outcomes) so the debounce thread joins
+        // deterministically instead of at process teardown.
+        kernel.shutdown_vault_watcher();
+        result
     } else {
         daemon.start(config_path, config.gateway.port)
     }
@@ -3216,12 +3407,11 @@ async fn cmd_serve(kernel: &Kernel, config_path: &Path) -> Result<()> {
     supervisor.track_critical("gateway", gateway_task);
     supervisor.track_critical("guardian", guardian_task);
     supervisor.track_critical("health", health_task);
-    // Start the cron scheduler loop (restore + config load + tick). Returns
-    // None when cron is disabled in config — nothing to track in that case
-    // (a completed handle would otherwise look like a fatal critical-task exit).
-    if let Some(cron_task) = kernel.start_cron_loop() {
-        supervisor.track_critical("cron", cron_task);
-    }
+    // Retired CronScheduler → RFC-043 tasks: one-time migration of any
+    // legacy cron jobs (persisted state + config inline jobs) into scheduled
+    // tasks. Fire-and-forget — failures log and retry on the next boot, so
+    // this is not tracked as a critical task.
+    let _legacy_cron_migration = kernel.migrate_legacy_crons();
     for task in channel_tasks {
         supervisor.track_critical("channel", task);
     }

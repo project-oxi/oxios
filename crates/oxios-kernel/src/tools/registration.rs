@@ -36,7 +36,6 @@ use crate::tools::builtin::*;
 use crate::tools::gated_tool::GatedTool;
 use crate::tools::{
     A2aDelegateTool, A2aQueryTool, A2aSendTool, AskUserTool, ExecTool, KnowledgeTool,
-    MemoryReadTool, MemorySearchTool, MemoryWriteTool,
 };
 use crate::types::AgentId;
 
@@ -44,19 +43,34 @@ use crate::types::AgentId;
 ///
 /// Every agent receives these tools regardless of its capability space.
 /// This consists of file-system tools (read, write, edit, grep, find, ls)
-/// and web search tools.
-///
-/// This helper is also useful for unit tests that need a basic tool set
-/// without constructing a full CSpace.
-pub fn register_always_on(registry: &ToolRegistry, search_cache: Arc<SearchCache>) {
+/// and web search tools. The web-search tools are the kernel wrappers
+/// ([`KernelWebSearchTool`] / [`KernelGetSearchResultsTool`]) which stash
+/// structured results into `bus` for the RFC-015 transparency stream and
+/// prefer a managed provider per the `[search]` config snapshot.
+pub fn register_always_on(
+    registry: &ToolRegistry,
+    search_cache: Arc<SearchCache>,
+    bus: Arc<crate::tools::StructuredResultBus>,
+    search: crate::config::SearchConfig,
+) {
     registry.register(ReadTool::new());
     registry.register(WriteTool::new());
     registry.register(EditTool::new());
     registry.register(GrepTool::new());
     registry.register(FindTool::new());
     registry.register(LsTool::new());
-    registry.register(WebSearchTool::new(search_cache.clone()));
-    registry.register(GetSearchResultsTool::new(search_cache));
+    registry.register(crate::tools::KernelWebSearchTool::new(
+        search_cache.clone(),
+        bus.clone(),
+        search,
+    ));
+    registry.register(crate::tools::KernelGetSearchResultsTool::new(
+        GetSearchResultsTool::new(search_cache),
+        bus.clone(),
+    ));
+    // Session-scoped planning. Ungated by design: the todo list is
+    // in-process state that touches no file and no network.
+    registry.register(crate::tools::TodoTool::new(bus));
 }
 
 /// Register the headless-browser browse tools when the engine is available.
@@ -85,15 +99,13 @@ fn register_browser_tools(_kernel: &KernelHandle, _registry: &ToolRegistry) {}
 /// Register always-on tools with access gate and (RFC-035) approval wrapping.
 ///
 /// Same as [`register_always_on`] but wraps each tool in [`GatedTool`] so that
-/// all file operations pass through the access gate and approval gate.
-///
-/// `approval_gate`, `event_bus`, and `pending_approvals` may all be `None`
-/// for headless / test paths; the gated tool still honors the access gate
-/// but skips the approval step.
+/// all operations pass through the access gate and approval gate.
 #[allow(clippy::too_many_arguments)]
 pub fn register_always_on_gated(
     registry: &ToolRegistry,
     search_cache: Arc<SearchCache>,
+    bus: Arc<crate::tools::StructuredResultBus>,
+    search: crate::config::SearchConfig,
     gate: Arc<AccessGate>,
     context: AgentContext,
     approval_gate: Option<Arc<crate::approval::ApprovalGate>>,
@@ -101,6 +113,7 @@ pub fn register_always_on_gated(
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
 ) {
+    let bus_for_todo = Arc::clone(&bus);
     registry.register(GatedTool::with_approval(
         ReadTool::new(),
         gate.clone(),
@@ -156,7 +169,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        WebSearchTool::new(search_cache.clone()),
+        crate::tools::KernelWebSearchTool::new(search_cache.clone(), bus.clone(), search),
         gate.clone(),
         context.clone(),
         approval_gate.clone(),
@@ -165,7 +178,7 @@ pub fn register_always_on_gated(
         pending_path_access.clone(),
     ));
     registry.register(GatedTool::with_approval(
-        GetSearchResultsTool::new(search_cache),
+        crate::tools::KernelGetSearchResultsTool::new(GetSearchResultsTool::new(search_cache), bus),
         gate,
         context,
         approval_gate,
@@ -173,6 +186,10 @@ pub fn register_always_on_gated(
         pending_approvals,
         pending_path_access.clone(),
     ));
+    // Session-scoped planning, mirroring `register_always_on`. Registered
+    // ungated even here: the todo list is in-process state that touches no
+    // file and no network, so there is nothing for the access gate to check.
+    registry.register(crate::tools::TodoTool::new(bus_for_todo));
 }
 
 /// Register tools into `registry` from a [`ResolvedExecutionProfile`].
@@ -201,16 +218,13 @@ pub fn register_always_on_gated(
 /// | `kernel.browse.extract`    | `BrowseExtractTool::new(engine.clone())` (browser feat) |
 /// | `kernel.browse.session`    | `BrowseSessionTool::new(engine.clone())` (browser feat) |
 /// | `kernel.browse.script`     | `BrowseScriptTool::new(engine)` (browser feat)  |
-/// | `kernel.memory.read`       | `MemoryReadTool::from_kernel(kernel)`            |
-/// | `kernel.memory.search`     | `MemorySearchTool::from_kernel(kernel)`          |
-/// | `kernel.memory.write`      | `MemoryWriteTool::from_kernel(kernel)`           |
+/// | `kernel.memory.*`          | warn + skip (memory tools removed in the oxibrain CLI cutover) |
 /// | `kernel.knowledge.read`    | `KnowledgeTool::from_kernel(kernel)`             |
 /// | `kernel.knowledge.write`   | warn + skip (no separate write tool exists; covered by `KnowledgeTool` from `kernel.knowledge.read`) |
 /// | `kernel.ask_user.ask`      | `AskUserTool::new(pending, event_bus)`           |
 /// | `kernel.persona.update`    | `PersonaTool::from_kernel(kernel)`               |
 /// | `kernel.project.update`    | `ProjectTool::from_kernel(kernel)`               |
 /// | `kernel.agent.update`      | `KernelAgentTool::from_kernel(kernel)`           |
-/// | `kernel.cron.update`       | `CronTool::from_kernel(kernel)`                  |
 /// | `kernel.security.query`    | `SecurityTool::from_kernel(kernel)`              |
 /// | `kernel.budget.query`      | `BudgetTool::from_kernel(kernel)`                |
 /// | `kernel.resource.query`    | `ResourceTool::from_kernel(kernel)`              |
@@ -482,14 +496,16 @@ pub fn register_from_resolved_profile(
                 }
             }
             // ── Memory ───────────────────────────────────────────────
-            "kernel.memory.read" => {
-                registry.register(MemoryReadTool::from_kernel(kernel));
-            }
-            "kernel.memory.search" => {
-                registry.register(MemorySearchTool::from_kernel(kernel));
-            }
-            "kernel.memory.write" => {
-                registry.register(MemoryWriteTool::from_kernel(kernel));
+            // Memory descriptors stay in the catalog, but the memory
+            // tools were removed with the oxibrain 0.8 daemonless
+            // cutover (agents use the `brain` skill + `oxibrain` exec).
+            // Mirroring the feature-off pattern: warn and skip so the
+            // catalog/profile mismatch stays observable.
+            "kernel.memory.read" | "kernel.memory.search" | "kernel.memory.write" => {
+                tracing::warn!(
+                    id = id,
+                    "memory tools removed by the brain cutover; skipping {id}"
+                );
             }
             // ── Knowledge ────────────────────────────────────────────
             // Precondition: `KnowledgeTool` is registered only via the
@@ -527,9 +543,6 @@ pub fn register_from_resolved_profile(
             "kernel.agent.update" => {
                 registry.register(KernelAgentTool::from_kernel(kernel));
             }
-            "kernel.cron.update" => {
-                registry.register(CronTool::from_kernel(kernel));
-            }
             "kernel.security.query" => {
                 registry.register(SecurityTool::from_kernel(kernel));
             }
@@ -557,9 +570,6 @@ pub fn register_from_resolved_profile(
             // off, the descriptor stays in the catalog (so the selector
             // can still reason about it) but the arm warns and skips so
             // operators see the catalog/profile/feature mismatch.
-            "kernel.mount.manage" => {
-                registry.register(MountTool::from_kernel(kernel));
-            }
             // TaskTool is conditional on the assembler attaching a
             // `task_store` — `from_kernel` returns `None` when no
             // store is attached, matching the legacy path. The
@@ -707,13 +717,12 @@ pub fn register_from_resolved_profile(
 /// | ResourceRef | Required rights | Registered tools |
 /// |-------------|----------------|-----------------|
 /// | `Exec { .. }` | `EXECUTE` | `ExecTool` |
-/// | `KernelDomain { "memory" }` | — | *(registered via the `kernel.memory.*` arms in [`register_from_resolved_profile`])* |
-/// | `KernelDomain { "project" }` | any | `ProjectTool` |
+/// | `KernelDomain { "memory" }` | — | *(brain cutover: no memory tool on this path; agents use the `brain` skill + `oxibrain` exec)* |
+/// | `KernelDomain { "project" }` | any | `ProjectTool` + `IssueTool` |
 /// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
 /// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
 /// | `KernelDomain { "persona" }` | any | `PersonaTool` |
 /// | `KernelDomain { "program" }` | any | *(deprecated — skills via CSpace)* |
-/// | `KernelDomain { "cron" }` | any | `CronTool` |
 /// | `KernelDomain { "security" }` | any | `SecurityTool` |
 /// | `KernelDomain { "budget" }` | any | `BudgetTool` |
 /// | `KernelDomain { "resource" }` | any | `ResourceTool` |
@@ -727,7 +736,12 @@ pub fn register_tools_from_cspace(
     agent_id: AgentId,
 ) {
     // ── Tier 1: Always-on tools ─────────────────────────────────────
-    register_always_on(registry, search_cache);
+    register_always_on(
+        registry,
+        search_cache,
+        Arc::clone(&kernel.tool_results),
+        kernel.engine.search_config(),
+    );
 
     // ── Tier 2: CSpace-driven tools ─────────────────────────────────
     for cap in cspace.iter() {
@@ -744,7 +758,11 @@ pub fn register_tools_from_cspace(
 
             // Kernel domain tools
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */
+                "memory" => {
+                    // Memory tools removed with the oxibrain 0.8 daemonless
+                    // cutover — agents use the `brain` skill + `oxibrain`
+                    // CLI (exec structured mode). Domain stays recognized so
+                    // persona grants keep their meaning.
                 }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
@@ -755,7 +773,7 @@ pub fn register_tools_from_cspace(
                 "persona" => registry.register(PersonaTool::from_kernel(kernel)),
                 "program" => { /* Skills are surfaced through CSpace + semantic retrieval, not individual tools */
                 }
-                "cron" => registry.register(CronTool::from_kernel(kernel)),
+
                 "security" => registry.register(SecurityTool::from_kernel(kernel)),
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
@@ -769,7 +787,7 @@ pub fn register_tools_from_cspace(
             // agents use exec to run program commands.
             ResourceRef::Skill { .. } => {}
 
-            // Space, Agent, Mcp resource refs are handled through
+            // Agent, Mcp resource refs are handled through
             // their respective KernelDomain registrations above
             // or through dedicated tool paths.
             _ => {}
@@ -784,6 +802,9 @@ pub fn register_tools_from_cspace(
 /// - ExecTool is created with `AgentContext` and wrapped in [`GatedTool`] so
 ///   RFC-035 Step 2.5 also covers shell + structured exec calls (replacing
 ///   the bespoke exec-only shell approval block)
+/// - When `include_always_on_tools` is `false`, Tier 1 (file ops + web search)
+///   is skipped entirely — used for control-only personas (`ToolProfile::Control`)
+///   whose settings-copilot scope must never include the file system or web
 ///
 /// Use this in production. The ungated version exists for backward compatibility.
 ///
@@ -793,7 +814,7 @@ pub fn register_tools_from_cspace(
 /// * `kernel` — Handle to the kernel for constructing tool instances.
 /// * `cspace` — The agent's capability space (determines which tools are available).
 /// * `search_cache` — Shared search cache for web search tools.
-/// * `agent_id` — The agent's ID (used by A2A tools for routing).
+/// * `agent_id` — The agent's ID (used by A2A + Task tools for routing).
 /// * `gate` — The unified access gate for permission checks.
 /// * `context` — The agent's security context.
 /// * `approval_gate` — RFC-035 approval gate; consults declared policy,
@@ -801,6 +822,30 @@ pub fn register_tools_from_cspace(
 /// * `event_bus` — Publishes `KernelEvent::ApprovalRequested` when
 ///   `RequireApproval` is returned.
 /// * `pending_approvals` — Shared registry of pending user decisions.
+/// * `include_always_on_tools` — When `false`, skip Tier 1 entirely
+///   (used for `ToolProfile::Control`).
+///
+/// # CSpace → Tool mapping
+///
+/// | ResourceRef | Required rights | Registered tools |
+/// |-------------|----------------|-----------------|
+/// | `Exec { .. }` | `EXECUTE` | `ExecTool` (gated) |
+/// | `Browser` | `EXECUTE` | SDK browse tools |
+/// | `KernelDomain { "memory" }` | — | *(brain cutover: no memory tool on this path; agents use the `brain` skill + `oxibrain` exec)* |
+/// | `KernelDomain { "project" }` | any | `ProjectTool` + `IssueTool` |
+/// | `KernelDomain { "agent" }` | any | `KernelAgentTool` |
+/// | `KernelDomain { "a2a" }` | any | `A2aDelegateTool`, `A2aSendTool`, `A2aQueryTool` |
+/// | `KernelDomain { "persona" }` | any | `PersonaTool` |
+/// | `KernelDomain { "program" }` | any | *(deprecated — skills via CSpace)* |
+/// | `KernelDomain { "security" }` | any | `SecurityTool` |
+/// | `KernelDomain { "budget" }` | any | `BudgetTool` |
+/// | `KernelDomain { "resource" }` | any | `ResourceTool` |
+/// | `KernelDomain { "knowledge" }` | any | `KnowledgeTool` |
+/// | `KernelDomain { "task" }` | any | `TaskTool` (when task store attached) |
+/// | `KernelDomain { "marketplace" }` | any | `MarketplaceTool` |
+/// | `KernelDomain { "mcp_manage" }` | any | `McpManageTool` (approval-gated) |
+/// | `KernelDomain { "engine" }` | any | `EngineTool` (approval-gated) |
+/// | `Program { .. }` | — | *(not registered; surfaced via ToolRetriever)* |
 #[allow(clippy::too_many_arguments)]
 pub fn register_tools_from_cspace_gated(
     registry: &ToolRegistry,
@@ -814,18 +859,29 @@ pub fn register_tools_from_cspace_gated(
     event_bus: Option<crate::event_bus::EventBus>,
     pending_approvals: Option<Arc<crate::tools::PendingToolApprovals>>,
     pending_path_access: Option<Arc<crate::tools::PendingPathAccess>>,
+    include_always_on_tools: bool,
+    // Active project for the turn; scopes the `issue` tool. `None` means no
+    // project is selected, and the tool says so instead of guessing one.
+    project_id: Option<crate::project::ProjectId>,
 ) {
     // ── Tier 1: Always-on tools (gated) ──────────────────────────────
-    register_always_on_gated(
-        registry,
-        search_cache,
-        gate.clone(),
-        context.clone(),
-        approval_gate.clone(),
-        event_bus.clone(),
-        pending_approvals.clone(),
-        pending_path_access.clone(),
-    );
+    // Skipped for control-only personas (ToolProfile::Control): the
+    // always-on tier is file ops + web search, which a settings copilot
+    // must not receive.
+    if include_always_on_tools {
+        register_always_on_gated(
+            registry,
+            search_cache,
+            Arc::clone(&kernel.tool_results),
+            kernel.engine.search_config(),
+            gate.clone(),
+            context.clone(),
+            approval_gate.clone(),
+            event_bus.clone(),
+            pending_approvals.clone(),
+            pending_path_access.clone(),
+        );
+    }
 
     // ── Tier 2: CSpace-driven tools ─────────────────────────────────
     for cap in cspace.iter() {
@@ -853,9 +909,23 @@ pub fn register_tools_from_cspace_gated(
 
             // Kernel domain tools (same as ungated — these already use KernelHandle internally)
             ResourceRef::KernelDomain { domain } => match domain.as_str() {
-                "memory" => { /* Registered via kernel.memory.* arms in register_from_resolved_profile */
+                "memory" => {
+                    // Memory tools removed with the oxibrain 0.8 daemonless
+                    // cutover — agents use the `brain` skill + `oxibrain`
+                    // CLI (exec structured mode). Domain stays recognized so
+                    // persona grants keep their meaning.
                 }
-                "space" => registry.register(ProjectTool::from_kernel(kernel)),
+                "project" => {
+                    registry.register(ProjectTool::from_kernel(kernel));
+                    // Issues are per-project, so they ride the project
+                    // capability. Not path-gated: the store lives under the
+                    // `~/.oxi` whole-root deny and is reachable only here.
+                    registry.register(crate::tools::IssueTool::new(
+                        Arc::clone(&kernel.issues),
+                        Arc::clone(&kernel.tool_results),
+                        project_id,
+                    ));
+                }
                 "agent" => registry.register(KernelAgentTool::from_kernel(kernel)),
                 "a2a" => {
                     registry.register(A2aDelegateTool::from_kernel(kernel, agent_id));
@@ -864,11 +934,35 @@ pub fn register_tools_from_cspace_gated(
                 }
                 "persona" => registry.register(PersonaTool::from_kernel(kernel)),
                 "program" => {}
-                "cron" => registry.register(CronTool::from_kernel(kernel)),
+
                 "security" => registry.register(SecurityTool::from_kernel(kernel)),
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
                 "knowledge" => registry.register(KnowledgeTool::from_kernel(kernel)),
+                "task" => {
+                    if let Some(store) = kernel.task_store.clone() {
+                        registry.register(TaskTool::for_store(store, Some(agent_id.to_string())));
+                    }
+                }
+                "marketplace" => registry.register(MarketplaceTool::from_kernel(kernel)),
+                "mcp_manage" => registry.register(GatedTool::with_approval(
+                    McpManageTool::from_kernel(kernel),
+                    gate.clone(),
+                    context.clone(),
+                    approval_gate.clone(),
+                    event_bus.clone(),
+                    pending_approvals.clone(),
+                    pending_path_access.clone(),
+                )),
+                "engine" => registry.register(GatedTool::with_approval(
+                    EngineTool::from_kernel(kernel),
+                    gate.clone(),
+                    context.clone(),
+                    approval_gate.clone(),
+                    event_bus.clone(),
+                    pending_approvals.clone(),
+                    pending_path_access.clone(),
+                )),
                 "mcp" => {}
                 _ => {}
             },
@@ -885,14 +979,25 @@ mod tests {
     use crate::capability::resolver::resolve;
     use crate::capability::{Capability, ResourceRef as CapResourceRef, Rights as CapRights};
 
+    /// The always-on tier as the agent actually receives it.
+    ///
+    /// The descriptor catalog is a hand-maintained list, so a name can be
+    /// advertised there while no tool is registered under it — that
+    /// exact drift shipped once when `todo` was added to the list and to the
+    /// gated path but not to this one. Assert against the real registry.
     #[test]
-    fn register_always_on_registers_eight_tools() {
+    fn register_always_on_registers_nine_tools() {
         let registry = ToolRegistry::new();
         let cache = Arc::new(SearchCache::new());
-        register_always_on(&registry, cache);
+        register_always_on(
+            &registry,
+            cache,
+            Arc::new(crate::tools::StructuredResultBus::new()),
+            crate::config::SearchConfig::default(),
+        );
 
-        // The always-on set is: read, write, edit, grep, find, ls, web_search, get_search_results
-        // ToolRegistry doesn't expose a count, but we can verify individual tool names.
+        // The always-on set is: read, write, edit, grep, find, ls,
+        // web_search, get_search_results, todo.
         let tool_names = registry.names();
         assert!(
             tool_names.contains(&"read".to_string()),
@@ -926,6 +1031,37 @@ mod tests {
             tool_names.contains(&"get_search_results".to_string()),
             "get_search_results tool should be registered"
         );
+        assert!(
+            tool_names.contains(&"todo".to_string()),
+            "todo tool should be registered"
+        );
+    }
+
+    /// Every always-on tool must also appear in the gate's Layer-0 skip list.
+    ///
+    /// The tier is registered unconditionally, so the LLM will call these
+    /// tools; if a name is missing from the skip list, no capability template
+    /// grants the matching EXECUTE right and every call is hard-denied. That
+    /// catch-22 shipped once for `web_search` (see the comment on
+    /// `gate::AccessGate::check_tool`) and is easy to reintroduce by adding a
+    /// tool to one list and not the other.
+    #[test]
+    fn always_on_tools_are_all_exempt_from_layer_zero() {
+        let registry = ToolRegistry::new();
+        register_always_on(
+            &registry,
+            Arc::new(SearchCache::new()),
+            Arc::new(crate::tools::StructuredResultBus::new()),
+            crate::config::SearchConfig::default(),
+        );
+
+        for name in registry.names() {
+            assert!(
+                crate::access_manager::LAYER0_EXEMPT_TOOLS.contains(&name.as_str()),
+                "always-on tool `{name}` is missing from LAYER0_EXEMPT_TOOLS; \
+                 every call to it would be denied for lack of an EXECUTE capability"
+            );
+        }
     }
 
     /// Lightweight `KernelHandle` construction — the established
@@ -955,7 +1091,9 @@ mod tests {
             crate::McpApi::new(Arc::new(crate::mcp::McpBridge::new())),
             crate::InfraApi::new(
                 Arc::new(crate::git_layer::GitLayer::new(base.join("git"), false).unwrap()),
-                Arc::new(crate::cron::CronScheduler::new(state_store.clone(), 60)),
+                Arc::new(
+                    crate::git_layer::GitLayer::new(base.join("kb_git"), false).unwrap(),
+                ),
                 Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 60)),
                 crate::event_bus::EventBus::new(256),
                 crate::OxiosConfig::default(),
@@ -979,14 +1117,14 @@ mod tests {
             crate::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
                 crate::event_bus::EventBus::new(256),
             ))),
-            crate::EngineApi::new(
+            Arc::new(crate::EngineApi::new(
                 Arc::new(parking_lot::RwLock::new(crate::OxiosConfig::default())),
                 base.join("config.toml"),
                 Arc::new(crate::kernel_handle::RoutingStats::new()),
                 Arc::new(crate::engine::EngineHandle::new(Arc::new(
                     crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
                 ))),
-            ),
+            )),
             Arc::new(oxios_markdown::KnowledgeBase::new(base.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
@@ -1269,7 +1407,6 @@ mod tests {
 
         let cases: &[(&str, &str, &str, &str)] = &[
             // (descriptor_id, registered_name, domain, rights)
-            ("kernel.mount.manage", "mount", "mount", "WRITE"),
             ("kernel.task.manage", "task", "task", "WRITE"),
             (
                 "kernel.marketplace.manage",

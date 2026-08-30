@@ -432,8 +432,7 @@ fn make_operations() -> ToolProfileSpec {
             knowledge_read_ceiling(),
             ask_user_ceiling(),
             // Scoped kernel mutation surface.
-            kernel_domain("cron", Rights::WRITE),
-            kernel_domain("space", Rights::WRITE),
+            kernel_domain("project", Rights::WRITE),
             kernel_domain("agent", Rights::WRITE),
             // Observe security / budget / resource domains.
             kernel_domain("security", Rights::READ),
@@ -451,7 +450,6 @@ fn make_operations() -> ToolProfileSpec {
             // Explicit mutation tools — each is one domain's
             // ApprovalOnly mutator; pinning them makes tag drift
             // loud in `validate_publish`.
-            tool_selector("kernel.cron.update"),
             tool_selector("kernel.project.update"),
             tool_selector("kernel.agent.update"),
         ],
@@ -541,14 +539,12 @@ fn make_operator() -> ToolProfileSpec {
             a2a_ceiling(),
             // Kernel observation + mutation across every domain.
             kernel_domain("persona", Rights::READ | Rights::WRITE),
-            kernel_domain("space", Rights::READ | Rights::WRITE),
+            kernel_domain("project", Rights::READ | Rights::WRITE),
             kernel_domain("agent", Rights::READ | Rights::WRITE),
-            kernel_domain("cron", Rights::READ | Rights::WRITE),
             kernel_domain("security", Rights::READ | Rights::WRITE),
             kernel_domain("budget", Rights::READ | Rights::WRITE),
             kernel_domain("resource", Rights::READ | Rights::WRITE),
             // Long-tail kernel-mutate domains (Task 9 catalog entries).
-            kernel_domain("mount", Rights::READ | Rights::WRITE),
             kernel_domain("task", Rights::READ | Rights::WRITE),
             kernel_domain("marketplace", Rights::READ | Rights::WRITE),
             kernel_domain("program", Rights::READ | Rights::WRITE),
@@ -709,13 +705,7 @@ mod tests {
             ),
             (
                 ResourceRef::KernelDomain {
-                    domain: "cron".into(),
-                },
-                Rights::WRITE,
-            ),
-            (
-                ResourceRef::KernelDomain {
-                    domain: "space".into(),
+                    domain: "project".into(),
                 },
                 Rights::WRITE,
             ),
@@ -743,9 +733,10 @@ mod tests {
                 .find(|t| t.descriptor.registered_name == name)
                 .map(|t| &t.status)
         };
-        // cron/project/agent mutate: ApprovalOnly class → RequiresApproval (authorized, gated).
+        // project/agent mutate: ApprovalOnly class → RequiresApproval
+        // (authorized, gated). (cron was removed with the cron tool.)
         assert!(matches!(
-            status_of("cron"),
+            status_of("project"),
             Some(ResolutionStatus::RequiresApproval)
         ));
         // persona is NOT included by operations → not even present.

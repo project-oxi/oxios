@@ -418,15 +418,14 @@ impl Supervisor for BasicSupervisor {
                     reasoning_segments: Vec::new(),
                 })
             } else {
-                // Execute with a lightweight SessionContext copy: project IDs
-                // are read-only during execution (recall timing moved to the
-                // oxibrain daemon — RFC-047), so no write-back is needed.
+                // Execute with a lightweight SessionContext copy: the project
+                // binding is read-only during execution (recall timing moved
+                // to the oxibrain daemon — RFC-047), so no write-back is needed.
                 let mut temp_ctx = {
                     let ctx = session_ctx.read().await;
-                    let mut c = crate::session_context::SessionContext::new();
-                    c.primary_project_id = ctx.primary_project_id;
-                    c.secondary_project_ids = ctx.secondary_project_ids.clone();
-                    c
+                    crate::session_context::SessionContext {
+                        project_id: ctx.project_id.clone(),
+                    }
                 };
                 runtime
                     .execute_directive(id, &directive, &env, &mut temp_ctx)
@@ -787,12 +786,13 @@ mod tests {
                 Arc::new(
                     crate::git_layer::GitLayer::new(tmp.join("git"), false).expect("git layer"),
                 ),
-                Arc::new(crate::cron::CronScheduler::new(
-                    Arc::new(
-                        crate::state_store::StateStore::new(tmp.join("cron")).expect("cron state"),
-                    ),
-                    60,
-                )),
+                // T16: knowledge_git — distinct layer for vault-rooted commits.
+                // In tests we point it at a sibling temp dir so repo init does
+                // not race with the workspace git layer above.
+                Arc::new(
+                    crate::git_layer::GitLayer::new(tmp.join("kb_git"), false)
+                        .expect("knowledge git layer"),
+                ),
                 Arc::new(crate::resource_monitor::ResourceMonitor::new(60, 100)),
                 EventBus::new(64),
                 crate::config::OxiosConfig::default(),
@@ -816,7 +816,7 @@ mod tests {
             crate::kernel_handle::A2aApi::new(Arc::new(crate::a2a::A2AProtocol::new(
                 EventBus::new(64),
             ))),
-            crate::kernel_handle::EngineApi::new(
+            Arc::new(crate::kernel_handle::EngineApi::new(
                 Arc::new(parking_lot::RwLock::new(
                     crate::config::OxiosConfig::default(),
                 )),
@@ -825,7 +825,7 @@ mod tests {
                 Arc::new(crate::engine::EngineHandle::new(Arc::new(
                     crate::OxiosEngine::new("anthropic/claude-sonnet-4-20250514"),
                 ))),
-            ),
+            )),
             Arc::new(oxios_markdown::KnowledgeBase::new(tmp.join("knowledge")).unwrap()),
             Arc::new(
                 crate::kernel_handle::KnowledgeLens::new(
@@ -954,7 +954,7 @@ mod tests {
     fn test_pool_reinsert_replaces_guard() {
         let pool = AgentPool::new();
         let id = AgentId::new_v4();
-        pool.insert_profiled(id.clone(), pooled_agent(), "session-a", 0x1111);
+        pool.insert_profiled(id, pooled_agent(), "session-a", 0x1111);
         pool.insert_profiled(id, pooled_agent(), "session-a", 0x2222);
 
         assert!(

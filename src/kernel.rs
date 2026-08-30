@@ -8,15 +8,16 @@ use anyhow::{Context, Result};
 use oxicode_sdk::ModelCatalog;
 use oxios_gateway::Gateway;
 use oxios_kernel::{
-    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainConfig,
-    BrainConnection, BudgetManager, ClawHubClient, ClawHubInstaller, CronScheduler, EngineHandle,
-    EventBus, GitLayer, KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator,
-    OxiosConfig, OxiosEngine, PersonaManager, ProjectManager, ResourceMonitor, SkillManager,
-    SkillsShClient, SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
-    auth::AuthManager, config::load_config, mcp::validate_mcp_command,
+    A2AProtocol, AgentRuntime, AuditPersistence, AuditTrail, BasicSupervisor, BrainSession,
+    BudgetManager, ClawHubClient, ClawHubInstaller, EngineHandle, EventBus, GitLayer,
+    KernelDatabase, MarketplaceApi, McpBridge, McpServer, Orchestrator, OxiosConfig, OxiosEngine,
+    PersonaManager, ProjectManager, ResourceMonitor, SkillManager, SkillsShClient,
+    SkillsShInstaller, SubsystemState, Supervisor, access_manager::AccessManager,
+    auth::AuthManager, config::load_config, git_layer::rel_path, mcp::validate_mcp_command,
 };
 use oxios_markdown::KnowledgeBase;
 use oxios_markdown::knowledge::FileChange;
+use oxios_markdown::watch::WatchGuard;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,13 +40,15 @@ pub struct Kernel {
     persona_manager: Arc<PersonaManager>,
     mcp_bridge: Arc<McpBridge>,
     /// Brain daemon connection (RFC-047). Degrades when the daemon is down.
-    brain: Arc<BrainConnection>,
-    /// First-party supervisor (RFC-047 + 2026-08-19) — installs/manages the
-    /// oxibrain daemon via launchd/spawn. Built at boot, drives ensure().
-    brain_supervisor: Arc<oxios_kernel::BrainSupervisor>,
+    /// Supervisor handle dropped with the oxibrain 0.8 daemonless cutover.
     auth_manager: Arc<parking_lot::Mutex<AuthManager>>,
-    cron_scheduler: Arc<CronScheduler>,
+    brain: Arc<BrainSession>,
+    brain_installer: Arc<oxios_kernel::BrainInstaller>,
     git_layer: Arc<GitLayer>,
+    /// T16: vault-rooted `GitLayer` used for knowledge auto-commit,
+    /// history, and restore. Distinct from `git_layer` (workspace). See
+    /// [`oxios_kernel::git_layer::rel_path`] for path computation rules.
+    knowledge_git: Arc<GitLayer>,
     audit_trail: Arc<AuditTrail>,
     budget_manager: Arc<BudgetManager>,
     /// RFC-031: the shared QuotaTracker (self-tracker + recalibration).
@@ -75,11 +78,6 @@ pub struct Kernel {
     /// endpoint resolves from the same map.
     pending_path_access: Arc<oxios_kernel::tools::PendingPathAccess>,
     project_manager: Option<Arc<ProjectManager>>,
-    /// Mount manager (RFC-025 path aliases). `None` when SQLite memory is off.
-    /// Wired into the lazily-cached handle so `/api/mounts` and the mount tool
-    /// see live data — without this the API's handle has `mounts = None` even
-    /// though the orchestrator holds a separate `Arc<MountManager>`.
-    mount_manager: Option<Arc<oxios_kernel::MountManager>>,
     start_time: std::time::Instant,
     /// Path to config.toml (for persistence).
     config_path: PathBuf,
@@ -99,23 +97,31 @@ pub struct Kernel {
     a2a_protocol: Arc<A2AProtocol>,
     /// Hot-swappable engine reference — shared between EngineApi and AgentRuntime.
     engine_handle: Arc<EngineHandle>,
+    /// Shared markdown KnowledgeBase — built once in `Kernel::build()` from
+    /// `config.kernel.resolved_knowledge_root()`. Both the preliminary
+    /// handle (AgentRuntime / PersistenceHook) and the cached
+    /// `Kernel::handle()` reuse this same `Arc` so writes through the
+    /// control-plane and the agent path land in one vault
+    /// (vault-unification task 15).
+    knowledge_base: Arc<KnowledgeBase>,
     /// SQLite-backed agent history query index.
     agent_log_db: Option<Arc<oxios_kernel::agent_log_db::AgentLogDb>>,
-    /// RFC-025 Phase 5: cancellation sender for the Mount auto-promotion
-    /// scanner (Promo-6). Sending `true` breaks the scan loop's `select!`.
-    /// `None` when the scanner is disabled. Kept on the `Kernel` so the
-    /// sender stays alive (otherwise `watch::Receiver::changed()` resolves
-    /// immediately on sender-drop and would abort the loop) and so a future
-    /// graceful shutdown can trigger it.
-    #[allow(dead_code)] // wired via `shutdown_promotion_scanner` on graceful shutdown
-    promo_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// RFC-050 §3: vault watcher guard — re-indexes external edits
+    /// (Obsidian, oximemo, vim) into the shared KnowledgeBase.
+    /// Spawned in `build()` via `spawn_vault_watcher`; held here so
+    /// the watcher runs for the kernel lifetime and the debounce
+    /// thread joins on drop (explicitly via `shutdown_vault_watcher`
+    /// on the serve shutdown path, otherwise when the Kernel drops).
+    vault_watch: Option<WatchGuard>,
 }
 
 impl Kernel {
     /// Create a new kernel builder with sensible defaults.
     pub fn builder() -> KernelBuilder {
         KernelBuilder {
-            config_path: oxios_kernel::config::expand_home("~/.oxios/config.toml"),
+            config_path: oxios_kernel::oxi_home::oxios_home().join("config.toml"),
+            watch_vault: false,
+            daemon: false,
         }
     }
 
@@ -127,105 +133,17 @@ impl Kernel {
     pub fn handle(&self) -> Arc<oxios_kernel::KernelHandle> {
         self.handle_cache
             .get_or_init(|| {
-                // KnowledgeBase — single source of truth (RFC-003)
-                // Shared between KernelHandle.knowledge and KnowledgeLens.
-                let knowledge = Arc::new(
-                    KnowledgeBase::new(
-                        std::path::PathBuf::from(&self.config.kernel.workspace).join("knowledge"),
-                    )
-                    .expect("KnowledgeBase init failed"),
-                );
+                // KnowledgeBase — single source of truth (RFC-003, T15).
+                // Built once in `build()` and reused here so the cached
+                // control-plane handle and the preliminary handle share
+                // the same Arc<KnowledgeBase>. See Kernel struct field.
+                let knowledge = self.knowledge_base.clone();
                 let knowledge_lens = Arc::new(
                     oxios_kernel::KnowledgeLens::new(knowledge.clone(), Some(self.brain.clone()))
                         .expect("KnowledgeLens init failed"),
                 );
 
-                // Git auto-commit for knowledge files (async channel pattern)
-                // Same pattern as KnowledgeLens — non-blocking to avoid delaying HTTP responses.
-                {
-                    let git = self.git_layer.clone();
-                    let kb_root = knowledge.root();
-                    let git_root = git.root().to_path_buf();
-                    let prefix = kb_root
-                        .strip_prefix(&git_root)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| "knowledge".to_string());
-
-                    let (git_tx, mut git_rx) =
-                        tokio::sync::mpsc::channel::<(String, FileChange)>(64);
-
-                    // Register callback — spawns a task to avoid blocking note_write()
-                    knowledge.on_file_change(move |path: &str, change: FileChange| {
-                        let tx = git_tx.clone();
-                        let path = path.to_string();
-                        tokio::spawn(async move {
-                            let _ = tx.send((path, change)).await;
-                        });
-                    });
-                    let reconcile_prefix = prefix.clone();
-
-                    // Background consumer — commits knowledge changes to git
-                    tokio::spawn(async move {
-                        while let Some((path, change)) = git_rx.recv().await {
-                            if !git.is_enabled() {
-                                continue;
-                            }
-                            let rel = format!("{prefix}/{path}");
-                            let msg = match &change {
-                                FileChange::Created(p) => format!("knowledge: create {p}"),
-                                FileChange::Updated(p) => format!("knowledge: update {p}"),
-                                FileChange::Deleted(p) => format!("knowledge: delete {p}"),
-                                FileChange::Moved { old, new } => {
-                                    format!("knowledge: rename {old} → {new}")
-                                }
-                            };
-                            match change {
-                                FileChange::Deleted(_) => {
-                                    if let Err(e) = git.remove_file(&rel, &msg) {
-                                        tracing::warn!(error = %e, "knowledge git delete failed");
-                                    }
-                                }
-                                FileChange::Moved { old, .. } => {
-                                    let old_rel = format!("{prefix}/{old}");
-                                    let _ = git.remove_file(&old_rel, &msg);
-                                    let _ = git.commit_file(&rel, &msg);
-                                }
-                                _ => {
-                                    if let Err(e) = git.commit_file(&rel, &msg) {
-                                        tracing::warn!(error = %e, "knowledge git commit failed");
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    // S-4: Post-crash reconciliation — commit knowledge files
-                    // whose disk content diverged from git HEAD (e.g. process
-                    // crashed between note_write and the async commit consumer).
-                    // The I-3 dedup in commit_file_with skips files whose
-                    // content matches HEAD, so this only creates commits for
-                    // genuinely diverged files.
-                    let reconcile_git = self.git_layer.clone();
-                    if reconcile_git.is_enabled()
-                        && let Ok(files) = knowledge.list_all_md_files()
-                    {
-                        let mut count = 0;
-                        for (path, _) in &files {
-                            let rel = format!("{reconcile_prefix}/{path}");
-                            if let Ok(info) =
-                                reconcile_git.commit_file(&rel, "knowledge: post-crash reconcile")
-                                && info.hash != "(disabled)"
-                            {
-                                count += 1;
-                            }
-                        }
-                        if count > 0 {
-                            tracing::info!(
-                                "Post-crash git reconcile: {count} diverged files re-committed"
-                            );
-                        }
-                    }
-                }
+                register_knowledge_git_autocommit(&knowledge, &self.knowledge_git);
 
                 let mut agent_api = oxios_kernel::AgentApi::new(
                     self.supervisor.clone(),
@@ -251,7 +169,7 @@ impl Kernel {
                     oxios_kernel::McpApi::new(self.mcp_bridge.clone()),
                     oxios_kernel::InfraApi::new(
                         self.git_layer.clone(),
-                        self.cron_scheduler.clone(),
+                        self.knowledge_git.clone(),
                         self.resource_monitor.clone(),
                         self.event_bus.clone(),
                         self.config.clone(),
@@ -270,12 +188,12 @@ impl Kernel {
                     ),
                     oxios_kernel::A2aApi::new(self.a2a_protocol.clone()),
                     // EngineApi — LLM providers, models, config + routing stats + engine hot-swap
-                    oxios_kernel::EngineApi::new(
+                    Arc::new(oxios_kernel::EngineApi::new(
                         Arc::new(parking_lot::RwLock::new(self.config.clone())),
                         self.config_path.clone(),
                         Arc::new(oxios_kernel::RoutingStats::new()),
                         Arc::clone(&self.engine_handle),
-                    ),
+                    )),
                     knowledge,
                     knowledge_lens,
                     self.build_marketplace_api(),
@@ -294,29 +212,17 @@ impl Kernel {
                 // the shared one → Stop never stops the stream.
                 let kh = kh.with_streaming_sinks(self.streaming_sinks.clone());
                 let kh = kh.with_turns(self.turns.clone());
-                // RFC-025: attach MountApi to the handle the HTTP API and CLI
-                // actually use. The orchestrator gets its own Arc directly; this
-                // facade is what `/api/mounts` reads (`state.kernel.mounts`).
-                let kh = if let Some(mm) = &self.mount_manager {
-                    kh.with_mounts(oxios_kernel::MountApi::new(mm.clone()))
-                } else {
-                    kh
-                };
                 let kh = kh.with_token_maxing(oxios_kernel::TokenMaxingApi::new(
                     self.quota_tracker.clone(),
                     self.token_maxer.clone(),
                 ));
                 // RFC-047: brain daemon facade — the /api/brain/* surface.
-                // BrainSupervisor built at boot (src/kernel.rs boot block);
-                // attach it so /api/brain/status surfaces install/launchd state.
+                // Supervisor handle dropped with the oxibrain 0.8 daemonless cutover.
                 let kh = kh.with_brain(oxios_kernel::BrainApi::new(
                     self.brain.clone(),
-                    self.brain_supervisor.clone(),
+                    self.brain_installer.clone(),
                 ));
                 // RFC-043: attach the task store so web routes, the auto-run
-                // tick, and the `task` agent tool share ONE store. Boot
-                // continues without it (web surface hard-requires it and
-                // will fail its own expect).
                 let kh = match oxios_kernel::task::TaskStore::open(
                     &(self.config.kernel.workspace.clone() + "/tasks.db"),
                 ) {
@@ -348,8 +254,8 @@ impl Kernel {
                 let kh =
                     kh.with_compression(oxios_kernel::CompressionApi::new(compression_service));
 
-                // Unified asset store (~/.oxios/assets/).
-                let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+                // Unified asset store (~/.oxi/oxios/assets/).
+                let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
                 match oxios_kernel::AssetStore::new(assets_root) {
                     Ok(store) => {
                         if let Err(e) = store.reconcile() {
@@ -378,12 +284,6 @@ impl Kernel {
         self.project_manager
             .clone()
             .expect("ProjectManager not available — SQLite must be enabled")
-    }
-
-    /// Get the MountManager reference, if SQLite-backed mounts are enabled.
-    /// Returns `None` when the mount system is unavailable (SQLite off).
-    pub fn mount_manager(&self) -> Option<Arc<oxios_kernel::MountManager>> {
-        self.mount_manager.clone()
     }
 
     /// Build a MarketplaceApi (ClawHub + Skills.sh) from config.
@@ -621,9 +521,6 @@ impl Kernel {
     /// for the outer timeout to function (same rationale as Guardian's
     /// spawn_blocking — RFC-040 A2).
     pub async fn cleanup(&self, timeout: std::time::Duration) {
-        // Promo-6: stop the Mount auto-promotion scanner first so it does
-        // not race the state teardown below.
-        self.shutdown_promotion_scanner();
         let handle = self.handle();
 
         let _ = tokio::time::timeout(timeout, async {
@@ -661,13 +558,15 @@ impl Kernel {
         .await;
     }
 
-    /// RFC-025 Phase 5: signal the Mount auto-promotion scanner to stop
-    /// (Promo-6). No-op when the scanner is disabled. Safe to call during
-    /// graceful shutdown; the spawned task breaks its `select!` loop on the
-    /// next iteration.
-    pub fn shutdown_promotion_scanner(&self) {
-        if let Some(tx) = &self.promo_shutdown_tx {
-            let _ = tx.send(true);
+    /// RFC-050: stop the vault watcher — sends the debounce-thread
+    /// shutdown and joins it. Called on the serve shutdown path (see
+    /// `start_daemon`); also safe when the watcher never started, and
+    /// idempotent. If never called, the guard drops with the Kernel
+    /// and joins then.
+    pub fn shutdown_vault_watcher(&mut self) {
+        if let Some(guard) = self.vault_watch.take() {
+            drop(guard);
+            tracing::debug!("vault watcher stopped");
         }
     }
 
@@ -688,8 +587,9 @@ impl Kernel {
                 None,
                 None,
                 None,
-                None,
                 None, // model_params
+                None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await
@@ -711,9 +611,10 @@ impl Kernel {
                 session_id,
                 None,
                 None,
-                None,
                 None, // model_override
                 None, // model_params
+                None, // persona_id — CLI inherits the global active persona
+                None, // brain_space — CLI runs unconnected
                 "cli-direct",
             )
             .await
@@ -733,67 +634,70 @@ impl Kernel {
         self.gateway.run().await
     }
 
-    /// Start the CronScheduler: restore persisted jobs, load config-defined
-    /// jobs, then run the tick loop. Each fired job's goal is executed through
-    /// the shared [`KernelHandle::run_goal`] primitive (direct orchestrator
-    /// path — no gateway correlation, since this is a background task with no
-    /// waiting HTTP client).
+    /// One-time migration of legacy cron jobs into the RFC-043 task system.
     ///
-    /// Must be called after `handle()` is cached (so the orchestrator is
-    /// attached) and after the intent engine is wired — both are true once
-    /// `Kernel::build()` returns. The default 60 s tick also lands post-boot.
+    /// The `CronScheduler` is retired: recurring goals now live as Tasks with
+    /// `automation_mode = schedule`, executed by the task auto-run tick. This
+    /// collects every job that still exists — persisted API jobs
+    /// (`state_store: cron/jobs.json`) and `[[cron.jobs]]` entries from
+    /// config.toml — copies each into a scheduled Task, then deletes the
+    /// legacy state file. Identifier-collision skips make re-runs idempotent,
+    /// so a partially failed migration heals on the next boot.
     ///
-    /// Returns the loop's `JoinHandle` so the caller can track it for liveness,
-    /// or `None` when cron is disabled in config (no task to track — a
-    /// completed handle would otherwise look like a fatal critical-task exit).
-    pub fn start_cron_loop(&self) -> Option<tokio::task::JoinHandle<()>> {
-        if !self.config.cron.enabled {
-            tracing::info!("Cron scheduler disabled in config; not starting");
-            return None;
-        }
-        let scheduler = self.cron_scheduler.clone();
-        let handle = self.handle();
+    /// Must be called after `handle()` is cached (the task store hangs off
+    /// the cached KernelHandle). Fire-and-forget: a failure logs but never
+    /// blocks or crashes the daemon.
+    pub fn migrate_legacy_crons(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let state_store = self.state_store.clone();
         let cron_config = self.config.cron.clone();
+        let task_store = self.handle().task_store.clone()?;
         Some(tokio::spawn(async move {
-            // Restore persisted jobs, then add config-defined ones (API jobs win).
-            scheduler.restore_jobs().await;
-            scheduler.load_from_config(&cron_config).await;
-
-            let handle_for_exec = handle.clone();
-            scheduler
-                .start(move |job_id, goal| {
-                    let handle = handle_for_exec.clone();
-                    async move {
-                        match handle.run_goal(&goal, None).await {
-                            Ok(result) => {
-                                // Success signal: no provider failure AND
-                                // evaluation passed. evaluation_passed is None
-                                // for goals with no acceptance criteria/review
-                                // (always, for cron jobs), so the default must
-                                // be true — a goal that ran without error is a
-                                // success.
-                                let success = result.failure_class.is_none()
-                                    && result.evaluation_passed.unwrap_or(true);
-                                let summary = result
-                                    .output
-                                    .clone()
-                                    .unwrap_or_else(|| result.response.clone());
-                                tracing::info!(
-                                    %job_id,
-                                    success,
-                                    phase = %result.phase_reached,
-                                    "Cron job executed"
-                                );
-                                (success, summary)
-                            }
-                            Err(e) => {
-                                tracing::error!(%job_id, error = %e, "Cron job execution failed");
-                                (false, format!("Error: {e}"))
-                            }
-                        }
+            // Persisted API jobs.
+            let mut jobs: Vec<oxios_kernel::task::legacy::CronJob> = state_store
+                .load_json("cron", "jobs")
+                .await
+                .unwrap_or(None)
+                .unwrap_or_default();
+            // Config-defined inline jobs ([[cron.jobs]] in config.toml).
+            for (name, inline) in &cron_config.jobs {
+                let mut job = oxios_kernel::task::legacy::CronJob::new(
+                    name.clone(),
+                    inline.schedule.clone(),
+                    inline.goal.clone(),
+                );
+                job.constraints = inline.constraints.clone();
+                job.acceptance_criteria = inline.acceptance_criteria.clone();
+                job.toolchain = inline.toolchain.clone();
+                job.priority = inline.priority;
+                job.enabled = inline.enabled;
+                jobs.push(job);
+            }
+            if jobs.is_empty() {
+                return;
+            }
+            let count = jobs.len();
+            let store = task_store.lock().await;
+            match oxios_kernel::task::migrate_cron_to_tasks(&jobs, &store, false).await {
+                Ok(report) => {
+                    tracing::info!(
+                        total = count,
+                        created = report.created.len(),
+                        skipped = report.skipped.len(),
+                        "Migrated legacy cron jobs into scheduled tasks"
+                    );
+                    for s in &report.skipped {
+                        tracing::info!(job = %s.name, reason = %s.reason, "cron migration skip");
                     }
-                })
-                .await;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Legacy cron migration failed; retrying next boot");
+                    return;
+                }
+            }
+            // Drop the retired state so migrated jobs are not re-copied.
+            if let Err(e) = state_store.delete_file("cron", "jobs").await {
+                tracing::warn!(error = %e, "Failed to delete retired cron state file");
+            }
         }))
     }
 
@@ -1049,6 +953,20 @@ async fn daily_health_check(web_dist: oxios_gateway::ActiveWebDist) -> anyhow::R
 /// Builder for assembling the Oxios kernel.
 pub struct KernelBuilder {
     config_path: PathBuf,
+    /// RFC-050 §3 vault watcher — long-lived daemon surface only
+    /// (whole-branch R2 fix for the P3): one-shot CLI commands
+    /// (run/chat/status/doctor/…) would otherwise pay the FSEvents
+    /// subscription + debounce thread + join for nothing. Defaults
+    /// to `false`; `main` enables it on the daemon paths.
+    watch_vault: bool,
+    /// Daemon-mode signal for boot work that only makes sense in a
+    /// long-lived process (brain legacy cleanup, documents.toml seed +
+    /// warm index, extraction-drain timer). One-shot CLI commands
+    /// (run/chat/status/doctor/…) must spawn none of it — overlapping
+    /// `index --documents --embed` children on the same brain dir are
+    /// the failure mode. Defaults to `false`; `main` enables it on the
+    /// daemon paths, exactly like `watch_vault`.
+    daemon: bool,
 }
 
 impl KernelBuilder {
@@ -1058,13 +976,41 @@ impl KernelBuilder {
         self
     }
 
+    /// Enable the RFC-050 §3 vault watcher (external-edit reindex).
+    /// Daemon/serve lifecycle only.
+    pub fn watch_vault(mut self, on: bool) -> Self {
+        self.watch_vault = on;
+        self
+    }
+
+    /// Mark this build as a long-lived daemon process: enables brain
+    /// boot work (legacy cleanup, documents seed + warm index, drain
+    /// timer). One-shot commands leave it off.
+    pub fn daemon(mut self, on: bool) -> Self {
+        self.daemon = on;
+        self
+    }
+
     /// Assemble all kernel components and wire them together.
     pub async fn build(self) -> Result<Kernel> {
         let config_path = self.config_path;
 
-        let config = if config_path.exists() {
-            tracing::info!(path = %config_path.display(), "Loading config");
-            load_config(&config_path)?
+        // Unified home: canonical-first, legacy READ-ONLY fallback.
+        // When the canonical config is missing but a pre-unification
+        // `~/.oxios/config.toml` exists, it is loaded read-only;
+        // persistence (`config_path`, used by config PUT / onboarding)
+        // always targets the canonical path.
+        let load_path = oxios_kernel::oxi_home::effective_config_path(&config_path);
+        if load_path != config_path {
+            tracing::info!(
+                canonical = %config_path.display(),
+                legacy = %load_path.display(),
+                "canonical config missing; loading legacy pre-unification config (read-only)"
+            );
+        }
+        let mut config = if load_path.exists() {
+            tracing::info!(path = %load_path.display(), "Loading config");
+            load_config(&load_path)?
         } else {
             tracing::info!("No config file found, using defaults");
             OxiosConfig::default()
@@ -1233,6 +1179,23 @@ impl KernelBuilder {
             config.git.auto_commit,
         )?);
 
+        // T16: vault-rooted `GitLayer` for knowledge auto-commit / history /
+        // restore. The vault is its own git repo; paths land at the vault
+        // root via `rel_path(kb.root(), git.root(), path)` with no
+        // `knowledge/` prefix. Without this, the default config (vault at
+        // `~/.oxi/vault`, OUTSIDE the workspace) would silently drop every
+        // commit because `kb_root.strip_prefix(workspace)` fails and the
+        // old fallback bails on `File not found` (T15 P1 closure).
+        let knowledge_git = Arc::new(GitLayer::new_for_vault(
+            PathBuf::from(&config.kernel.resolved_knowledge_root()),
+            config.git.auto_commit,
+            // R16 review F2 (b): explicit opt-in for foreign repos at
+            // the vault root. Default false ⇒ loud warn + disabled layer
+            // (the user must write the `.oxi-vault-git` marker — `.oxios-git`
+            // is recognized as a legacy marker — or set this to true to opt in).
+            config.git.adopt_foreign_repo,
+        )?);
+
         let skills_dir = PathBuf::from(&config.kernel.workspace).join("skills");
         let bundled_dir = PathBuf::from(&config.kernel.workspace).join("share/skills");
         // RFC-048 §4: attach the Foundation shared-package registry so
@@ -1251,60 +1214,171 @@ impl KernelBuilder {
         // These are needed before KernelHandle creation (for AgentRuntime).
         // Order doesn't matter — they're independent.
 
-        // Brain daemon connection (RFC-047 + 2026-08-19 first-party supervision).
+        // Brain (oxibrain 0.8 daemonless): lazy session child + installer.
+        // Nothing spawns at boot; the first brain call starts the child
+        // (degradation contract: every method returns None when the binary
+        // is missing or the child fails).
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let brain_supervisor = Arc::new(oxios_kernel::BrainSupervisor::new(
-            oxios_kernel::SupervisorConfig::from_brain_section(&home, &config.brain),
+        let installer = Arc::new(oxios_kernel::BrainInstaller::from_brain_section(
+            &home,
+            &config.brain,
         ));
-        // Boot-time install/start: only when the surface is enabled AND
-        // auto-management is opted in. Otherwise stays fully degraded.
-        if config.brain.enabled && config.brain.auto_manage {
-            brain_supervisor.ensure().await;
-        }
-        let socket_path = if config.brain.enabled {
-            oxios_kernel::brain::resolved_socket_path(
-                &home,
-                &oxios_kernel::config::expand_home(&config.brain.socket_path).to_string_lossy(),
+        let brain_dir = oxios_kernel::brain::resolved_brain_dir(&home, &config.brain.dir);
+        let brain = Arc::new(if config.brain.enabled {
+            oxios_kernel::BrainSession::new(
+                installer.clone(),
+                config.brain.auto_install,
+                oxios_kernel::BrainConfig::new(brain_dir.clone()),
             )
         } else {
-            // Fully degraded: connect against a socket that will never exist.
-            PathBuf::from("/nonexistent/oxibrain.sock")
-        };
-        let mut brain_conn =
-            BrainConnection::connect(BrainConfig::new(socket_path, config.brain.space.clone()))
-                .await;
-        // On lazy-reconnect failure, ask the supervisor to respawn the daemon
-        // (rate-limited 30s). Only when the surface is enabled — a disabled
-        // surface must never trigger an auto-start.
-        if config.brain.enabled {
-            let sv = Arc::clone(&brain_supervisor);
-            brain_conn = brain_conn.with_on_unavailable(Arc::new(move || {
-                let sv = Arc::clone(&sv);
-                Box::pin(async move {
-                    sv.respawn_if_needed().await;
-                })
-            }));
-        }
-        let brain = Arc::new(brain_conn);
+            // `enabled = false` ⇒ never spawn the child, never invoke the
+            // installer, never poll the binary. NoopSpawn errors every
+            // spawn attempt; BrainApi stays attached so routes serve the
+            // degraded shape (None / 503) instead of 500.
+            oxios_kernel::BrainSession::disabled(oxios_kernel::BrainConfig::new(brain_dir.clone()))
+        });
 
-        // KernelDatabase — shared SQLite connection for mount/project tables.
-        // Forward-only migration: the legacy `memory.db` is preserved untouched
-        // (spec §9); the kernel's own tables move to `kernel.db`. One-time copy
-        // of existing mount/project rows from the old shared `memory.db`.
+        // Agent CLI lane: pre-allow the oxibrain binary so exec structured
+        // mode auto-approves (brain skill path, spec §5.7). Applied before
+        // the AgentRuntime takes its exec-allowlist snapshot. Pure config
+        // mutation — no process cost, so it runs on every build path.
+        seed_oxibrain_exec_allowlist(&mut config);
+
+        // Brain boot work is daemon-surface only: one-shot commands
+        // (run/chat/status/doctor/…) share `build()` and must not spawn
+        // overlapping `index --documents --embed` children on the same
+        // brain dir, nor pay the drain timer. Same gating pattern as
+        // `watch_vault` above.
+        if config.brain.enabled && self.daemon {
+            // Daemon-era leftovers (launchd plist, stale socket/pid) — once.
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
+            tokio::spawn(async move {
+                inst.legacy_cleanup(&dir).await;
+            });
+
+            // Warm document index (C1: never blocks boot).
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
+            tokio::spawn(async move {
+                if let Some(bin) = inst.locate_binary() {
+                    // Stock oxibrain `admin index --embed` always reports
+                    // "no embedding port configured" — no non-test caller
+                    // attaches an embedder. Degrade exactly that case by
+                    // retrying without `--embed` so the lexical reconcile
+                    // above still warms the index. Revisit when oxibrain
+                    // ships a built-in dense embedder or a stable flag to
+                    // disable the embed step.
+                    match oxios_kernel::brain::run_cli(
+                        &bin,
+                        &dir,
+                        &["admin", "index", "--documents", "--embed"],
+                    )
+                    .await
+                    {
+                        Ok(out) if out.status.success() => {
+                            tracing::info!("document index warmed")
+                        }
+                        Ok(out) => {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            if oxios_kernel::brain::embed_gap(&stderr) {
+                                match oxios_kernel::brain::run_cli(
+                                    &bin,
+                                    &dir,
+                                    &["admin", "index", "--documents"],
+                                )
+                                .await
+                                {
+                                    Ok(out) if out.status.success() => {
+                                        tracing::info!("document index warmed")
+                                    }
+                                    Ok(out) => tracing::warn!(
+                                        stderr = %String::from_utf8_lossy(&out.stderr),
+                                        "document index retry exited non-zero"
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        error = %e,
+                                        "document index retry spawn failed"
+                                    ),
+                                }
+                            } else {
+                                tracing::warn!(
+                                    stderr = %stderr,
+                                    "document index exited non-zero"
+                                );
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, "document index spawn failed"),
+                    }
+                }
+            });
+
+            // Extraction-backlog drain (the MCP surface cannot extract
+            // inline; the timer is the primary extraction path, spec §5.5).
+            let session = brain.clone();
+            let inst = installer.clone();
+            let dir = brain_dir.clone();
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tick.tick().await;
+                    if !session.is_available() {
+                        continue;
+                    }
+                    let Some(pending) = session.pending_stats().await else {
+                        continue;
+                    };
+                    if pending.count == 0 {
+                        continue;
+                    }
+                    if let Some(bin) = inst.locate_binary() {
+                        tracing::info!(count = pending.count, "draining brain extraction backlog");
+                        // Bound the drain so a stuck child never wedges the
+                        // 600 s tick. 30 min is generous for any realistic
+                        // backlog; longer means the run is hung, not slow.
+                        let extract_fut = oxios_kernel::brain::run_cli(
+                            &bin,
+                            &dir,
+                            &["admin", "extract", "--pending"],
+                        );
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(1800),
+                            extract_fut,
+                        )
+                        .await
+                        {
+                            Ok(Ok(out)) if out.status.success() => {
+                                tracing::debug!("brain extraction backlog drained");
+                            }
+                            Ok(Ok(out)) => tracing::warn!(
+                                stderr = %String::from_utf8_lossy(&out.stderr),
+                                "brain admin extract --pending exited non-zero"
+                            ),
+                            Ok(Err(e)) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "brain admin extract --pending spawn failed"
+                                )
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    "brain admin extract --pending timed out after 30 min"
+                                )
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        // KernelDatabase — the kernel's own SQLite store (`kernel.db`).
+        // Clean break: no legacy migration from the old shared `memory.db`;
+        // kernel-managed tables live here from the start (spec §9).
         let kernel_db = Arc::new(KernelDatabase::open(
             PathBuf::from(&config.kernel.workspace).join("kernel.db"),
         )?);
-        {
-            let legacy = PathBuf::from(&config.kernel.workspace).join("memory.db");
-            if let Err(e) = kernel_db.migrate_legacy_mount_project(&legacy) {
-                tracing::warn!(
-                    error = %e,
-                    "mount/project migration from memory.db failed (non-fatal)"
-                );
-            }
-        }
 
-        // ProjectManager (RFC-011) + MountManager (RFC-025) share the db.
+        // ProjectManager (RFC-011) uses this db.
         let project_manager =
             match oxios_kernel::ProjectManager::new(kernel_db.clone(), Some(event_bus.clone())) {
                 Ok(pm) => {
@@ -1316,117 +1390,6 @@ impl KernelBuilder {
                     None
                 }
             };
-
-        // MountManager (RFC-025) using the same SQLite database.
-        let mount_manager =
-            match oxios_kernel::MountManager::new(kernel_db.clone(), Some(event_bus.clone())) {
-                Ok(mm) => {
-                    // RFC-025: one-time migration — promote legacy
-                    // Project paths into Mounts. Idempotent: Projects
-                    // that already reference Mounts are skipped.
-                    if let Some(ref pm) = project_manager {
-                        migrate_projects_to_mounts(&mm, pm);
-                    }
-                    tracing::info!("MountManager initialized");
-                    Some(Arc::new(mm))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "MountManager init failed (non-fatal)");
-                    None
-                }
-            };
-
-        // ── RFC-025 Phase 5: Mount auto-promotion background scanner ──
-        // Scans session history on a cadence and promotes paths that cross
-        // the frequency threshold into Mounts. Cheap (one filesystem walk
-        // per scan) and debounced by the threshold.
-        //
-        // Promo-6: a `watch` channel provides a cancellation point so a
-        // future graceful shutdown can break the loop. The `Sender` is
-        // stored on the returned `Kernel` to keep it alive.
-        let promo_shutdown_tx = {
-            let mounts_cfg = &config.mounts;
-            if !mounts_cfg.auto_promote_enabled {
-                None
-            } else if let Some(ref mm) = mount_manager {
-                let mm = mm.clone();
-                let ss = state_store.clone();
-                // Promo-11: respect the configured toggle instead of a
-                // hardcoded `true`.
-                let promo_config = oxios_kernel::PromotionConfig {
-                    enabled: mounts_cfg.auto_promote_enabled,
-                    threshold: mounts_cfg.auto_promote_threshold,
-                    window_days: mounts_cfg.auto_promote_window_days,
-                };
-                let interval_secs = mounts_cfg.auto_promote_interval_secs;
-                // Promo-6: cancellation channel.
-                let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-                let window_days = mounts_cfg.auto_promote_window_days;
-                tokio::spawn(async move {
-                    let mut ticker =
-                        tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-                    // The first tick completes immediately — run a scan right
-                    // after startup, then wait the full interval thereafter.
-                    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                    loop {
-                        // Promo-6: break out on shutdown.
-                        tokio::select! {
-                            _ = ticker.tick() => {}
-                            res = shutdown_rx.changed() => {
-                                if res.is_err() || *shutdown_rx.borrow() {
-                                    tracing::info!(
-                                        "Mount auto-promotion scanner shutting down"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Promo-1: only load sessions updated within the
-                        // promotion window, bounding memory to the ones that
-                        // can actually contribute a touch.
-                        let cutoff = chrono::Utc::now() - chrono::Duration::days(window_days);
-                        let sessions = match ss.load_sessions_for_promotion(cutoff).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::warn!(error = %e, "Mount promotion scan failed");
-                                continue;
-                            }
-                        };
-
-                        // Promo-5: `promote_frequent_paths` does blocking
-                        // filesystem I/O (canonicalize + marker walks). Run it
-                        // on a blocking thread so it never stalls the async
-                        // runtime.
-                        let mm = mm.clone();
-                        let promo_config = promo_config.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            mm.promote_frequent_paths(&sessions, &promo_config)
-                        })
-                        .await
-                        {
-                            Ok(created) if !created.is_empty() => {
-                                tracing::info!(
-                                    promoted = created.len(),
-                                    "RFC-025: auto-promoted frequent paths to Mounts"
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "Mount promotion scan task panicked"
-                                );
-                            }
-                        }
-                    }
-                });
-                tracing::info!("Mount auto-promotion scanner spawned");
-                Some(shutdown_tx)
-            } else {
-                None
-            }
-        };
 
         let budget_manager = Arc::new(BudgetManager::new());
         // RFC-031 v2: the shared QuotaTracker. One live instance per
@@ -1468,15 +1431,14 @@ impl KernelBuilder {
 
         let audit_trail = Arc::new(AuditTrail::new(config.audit.max_entries));
 
-        let mut cron_scheduler =
-            CronScheduler::new(state_store.clone(), config.cron.tick_interval_secs);
-        cron_scheduler.set_git_layer(git_layer.clone());
-        let cron_scheduler = Arc::new(cron_scheduler);
-
         let resource_monitor = Arc::new(ResourceMonitor::new(
             config.resource_monitor.interval_secs,
             config.resource_monitor.history_max,
         ));
+        // Spawn the background sampler so `/api/resources/history` actually
+        // accumulates data. Without this the monitor's ring buffer stays
+        // empty forever and the web UI chart shows "insufficient data".
+        let _sampling_task = resource_monitor.start_sampling();
 
         oxios_kernel::event_bus::attach_audit_trail(&event_bus, audit_trail.clone());
 
@@ -1504,11 +1466,28 @@ impl KernelBuilder {
         ));
         let persona_api = Arc::new(oxios_kernel::PersonaApi::new(Arc::clone(&persona_manager)));
 
-        // Shared KnowledgeBase — single source of truth (RFC-003)
+        // Shared KnowledgeBase — single source of truth (RFC-003, T15).
+        // Resolved through KernelConfig::resolved_knowledge_root: explicit
+        // `kernel.knowledge_root` → `~/.oxi/config.toml [vault].path`
+        // → `~/.oxi/vault`. Both KB construction sites in `build()`
+        // (here) and `handle()` reuse the same `Arc` so the agent path
+        // (PersistenceHook) and the control-plane path see one vault.
         let knowledge_base = Arc::new(
-            KnowledgeBase::new(PathBuf::from(&config.kernel.workspace).join("knowledge"))
+            KnowledgeBase::new(config.kernel.resolved_knowledge_root())
                 .expect("KnowledgeBase init failed"),
         );
+
+        // RFC-050 §3: watch the resolved vault root for external
+        // edits and re-index them into the shared KnowledgeBase. The
+        // guard is stored on the returned Kernel so the watcher runs
+        // for the process lifetime and joins on shutdown drop.
+        // (Whole-branch review fix: `KnowledgeBase::watch` previously
+        // had zero production call sites while RFC-050/CHANGELOG
+        // claimed the behavior.)
+        let vault_watch = self
+            .watch_vault
+            .then(|| spawn_vault_watcher(&knowledge_base))
+            .flatten();
 
         // Shared HitL registries — created ONCE so the preliminary handle
         // (used by AgentRuntime to register tool approvals) and the cached
@@ -1547,7 +1526,7 @@ impl KernelBuilder {
                 oxios_kernel::McpApi::new(mcp_bridge.clone()),
                 oxios_kernel::InfraApi::new(
                     git_layer.clone(),
-                    cron_scheduler.clone(),
+                    knowledge_git.clone(),
                     resource_monitor.clone(),
                     event_bus.clone(),
                     config.clone(),
@@ -1564,12 +1543,12 @@ impl KernelBuilder {
                 ),
                 oxios_kernel::A2aApi::new(a2a_protocol.clone()),
                 // EngineApi — routing stats shared between EngineApi and AgentRuntime + engine hot-swap
-                oxios_kernel::EngineApi::new(
+                Arc::new(oxios_kernel::EngineApi::new(
                     Arc::new(parking_lot::RwLock::new(config.clone())),
                     config_path.clone(),
                     Arc::clone(&routing_stats),
                     Arc::clone(&engine_handle),
-                ),
+                )),
                 // KnowledgeBase — single source of truth (RFC-003), shared
                 knowledge_base.clone(),
                 // KnowledgeLens — semantic overlay, shares same KnowledgeBase
@@ -1588,13 +1567,6 @@ impl KernelBuilder {
             // the consuming builder.
             let kh = kh.with_streaming_sinks(streaming_sinks.clone());
             let kh = kh.with_turns(turns.clone());
-            // Attach the Mount facade (RFC-025). Set before Arc so the handle
-            // carries it from construction.
-            let kh = if let Some(mm) = mount_manager.clone() {
-                kh.with_mounts(oxios_kernel::MountApi::new(mm))
-            } else {
-                kh
-            };
             let kh = kh.with_browser(oxios_kernel::BrowserApi::from_config(&config));
             let compression_svc = Arc::new(oxios_kernel::CompressionService::new(
                 state_store.clone(),
@@ -1604,8 +1576,8 @@ impl KernelBuilder {
             ));
             let kh = kh.with_compression(oxios_kernel::CompressionApi::new(compression_svc));
 
-            // Unified asset store (~/.oxios/assets/).
-            let assets_root = oxios_kernel::config::expand_home("~/.oxios/assets");
+            // Unified asset store (~/.oxi/oxios/assets/).
+            let assets_root = oxios_kernel::oxi_home::oxios_home().join("assets");
             let kh = match oxios_kernel::AssetStore::new(assets_root) {
                 Ok(store) => {
                     if let Err(e) = store.reconcile() {
@@ -1627,7 +1599,13 @@ impl KernelBuilder {
             let kd_config = config.memory.knowledge_curation.clone();
             match oxios_kernel::knowledge_curation::KnowledgeCuration::new(
                 kb,
-                git_layer.clone(),
+                // T16 round-1 (P2 #1): pre-write snapshot commits land in
+                // the vault repo. `note.path` is KB-relative and the vault
+                // IS the KB root, so no rel_path needed — the file lives at
+                // `<vault>/<note.path>`. The previous workspace git layer
+                // would have bailed 'File not found' here, silently dropping
+                // every curated snapshot (the same P1 shape, dead RFC-022).
+                knowledge_git.clone(),
                 engine_handle.clone(),
                 kd_config,
             ) {
@@ -1691,15 +1669,13 @@ impl KernelBuilder {
         // Wire SQLite agent log index if available
         let (agent_log_db,) = {
             let db_path = if config.agent_log.db_path.is_empty() {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(".oxios/state/agent_log.db")
+                oxios_kernel::oxi_home::oxios_home().join("state/agent_log.db")
             } else {
                 let p = std::path::PathBuf::from(&config.agent_log.db_path);
                 if p.is_absolute() {
                     p
                 } else {
-                    dirs::home_dir().unwrap_or_default().join(".oxios").join(&p)
+                    oxios_kernel::oxi_home::oxios_home().join(&p)
                 }
             };
 
@@ -1772,11 +1748,8 @@ impl KernelBuilder {
         // manager (it impls Clone) before the orchestrator consumes it; the
         // maxer drains eligible subscription providers over a window.
         let maxer_lifecycle = lifecycle.clone();
-        let planner = oxios_kernel::WorkPlanner::new(
-            Arc::clone(&skill_manager),
-            project_manager.clone(),
-            mount_manager.clone(),
-        );
+        let planner =
+            oxios_kernel::WorkPlanner::new(Arc::clone(&skill_manager), project_manager.clone());
         let token_maxer = Arc::new(oxios_kernel::TokenMaxer::new(
             maxer_lifecycle,
             Arc::clone(&quota_tracker),
@@ -1796,9 +1769,6 @@ impl KernelBuilder {
         orchestrator.set_a2a(a2a_protocol.clone());
         if let Some(pm) = project_manager.clone() {
             orchestrator.set_project_manager(pm);
-        }
-        if let Some(mm) = mount_manager.clone() {
-            orchestrator.set_mount_manager(mm);
         }
         // RFC-029: wire the recovery coordinator (L1 backoff / L2 model
         // swap). Shares RoutingStats with EngineApi/AgentRuntime so
@@ -1839,10 +1809,11 @@ impl KernelBuilder {
             persona_manager,
             mcp_bridge,
             brain,
-            brain_supervisor,
+            brain_installer: installer.clone(),
             auth_manager,
-            cron_scheduler,
+
             git_layer,
+            knowledge_git,
             audit_trail,
             budget_manager,
             quota_tracker,
@@ -1853,7 +1824,6 @@ impl KernelBuilder {
             approval_config,
             pending_path_access,
             project_manager,
-            mount_manager,
             start_time: std::time::Instant::now(),
             config_path,
             // Do NOT pre-seed with the cycle-breaking preliminary handle
@@ -1869,7 +1839,8 @@ impl KernelBuilder {
             a2a_protocol,
             engine_handle,
             agent_log_db,
-            promo_shutdown_tx,
+            knowledge_base: knowledge_base.clone(),
+            vault_watch,
         };
 
         // Eagerly assemble the fully-wired KernelHandle (real supervisor +
@@ -2051,9 +2022,6 @@ async fn build_tool_retriever(sm: &SkillManager) -> oxios_kernel::tools::retriev
         ("find", "os-tool", "Find files by name or pattern"),
         ("ls", "os-tool", "List directory contents"),
         ("web_search", "os-tool", "Search the web for information"),
-        ("memory_read", "os-tool", "Recall persistent memories"),
-        ("memory_write", "os-tool", "Store persistent memories"),
-        ("memory_search", "os-tool", "Semantic search over memories"),
         (
             "knowledge",
             "os-service",
@@ -2130,111 +2098,333 @@ fn build_marketplace_api_value(config: &OxiosConfig) -> MarketplaceApi {
     )
 }
 
-/// RFC-025 one-time migration: promote legacy Project paths into Mounts.
+/// Register the knowledge git auto-commit pipeline (bounded channel
+/// + async commit consumer + S-4 post-crash reconcile) on the shared
+/// - **`KnowledgeBase`** (T16: vault-rooted `knowledge_git`).
 ///
-/// For each Project that has `paths` but no `mount_ids`, resolve a Mount for
-/// every legacy path — reusing an existing Mount that already covers the path
-/// (path-prefix match) when one exists, otherwise creating one named after the
-/// Project — link them via `mount_ids`, then clear the legacy `paths` field.
-///
-/// Idempotent: Projects already referencing Mounts are skipped, and the
-/// path-coverage check prevents duplicate Mounts for paths a user registered
-/// under a different name.
-fn migrate_projects_to_mounts(
-    mount_manager: &oxios_kernel::MountManager,
-    project_manager: &ProjectManager,
+/// Extracted from `Kernel::handle()` (whole-branch R2) so the
+/// watcher-thread safety of the callback — spawning through a runtime
+/// handle captured at registration, never a bare `tokio::spawn` — is
+/// testable without booting a full Kernel.
+fn register_knowledge_git_autocommit(
+    knowledge: &Arc<KnowledgeBase>,
+    knowledge_git: &Arc<GitLayer>,
 ) {
-    let projects = project_manager.list_projects();
-    let mut migrated = 0usize;
+    let git = knowledge_git.clone();
+    // T16: vault-rooted git + shared roots for both the async
+    // commit consumer AND the S-4 reconcile loop. Cloned
+    // because each branch moves its own copy into its closure
+    // (PathBuf isn't Copy).
+    let kb_root = knowledge.root();
+    let git_root = git.root().to_path_buf();
 
-    for project in projects {
-        // Skip Projects that already reference Mounts (idempotent).
-        if !project.mount_ids.is_empty() {
-            continue;
-        }
-        // Skip Projects without paths — nothing to lift into a Mount.
-        if project.paths.is_empty() {
-            continue;
-        }
+    let (git_tx, mut git_rx) = tokio::sync::mpsc::channel::<(String, FileChange)>(64);
 
-        // Partition legacy paths: reuse any existing Mount that already covers
-        // a path (path-prefix match), collecting only the uncovered ones for a
-        // new Mount. This avoids duplicating a Mount the user registered for
-        // the same path under a different name.
-        let mut mount_ids: Vec<oxios_kernel::MountId> = Vec::new();
-        let mut uncovered: Vec<PathBuf> = Vec::new();
-        for path in &project.paths {
-            match mount_manager.covering_mount_id(path) {
-                Some(mid) => {
-                    if !mount_ids.contains(&mid) {
-                        mount_ids.push(mid);
+    // Register callback — spawns a task to avoid blocking
+    // note_write(). Whole-branch R2 fix: this callback also runs
+    // on the vault watcher's plain std::thread, where a bare
+    // `tokio::spawn` PANICS ("must be called from the context of
+    // a Tokio 1.x runtime") and kills the dispatching thread —
+    // the watcher silently died on the first settled event.
+    // Capture the runtime handle at registration (we run inside
+    // the runtime here) and spawn through it; if registration
+    // ever happens outside a runtime, fall back to a blocking
+    // send instead of panicking.
+    let rt_handle = tokio::runtime::Handle::try_current();
+    knowledge.on_file_change(move |path: &str, change: FileChange| {
+        let tx = git_tx.clone();
+        let path = path.to_string();
+        match &rt_handle {
+            Ok(h) => {
+                h.clone().spawn(async move {
+                    let _ = tx.send((path, change)).await;
+                });
+            }
+            Err(_) => {
+                let _ = tx.blocking_send((path, change));
+            }
+        }
+    });
+    // Local copies for the async commit consumer.
+    let consumer_kb_root = kb_root.clone();
+    let consumer_git_root = git_root.clone();
+
+    // Background consumer — commits knowledge changes to git
+    tokio::spawn(async move {
+        while let Some((path, change)) = git_rx.recv().await {
+            if !git.is_enabled() {
+                continue;
+            }
+            let rel = rel_path(&consumer_kb_root, &consumer_git_root, &path);
+            let msg = match &change {
+                FileChange::Created(p) => format!("knowledge: create {p}"),
+                FileChange::Updated(p) => format!("knowledge: update {p}"),
+                FileChange::Deleted(p) => format!("knowledge: delete {p}"),
+                FileChange::Moved { old, new } => {
+                    format!("knowledge: rename {old} → {new}")
+                }
+            };
+            match change {
+                FileChange::Deleted(_) => {
+                    if let Err(e) = git.remove_file(&rel, &msg) {
+                        tracing::warn!(error = %e, "knowledge git delete failed");
                     }
                 }
-                None => uncovered.push(path.clone()),
-            }
-        }
-
-        // Create one Mount for any uncovered paths, named after the Project
-        // (suffixed to avoid colliding with a manually-created Mount).
-        if !uncovered.is_empty() {
-            let name = unique_mount_name(mount_manager, &project.name);
-            match mount_manager.create_mount(
-                name,
-                uncovered,
-                oxios_kernel::MountSource::AutoDetected,
-            ) {
-                Ok(mount) => mount_ids.push(mount.id),
-                Err(e) => {
-                    tracing::warn!(
-                        project = %project.name,
-                        error = %e,
-                        "failed to create Mount during migration; leaving Project paths in place"
-                    );
-                    continue;
+                FileChange::Moved { old, .. } => {
+                    let old_rel = rel_path(&consumer_kb_root, &consumer_git_root, &old);
+                    let _ = git.remove_file(&old_rel, &msg);
+                    let _ = git.commit_file(&rel, &msg);
+                }
+                _ => {
+                    if let Err(e) = git.commit_file(&rel, &msg) {
+                        tracing::warn!(error = %e, "knowledge git commit failed");
+                    }
                 }
             }
         }
+    });
 
-        // Link the resolved Mounts and clear the legacy `paths` field so the
-        // runtime legacy fallbacks never re-activate for this Project.
-        if let Err(e) = project_manager.update_project_bundle(project.id, Some(mount_ids), None) {
-            tracing::warn!(
-                project = %project.name,
-                error = %e,
-                "link failed; orphan Mounts may remain"
-            );
-            continue;
+    // S-4: Post-crash reconciliation — commit knowledge files
+    // whose disk content diverged from git HEAD (e.g. process
+    // crashed between note_write and the async commit consumer).
+    // The I-3 dedup in commit_file_with skips files whose
+    // content matches HEAD, so this only creates commits for
+    // genuinely diverged files.
+    // Local copies for S-4 reconcile loop (kb_root / git_root
+    // are moved into the consumer closure above).
+    let reconcile_kb_root = kb_root.clone();
+    let reconcile_git_root = git_root.clone();
+    let reconcile_git = knowledge_git.clone();
+    if reconcile_git.is_enabled()
+        && let Ok(files) = knowledge.list_all_md_files()
+    {
+        let mut count = 0;
+        for (path, _) in &files {
+            let rel = rel_path(&reconcile_kb_root, &reconcile_git_root, path);
+            if let Ok(info) = reconcile_git.commit_file(&rel, "knowledge: post-crash reconcile")
+                && info.hash != "(disabled)"
+            {
+                count += 1;
+            }
         }
-        if let Err(e) = project_manager.clear_legacy_paths(project.id) {
-            tracing::warn!(
-                project = %project.name,
-                error = %e,
-                "Mounts linked but failed to clear legacy paths"
-            );
+        if count > 0 {
+            tracing::info!("Post-crash git reconcile: {count} diverged files re-committed");
         }
-        migrated += 1;
-    }
-
-    if migrated > 0 {
-        tracing::info!(
-            migrated = migrated,
-            "RFC-025: migrated legacy Project paths into Mounts"
-        );
     }
 }
 
-/// Pick a Mount name based on `base` that is not already taken, suffixing
-/// `-2`, `-3`, … as needed so the migration never fails on a name collision.
-fn unique_mount_name(mount_manager: &oxios_kernel::MountManager, base: &str) -> String {
-    if mount_manager.get_mount_by_name(base).is_none() {
-        return base.to_string();
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("{base}-{n}");
-        if mount_manager.get_mount_by_name(&candidate).is_none() {
-            return candidate;
+/// Settle window for the vault watcher (RFC-050 §3: "debounced
+/// (400 ms), read-only").
+const VAULT_WATCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Spawn the RFC-050 §3 vault watcher on the shared KnowledgeBase.
+///
+/// Called from `KernelBuilder::build` right after the shared
+/// `Arc<KnowledgeBase>` is constructed; the returned guard is stored
+/// on the `Kernel` so the watcher runs for the process lifetime and
+/// the debounce thread joins on shutdown drop. (Whole-branch review
+/// fix: `KnowledgeBase::watch` previously had zero production call
+/// sites while RFC-050/CHANGELOG claimed the behavior.)
+///
+/// Degrades to `None` with a warn when the fs watcher cannot start —
+/// a broken watcher must never take the kernel down; external edits
+/// then stay unindexed until restart.
+fn spawn_vault_watcher(kb: &Arc<KnowledgeBase>) -> Option<WatchGuard> {
+    match kb.watch(VAULT_WATCH_SETTLE) {
+        Ok(guard) => {
+            tracing::debug!(root = %kb.root().display(), "vault watcher started");
+            Some(guard)
         }
-        n += 1;
+        Err(e) => {
+            tracing::warn!(
+                root = %kb.root().display(),
+                error = %e,
+                "vault watcher failed to start; external vault edits will not be reindexed until restart"
+            );
+            None
+        }
+    }
+}
+
+/// Pre-allow the `oxibrain` binary in the exec allowlist so structured
+/// exec calls from the brain skill auto-approve (spec §5.7). Idempotent;
+/// a no-op when `[brain] enabled = false`.
+fn seed_oxibrain_exec_allowlist(config: &mut OxiosConfig) {
+    if config.brain.enabled && !config.exec.allowed_commands.iter().any(|c| c == "oxibrain") {
+        config.exec.allowed_commands.push("oxibrain".to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Focused builder-level wiring test for the RFC-050 §3 vault
+    //! watcher (whole-branch review fix): `KnowledgeBase::watch`
+    //! existed with zero production call sites while RFC-050 and the
+    //! CHANGELOG claimed the behavior. `KernelBuilder::build` now
+    //! spawns it via `spawn_vault_watcher`; a full `build()` in a
+    //! unit test would boot the engine/brain/launchd stack, so this
+    //! drives the same helper `build()` calls (T14 pattern: external
+    //! fs write → index refresh).
+
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn wait_until<F: Fn() -> bool>(cond: F) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    #[test]
+    fn builder_vault_watcher_reindexes_external_writes() {
+        let dir = std::env::temp_dir().join(format!("oxios-kb-wire-{}", uuid::Uuid::new_v4()));
+        let kb = Arc::new(KnowledgeBase::new(dir.clone()).unwrap());
+        kb.note_write("Target.md", "# Target").unwrap();
+        kb.index_all().unwrap();
+
+        // Exactly what KernelBuilder::build does after constructing
+        // the shared Arc<KnowledgeBase>: spawn the RFC-050 watcher on
+        // the resolved vault root and hold the guard.
+        let guard = spawn_vault_watcher(&kb).expect("watcher must start on a healthy vault root");
+
+        // External editor write — bypasses every KnowledgeBase method.
+        std::fs::write(
+            dir.join("ext.md"),
+            "---\nid: e\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n[[Target]]",
+        )
+        .unwrap();
+        assert!(
+            wait_until(|| !kb.backlinks_for("Target.md").is_empty()),
+            "external write was never reindexed through the builder wiring"
+        );
+
+        // Guard drop = shutdown join (WatchGuard contract).
+        drop(guard);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Whole-branch R2 fix (P1): the production git auto-commit
+    /// consumer registers an `on_file_change` callback that spawns
+    /// onto the tokio runtime. When the WATCHER's plain std::thread
+    /// dispatches that callback, a bare `tokio::spawn` panics ("must
+    /// be called from the context of a Tokio 1.x runtime") and kills
+    /// the debounce thread on the first settled event. This test
+    /// drives the REAL registration (`register_knowledge_git_autocommit`,
+    /// exactly what `Kernel::handle()` installs) plus the REAL builder
+    /// watcher, then proves (a) the auto-commit landed — the spawn
+    /// path worked from the watcher thread — and (b) the watcher is
+    /// still alive after the event. multi_thread flavor so spawned
+    /// consumer tasks progress while the test thread polls.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn vault_watcher_survives_runtime_spawn_callbacks() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = home.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let git = Arc::new(
+            oxios_kernel::GitLayer::new_for_vault(vault.clone(), true, false).expect("git layer"),
+        );
+        assert!(git.is_enabled(), "fresh vault repo must be enabled");
+
+        let kb = Arc::new(KnowledgeBase::new(vault.clone()).unwrap());
+        kb.note_write("Target.md", "# Target").unwrap();
+        kb.index_all().unwrap();
+
+        // The REAL consumer registration (runs inside the runtime —
+        // Handle::try_current() succeeds, as in Kernel::handle()).
+        register_knowledge_git_autocommit(&kb, &git);
+
+        let guard = spawn_vault_watcher(&kb).expect("watcher must start");
+
+        // External editor write — dispatched by the watcher's plain
+        // std::thread. Before the fix this panicked the thread and no
+        // auto-commit ever landed.
+        std::fs::write(
+            vault.join("ext.md"),
+            "---\nid: e\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n[[Target]]",
+        )
+        .unwrap();
+
+        let log_has_commit = || {
+            std::process::Command::new("git")
+                .current_dir(&vault)
+                .args(["log", "--oneline"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).contains("knowledge: update ext.md"))
+                .unwrap_or(false)
+        };
+        assert!(
+            wait_until(log_has_commit),
+            "auto-commit for the external write never landed — the spawn-based \
+             callback died on the watcher thread"
+        );
+
+        // Watcher still ALIVE after the first event: a panicked
+        // debounce thread would be gone. A delete must still reindex.
+        std::fs::remove_file(vault.join("ext.md")).unwrap();
+        assert!(
+            wait_until(|| kb.backlinks_for("Target.md").is_empty()),
+            "watcher died after the first settled event"
+        );
+
+        drop(guard);
+    }
+
+    /// Whole-branch R2 fix (P3): the watcher must NOT spawn for
+    /// one-shot commands — the builder defaults to disabled and only
+    /// the daemon paths (`main`'s `watch_vault(true)`) opt in.
+    #[test]
+    fn vault_watcher_defaults_off_for_one_shot_builds() {
+        assert!(
+            !Kernel::builder().watch_vault,
+            "one-shot CLI commands must not pay FSEvents + thread + join"
+        );
+    }
+
+    /// Task 4 fix round: brain boot work (legacy cleanup, documents
+    /// seed + warm index, drain timer) must NOT spawn for one-shot
+    /// commands — the builder defaults to `daemon: false` and only the
+    /// daemon paths (`main`'s `.daemon(true)`) opt in, exactly like
+    /// `watch_vault`.
+    #[test]
+    fn brain_boot_work_skipped_for_one_shot_builds() {
+        assert!(
+            !Kernel::builder().daemon,
+            "one-shot CLI commands must not spawn brain boot tasks"
+        );
+    }
+
+    /// Task 4 boot wiring: with `[brain] enabled`, `build()` pre-allows
+    /// the `oxibrain` binary in the exec allowlist so structured exec
+    /// calls from the brain skill auto-approve (spec §5.7). Drives the
+    /// exact helper `build()` calls — a full `build()` would boot the
+    /// engine/brain stack (T14 pattern).
+    #[test]
+    fn oxibrain_exec_allowlist_seeded_once_when_brain_enabled() {
+        let mut config = OxiosConfig::default();
+        config.brain.enabled = true;
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert!(config.exec.is_binary_allowed("oxibrain"));
+        // Idempotent: seeding twice must not duplicate the row.
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert_eq!(
+            config
+                .exec
+                .allowed_commands
+                .iter()
+                .filter(|c| *c == &"oxibrain".to_string())
+                .count(),
+            1
+        );
+
+        // Disabled brain: never touches the allowlist.
+        let mut config = OxiosConfig::default();
+        config.brain.enabled = false;
+        seed_oxibrain_exec_allowlist(&mut config);
+        assert!(!config.exec.is_binary_allowed("oxibrain"));
     }
 }

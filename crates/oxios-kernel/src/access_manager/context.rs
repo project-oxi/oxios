@@ -26,6 +26,8 @@ pub struct AgentContext {
     pub agent_name: String,
     /// Agent's capability space — determines which tools the agent can access.
     pub cspace: Arc<CSpace>,
+    /// Chat-scoped brain binding for this turn. `None` = brain fully off.
+    pub brain_space: Option<String>,
 }
 
 impl AgentContext {
@@ -80,6 +82,7 @@ impl AgentContext {
             agent_id,
             agent_name: name.to_string(),
             cspace: Arc::new(cspace),
+            brain_space: None,
         }
     }
 
@@ -90,6 +93,7 @@ impl AgentContext {
             agent_id: AgentId::new_v4(),
             agent_name: name.to_string(),
             cspace: Arc::new(cspace),
+            brain_space: None,
         }
     }
 }

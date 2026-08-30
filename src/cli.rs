@@ -12,7 +12,7 @@ use clap_complete::Shell;
     name = "oxios",
     version,
     about = "Oxios Agent OS — Agent Operating System",
-    after_help = "Examples:\n  oxios                         First run: interactive setup\n  oxios start                   Start the daemon\n  oxios web                     Open web dashboard in browser\n  oxios run \"review this code\"  Execute a single prompt\n  oxios chat                    Start interactive chat\n  oxios status                  Show system status\n  oxios doctor                  Diagnose issues\n\nGetting started:\n  After cargo install oxios, just run:\n    oxios\n  The setup wizard will guide you through configuration."
+    after_help = "Examples:\n  oxios                         First run: interactive setup\n  oxios start                   Start the daemon\n  oxios web                     Open web dashboard in browser\n  oxios run \"review this code\"  Execute a single prompt\n  oxios chat                    Start interactive chat\n  oxios status                  Show system status\n  oxios doctor                  Diagnose issues\n  oxios migrate --dry-run       Preview the legacy-home migration\n\nGetting started:\n  After cargo install oxios, just run:\n    oxios\n  The setup wizard will guide you through configuration."
 )]
 pub(crate) struct Cli {
     /// Run in foreground (do not daemonize).
@@ -24,7 +24,7 @@ pub(crate) struct Cli {
     pub(crate) verbose: bool,
 
     /// Path to config file.
-    #[arg(short, long, default_value = "~/.oxios/config.toml", global = true)]
+    #[arg(short, long, default_value = "~/.oxi/oxios/config.toml", global = true)]
     pub(crate) config: String,
 
     #[command(subcommand)]
@@ -103,7 +103,25 @@ pub(crate) enum Command {
     Chat,
 
     /// Check system health and diagnose issues.
-    Doctor,
+    Doctor {
+        /// Remove leftover shadow binaries (`/usr/local/bin/oxios.bak.<date>` etc.)
+        /// after a TTY confirm. Non-TTY: prints the `rm` lines it would run.
+        #[arg(long)]
+        cleanup: bool,
+        /// Skip the TTY confirm prompt in `--cleanup` mode. Useful for
+        /// scripts and the smoke harness; requires `--cleanup`.
+        #[arg(long, requires = "cleanup")]
+        yes: bool,
+    },
+
+    /// Migrate the legacy `~/.oxios` home into the canonical unified
+    /// home (`~/.oxi/oxios`). Journaled, resumable, and copy-only —
+    /// the source is never modified.
+    Migrate {
+        /// Print the migration plan without touching anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// List available models for the configured (or specified) provider.
     Models {
@@ -202,6 +220,20 @@ pub(crate) enum Command {
         /// Do not restart the daemon after updating.
         #[arg(long)]
         no_restart: bool,
+
+        /// Force a specific install channel for the binary update
+        /// (`cargo` only — anything else is rejected).
+        #[arg(long, value_parser = ["cargo"])]
+        via: Option<String>,
+
+        /// Apply PATH shadow migration without further prompting.
+        /// The migration also runs on a confirmed TTY prompt or with --yes.
+        #[arg(long)]
+        adopt: bool,
+
+        /// Roll back to the previous version (no network fetch).
+        #[arg(long)]
+        rollback: bool,
     },
 
     /// Show changelog or release notes for a version.
@@ -237,9 +269,9 @@ pub(crate) enum Command {
         action: EmailAction,
     },
 
-    /// Interact with the oxibrain daemon (RFC-047) — status, ingest, ask.
-    /// Talks to the daemon directly over its Unix socket; the kernel is not
-    /// required. `export` is unsupported in this release (use `oxibrain export`).
+    /// Manage the oxibrain integration (daemonless, oxibrain 0.8):
+    /// binary install, document-plane reindex, extraction drain.
+    /// Query/ingest verbs live in the `oxibrain` CLI (`oxibrain ask`, …).
     Brain {
         #[command(subcommand)]
         command: BrainCmd,
@@ -254,54 +286,18 @@ pub(crate) enum Command {
 /// `oxios brain` subcommands.
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum BrainCmd {
-    /// Show daemon status: online/offline, space, episode count.
+    /// Show integration status: binary path/version, dir, space, stats.
     Status,
-    /// Ingest a file (or `-` for stdin) as a brain episode.
-    Ingest {
-        /// File path, or `-` to read stdin.
-        path: std::path::PathBuf,
-    },
-    /// Assemble recall context for a query (3000-token budget) and print it.
-    Ask {
-        /// Query to recall context for.
-        query: String,
-    },
-    /// (Unsupported) — use the oxibrain CLI: `oxibrain export`.
-    Export {
-        #[arg(long)]
-        format: String,
-        #[arg(long)]
-        output: Option<String>,
-    },
-    /// Consolidate Brain episodes (derived/sourced/uncertain). RFC-048
-    /// splits Brain consolidation from KnowledgeBase curation. Brain
-    /// consolidation never writes KnowledgeBase files.
-    Consolidate {
-        /// Optional max episodes to consolidate.
-        #[arg(long)]
-        max: Option<usize>,
-    },
-    /// Curate raw KnowledgeBase notes (LLM-only note refinement). RFC-048
-    /// names this operation `curate`; `dream` remains as a deprecated
-    /// alias below.
-    Curate {
-        /// Optional maximum notes to curate in this run.
-        #[arg(long)]
-        max: Option<usize>,
-    },
-    /// Deprecated alias for `curate`. Kept for one minor.
-    #[command(hide = true)]
-    Dream,
-    /// Install the oxibrain binary from GitHub Releases (first-party
-    /// supervision, RFC-047). sha256-verified; reports no-release-asset
-    /// until the oxibrain repo has a tagged binary release.
+    /// Install the oxibrain binary from GitHub Releases (sha256-verified).
     Install,
-    /// Start an already-installed oxibrain binary (no install attempt).
-    Start,
-    /// Stop a daemon this supervisor started (launchd bootout + kill).
-    Stop,
-    /// Stop + remove the launchd plist (binary and data stay).
+    /// Remove the managed binary (data under ~/.oxi/brain stays) and
+    /// clean up daemon-era leftovers.
     Uninstall,
+    /// Re-seed documents.toml with the vault root and run
+    /// `oxibrain index --documents --embed`.
+    Reindex,
+    /// Run `oxibrain extract --pending` (drain the extraction backlog).
+    Extract,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -328,9 +324,10 @@ pub(crate) enum FoundationCmd {
     Status,
     /// Run the idempotent bootstrap (create directory, handshake Brain).
     Bootstrap {
-        /// When set, allow attempting to start a missing compatible daemon.
+        /// When set, allow installing a missing compatible `oxibrain`
+        /// binary during the handshake.
         #[arg(long)]
-        may_start: bool,
+        may_install: bool,
     },
     /// Register a non-secret Foundation profile from a JSON file.
     Register {
@@ -449,21 +446,13 @@ pub(crate) enum ProjectAction {
         /// Project name (unique).
         name: String,
 
-        /// Filesystem path(s) for the project.
+        /// Filesystem root(s) for the project (absolute, existing directories).
         #[arg(short, long = "path", num_args = 1..)]
         paths: Vec<String>,
 
-        /// Tags for keyword matching.
-        #[arg(short, long = "tag", num_args = 1..)]
-        tags: Vec<String>,
-
-        /// Display emoji.
-        #[arg(short, long, default_value = "📦")]
-        emoji: String,
-
-        /// Description.
+        /// Project instructions shown to the agent while this project is active.
         #[arg(short, long)]
-        description: Option<String>,
+        instructions: Option<String>,
     },
 
     /// Remove a project.

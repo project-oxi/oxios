@@ -79,39 +79,60 @@ fn default_true_inline() -> bool {
     true
 }
 
-/// Brain daemon connection configuration (RFC-047).
+/// Brain integration configuration (oxibrain 0.10 agent-first CLI).
 ///
-/// oxios connects to the standalone oxibrain daemon over a Unix-domain socket.
-/// When the daemon is unavailable the kernel degrades (memory ops return empty)
-/// and agent turns complete normally.
+/// oxios drives `oxibrain <op>` one-shot processes for the agent path and
+/// a per-call `serve --stdio` child for console-only native RPCs, always
+/// against an explicit data directory. When the binary is unavailable the
+/// kernel degrades (memory ops return empty) and agent turns complete
+/// normally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrainSection {
-    /// Connect to the daemon at boot. `false` skips the connection attempt
-    /// entirely (fully degraded).
+    /// Enable the brain surface. `false` disables every spawn and CLI call.
     pub enabled: bool,
-    /// Unix-domain socket path. Empty → `~/.oxi/brain/oxibrain.sock`.
-    pub socket_path: String,
-    /// Space to operate in.
-    pub space: String,
-    /// First-party supervision (2026-08-19 spec): install the daemon from
-    /// GitHub Releases when absent, keep it running via launchd with a
-    /// detached-spawn fallback. `false` restores pure degradation.
-    pub auto_manage: bool,
-    /// Explicit daemon binary path. Non-empty skips the download entirely.
+    /// Brain data directory. Empty → `~/.oxi/brain` (`$OXI_BRAIN_DIR` honored).
+    pub dir: String,
+    /// Default brain space offered to new chats that have no project binding. Empty = unconnected.
+    #[serde(default)]
+    pub default_space: String,
+    /// Explicit binary path. Non-empty skips auto-install.
     pub binary_path: String,
+    /// Install the binary from GitHub Releases when absent.
+    pub auto_install: bool,
 }
 
 impl Default for BrainSection {
     fn default() -> Self {
         Self {
             enabled: true,
-            socket_path: String::new(),
-            space: "personal".to_string(),
-            auto_manage: true,
+            dir: String::new(),
+            default_space: String::new(),
             binary_path: String::new(),
+            auto_install: true,
         }
     }
+}
+
+/// Report daemon-era `[brain]` keys that no longer exist. The section parses
+/// fine without them (serde ignores unknown fields); this makes the removal
+/// visible once instead of failing the config.
+pub fn warn_removed_brain_keys(raw: &toml::Value) -> Vec<&'static str> {
+    let mut removed = Vec::new();
+    if let Some(brain) = raw.get("brain") {
+        for key in ["socket_path", "auto_manage"] {
+            if brain.get(key).is_some() {
+                removed.push(key);
+            }
+        }
+    }
+    if !removed.is_empty() {
+        tracing::warn!(
+            keys = ?removed,
+            "[brain] keys removed with the oxibrain 0.8 daemonless cutover — ignored"
+        );
+    }
+    removed
 }
 /// Foundation settings (RFC-048).
 ///
@@ -130,8 +151,8 @@ pub struct FoundationConfig {
     pub registry_path: String,
     /// Override the package lock path. Empty → `~/.oxi/foundation/v1/packages.lock`.
     pub packages_lock_path: String,
-    /// Override the Brain daemon socket. Empty → `~/.oxi/brain/oxibrain.sock`.
-    pub brain_socket: String,
+    /// Override the Brain data directory. Empty → `~/.oxi/brain`.
+    pub brain_dir: String,
 }
 
 impl Default for FoundationConfig {
@@ -140,7 +161,7 @@ impl Default for FoundationConfig {
             auto_bootstrap: true,
             registry_path: String::new(),
             packages_lock_path: String::new(),
-            brain_socket: String::new(),
+            brain_dir: String::new(),
         }
     }
 }
@@ -244,7 +265,7 @@ pub struct SqliteMemoryConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Path to the SQLite database file.
-    /// Empty string means default: `~/.oxios/workspace/memory.db`
+    /// Empty string means default: `~/.oxi/oxios/workspace/memory.db`
     #[serde(default)]
     pub path: String,
     /// Embedding vector dimension.
@@ -1019,15 +1040,17 @@ pub struct DaemonConfig {
 }
 
 fn default_pid_file() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/oxios.pid", h.display()))
-        .unwrap_or_else(|| "./oxios.pid".into())
+    crate::oxi_home::oxios_home()
+        .join("oxios.pid")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn default_daemon_log_dir() -> String {
-    dirs::home_dir()
-        .map(|h| format!("{}/.oxios/logs", h.display()))
-        .unwrap_or_else(|| "./logs".into())
+    crate::oxi_home::oxios_home()
+        .join("logs")
+        .to_string_lossy()
+        .into_owned()
 }
 
 impl Default for DaemonConfig {
@@ -1073,48 +1096,6 @@ impl Default for SessionConfig {
             max_sessions: default_max_sessions(),
             ttl_hours: default_session_ttl_hours(),
             auto_prune: true,
-        }
-    }
-}
-
-/// RFC-025 Phase 5: Mount auto-promotion configuration.
-/// Controls the background scanner that promotes frequently-used paths into
-/// Mounts. See `mount::path_promotion`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MountsConfig {
-    /// Enable the auto-promotion scanner.
-    #[serde(default = "default_true")]
-    pub auto_promote_enabled: bool,
-    /// Minimum distinct touches within the window to trigger promotion.
-    #[serde(default = "default_promote_threshold")]
-    pub auto_promote_threshold: usize,
-    /// How far back to look, in days.
-    #[serde(default = "default_promote_window_days")]
-    pub auto_promote_window_days: i64,
-    /// Seconds between promotion scans (background cadence).
-    #[serde(default = "default_promote_interval_secs")]
-    pub auto_promote_interval_secs: u64,
-}
-
-fn default_promote_threshold() -> usize {
-    3
-}
-
-fn default_promote_window_days() -> i64 {
-    14
-}
-
-fn default_promote_interval_secs() -> u64 {
-    3600 // hourly
-}
-
-impl Default for MountsConfig {
-    fn default() -> Self {
-        Self {
-            auto_promote_enabled: true,
-            auto_promote_threshold: default_promote_threshold(),
-            auto_promote_window_days: default_promote_window_days(),
-            auto_promote_interval_secs: default_promote_interval_secs(),
         }
     }
 }
@@ -1332,9 +1313,6 @@ pub struct OxiosConfig {
     /// Session management configuration.
     #[serde(default)]
     pub session: SessionConfig,
-    /// RFC-025: Mount system configuration (auto-promotion scanner).
-    #[serde(default)]
-    pub mounts: MountsConfig,
     /// ClawHub marketplace configuration.
     #[serde(default)]
     pub marketplace: MarketplaceConfig,
@@ -1353,6 +1331,9 @@ pub struct OxiosConfig {
     /// Image generation configuration (OpenAI-compatible providers).
     #[serde(default)]
     pub image_gen: ImageGenConfig,
+    /// Web search provider configuration (`[search]`).
+    #[serde(default)]
+    pub search: SearchConfig,
     /// oximemo integration (opt-in first-party app module; requires the `memo`
     /// cargo feature). oxios acts as a co-client of the oximemo vault.
     #[serde(default)]
@@ -1413,6 +1394,64 @@ fn default_image_gen_num() -> u8 {
     1
 }
 
+/// Active web-search provider for the `web_search` tool.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchProvider {
+    /// Zero-config scraping engines (DuckDuckGo / Wikipedia / Bing).
+    /// No API key required; result quality is best-effort.
+    #[default]
+    Scrape,
+    /// Tavily Search API (https://tavily.com) — LLM-oriented, structured
+    /// results with content snippets. Requires `tavily_api_key`.
+    Tavily,
+    /// Brave Search API (https://brave.com/search/api/) — independent
+    /// index, freshness and region control. Requires `brave_api_key`.
+    Brave,
+}
+
+/// Web search provider configuration (`[search]`).
+///
+/// The always-on `web_search` tool prefers the configured managed provider
+/// (structured results, snippets, freshness) and falls back to the
+/// zero-config scraping engines when no provider is set or the provider
+/// call fails.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchConfig {
+    /// Active provider. Default: `scrape`.
+    #[serde(default)]
+    pub provider: SearchProvider,
+    /// Tavily API key. Required when `provider = "tavily"`.
+    #[serde(default)]
+    pub tavily_api_key: String,
+    /// Brave Search subscription token. Required when `provider = "brave"`.
+    #[serde(default)]
+    pub brave_api_key: String,
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_search_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Region/locale hint for providers that support it (e.g. "kr-KR").
+    /// Empty = provider default.
+    #[serde(default)]
+    pub region: String,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            provider: SearchProvider::Scrape,
+            tavily_api_key: String::new(),
+            brave_api_key: String::new(),
+            timeout_secs: default_search_timeout_secs(),
+            region: String::new(),
+        }
+    }
+}
+
+fn default_search_timeout_secs() -> u64 {
+    15
+}
+
 /// Kernel configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KernelConfig {
@@ -1425,6 +1464,19 @@ pub struct KernelConfig {
     /// Maximum number of concurrent agents.
     #[serde(default = "default_max_agents")]
     pub max_agents: usize,
+    /// Explicit override for the markdown knowledge base root.
+    ///
+    /// Resolution order when a `KnowledgeBase` is constructed:
+    /// 1. `kernel.knowledge_root` (this field, after `expand_home`).
+    /// 2. `~/.oxi/config.toml [vault].path` (ecosystem-canonical; default
+    ///    reads the file via `OXIOS_OXI_CONFIG_PATH` env override if set,
+    ///    else `~/.oxi/config.toml`).
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
+    ///
+    /// `None` ⇒ steps 2–3. The merged vault is shared by oxios and oximemo
+    /// per ECOSYSTEM C5 v1.1.
+    #[serde(default)]
+    pub knowledge_root: Option<String>,
 }
 
 fn default_workspace() -> String {
@@ -1432,7 +1484,12 @@ fn default_workspace() -> String {
 }
 
 fn dirs_home() -> Option<String> {
-    dirs::home_dir().map(|h| format!("{}/.oxios/workspace", h.display()))
+    Some(
+        crate::oxi_home::oxios_home()
+            .join("workspace")
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 fn default_event_bus_capacity() -> usize {
@@ -1449,6 +1506,89 @@ impl Default for KernelConfig {
             workspace: default_workspace(),
             event_bus_capacity: default_event_bus_capacity(),
             max_agents: 10,
+            knowledge_root: None,
+        }
+    }
+}
+
+impl KernelConfig {
+    /// Resolve the markdown knowledge-base root path.
+    ///
+    /// Precedence:
+    /// 1. `self.knowledge_root` (after `expand_home`).
+    /// 2. `~/.oxi/config.toml [vault].path` (after `expand_home`) — the
+    ///    ecosystem-canonical vault location shared with oximemo per
+    ///    ECOSYSTEM C5 v1.1. Tests can override the config path via the
+    ///    `OXIOS_OXI_CONFIG_PATH` env var; production reads
+    ///    `~/.oxi/config.toml`.
+    /// 3. Fallback `~/.oxi/spaces/personal/vault` (with `expand_home`).
+    ///
+    /// A read failure or missing `[vault]` table falls through to step 3;
+    /// resolution is best-effort so a malformed shared config never
+    /// blocks oxios from starting.
+    pub fn resolved_knowledge_root(&self) -> std::path::PathBuf {
+        if let Some(ref kr) = self.knowledge_root {
+            return expand_home(kr);
+        }
+        if let Some(p) = read_oxi_vault_path() {
+            return expand_home(&p);
+        }
+        crate::oxi_home::oxi_home()
+            .join("spaces")
+            .join("personal")
+            .join("vault")
+    }
+}
+
+/// Read the `[vault].path` string from `~/.oxi/config.toml`. Returns
+/// `None` if the file is missing, unreadable, malformed, has no `[vault]`
+/// table, or the path field is empty/whitespace. Best-effort: errors are
+/// swallowed with a `tracing` debug log so resolution failures degrade to
+/// the default vault path.
+///
+/// The `OXIOS_OXI_CONFIG_PATH` env var is a **test-only seam** to redirect
+/// the read; production reads `~/.oxi/config.toml` unconditionally.
+fn read_oxi_vault_path() -> Option<String> {
+    use std::path::PathBuf;
+    #[cfg(test)]
+    let path: PathBuf = std::env::var_os("OXIOS_OXI_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| expand_home("~/.oxi/config.toml"));
+    #[cfg(not(test))]
+    let path: PathBuf = expand_home("~/.oxi/config.toml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::debug!(
+                path = %path.display(),
+                error = %e,
+                "oxi config: read failed; falling back to default vault"
+            );
+            return None;
+        }
+    };
+    #[derive(serde::Deserialize)]
+    struct OxiConfig {
+        vault: Option<OxiVault>,
+    }
+    #[derive(serde::Deserialize)]
+    struct OxiVault {
+        path: Option<String>,
+    }
+    match toml::from_str::<OxiConfig>(&text) {
+        Ok(cfg) => cfg
+            .vault
+            .and_then(|v| v.path)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        Err(e) => {
+            tracing::debug!(
+                path = %path.display(),
+                error = %e,
+                "oxi config: parse failed; falling back to default vault"
+            );
+            None
         }
     }
 }
@@ -2172,11 +2312,23 @@ pub struct GitConfig {
     /// Enable automatic commits for state changes.
     #[serde(default = "default_true")]
     pub auto_commit: bool,
+    /// Adopt an existing foreign git repo at the vault root by writing
+    /// the `.oxi-vault-git` ownership marker (`.oxios-git` is recognized
+    /// as a legacy marker but no longer written). Default `false` — a
+    /// foreign repo disables auto-commit + S-4 reconcile with a loud
+    /// warning, so the operator can choose to opt in explicitly (avoids
+    /// sweeping a user's uncommitted edits one-commit-per-file through a repo
+    /// they didn't author). R16 review F2 (b).
+    #[serde(default)]
+    pub adopt_foreign_repo: bool,
 }
 
 impl Default for GitConfig {
     fn default() -> Self {
-        Self { auto_commit: true }
+        Self {
+            auto_commit: true,
+            adopt_foreign_repo: false,
+        }
     }
 }
 
@@ -2406,6 +2558,14 @@ impl Default for BrowserConfig {
 /// Loads configuration from a TOML file.
 pub fn load_config(path: &std::path::Path) -> anyhow::Result<OxiosConfig> {
     let content = std::fs::read_to_string(path)?;
+    // Pre-parse only to scan for removed `[brain]` keys (serde ignores
+    // unknown fields, so the real deserialize below still succeeds on
+    // legacy configs). The actual `OxiosConfig` is then deserialized
+    // straight from the original text so TOML error spans line up with
+    // what the user wrote.
+    if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+        warn_removed_brain_keys(&raw);
+    }
     let config: OxiosConfig = toml::from_str(&content)?;
     let (errors, warnings) = config.validate();
     for w in warnings {
@@ -2611,17 +2771,44 @@ mod tests {
     fn brain_section_defaults_and_overrides() {
         let sec: BrainSection = toml::from_str("").unwrap();
         assert!(sec.enabled);
-        assert!(sec.auto_manage);
+        assert!(sec.auto_install);
+        assert_eq!(sec.dir, "");
+        assert_eq!(sec.default_space, "");
         assert_eq!(sec.binary_path, "");
-        assert_eq!(sec.space, "personal");
 
         let sec: BrainSection = toml::from_str(
-            "enabled = false\nauto_manage = false\nbinary_path = \"/opt/oxibrain\"\n",
+            "enabled = false\nauto_install = false\ndir = \"/data/brain\"\nbinary_path = \"/opt/oxibrain\"\n",
         )
         .unwrap();
         assert!(!sec.enabled);
-        assert!(!sec.auto_manage);
+        assert!(!sec.auto_install);
+        assert_eq!(sec.dir, "/data/brain");
         assert_eq!(sec.binary_path, "/opt/oxibrain");
+
+        // Removed daemon-era keys are ignored (warn-and-ignore), not fatal.
+        let sec: BrainSection =
+            toml::from_str("socket_path = \"/tmp/s.sock\"\nauto_manage = true\n").unwrap();
+        assert!(sec.enabled);
+        assert!(sec.auto_install);
+    }
+
+    #[test]
+    fn brain_section_legacy_space_key_parses() {
+        // Pre-binding configs carried `[brain] space`; the field is gone but
+        // the key must parse harmlessly (serde ignores unknown fields).
+        let sec: BrainSection = toml::from_str("space = \"x\"\n").unwrap();
+        assert!(sec.enabled);
+        assert_eq!(sec.default_space, "");
+    }
+
+    #[test]
+    fn warn_removed_brain_keys_reports() {
+        let raw: toml::Value =
+            toml::from_str("[brain]\nsocket_path = \"/tmp/s.sock\"\n[other]\nx = 1\n").unwrap();
+        // Must not panic; presence check happens inside. Assert via return value.
+        assert_eq!(warn_removed_brain_keys(&raw), vec!["socket_path"]);
+        let clean: toml::Value = toml::from_str("[brain]\nenabled = true\n").unwrap();
+        assert!(warn_removed_brain_keys(&clean).is_empty());
     }
     #[test]
     fn telegram_api_base_defaults_and_parses() {
@@ -3070,5 +3257,99 @@ strong = { model = "anthropic/claude-opus-4-20250514" }
             ..Default::default()
         };
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn knowledge_root_resolution_order() {
+        // Tier 1: explicit `kernel.knowledge_root` wins OVER a present
+        // `[vault].path` in the oxi config — proof of precedence, not just
+        // "explicit vs nothing". A reversed-priority implementation must
+        // NOT pass.
+        let dir = tempdir();
+        let oxi_config = dir.join("oxi-config.toml");
+        std::fs::write(&oxi_config, "[vault]\npath = \"~/should-not-win\"\n").unwrap();
+        unsafe {
+            std::env::set_var("OXIOS_OXI_CONFIG_PATH", &oxi_config);
+        }
+        let explicit = KernelConfig {
+            knowledge_root: Some("~/explicit-vault".into()),
+            ..KernelConfig::default_with_workspace_for_test("~/ignored")
+        };
+        assert_eq!(
+            explicit.resolved_knowledge_root(),
+            expand_home("~/explicit-vault"),
+        );
+
+        // Tier 2: explicit absent, `[vault].path` present →
+        // `expand_home("~/from-ecosystem")` is returned.
+        std::fs::write(&oxi_config, "[vault]\npath = \"~/from-ecosystem\"\n").unwrap();
+        unsafe {
+            std::env::set_var("OXIOS_OXI_CONFIG_PATH", &oxi_config);
+        }
+        let cfg = KernelConfig::default_with_workspace_for_test("~/ignored");
+        let resolved = cfg.resolved_knowledge_root();
+        assert_eq!(resolved, expand_home("~/from-ecosystem"));
+
+        // Tier 3: explicit absent AND oxi config absent → fallback
+        // `<oxi_home>/spaces/personal/vault` — the approved design
+        // target (`spaces/<space>/vault`), NOT the flat legacy
+        // `~/.oxi/vault`. Hermetic: the seam points at a NONEXISTENT path
+        // inside the tempdir so no workstation's real `~/.oxi/config.toml`
+        // can leak into the assertion, and the expectation goes through
+        // the resolver so an `OXI_HOME` override on the host cannot
+        // break it.
+        let nonexistent = dir.join("oxi-config-absent.toml");
+        // (Path does not exist — read returns NotFound → fallback.)
+        unsafe {
+            std::env::set_var("OXIOS_OXI_CONFIG_PATH", &nonexistent);
+        }
+        let cfg = KernelConfig::default_with_workspace_for_test("~/ignored");
+        let resolved = cfg.resolved_knowledge_root();
+        unsafe {
+            std::env::remove_var("OXIOS_OXI_CONFIG_PATH");
+        }
+        assert_eq!(
+            resolved,
+            crate::oxi_home::oxi_home()
+                .join("spaces")
+                .join("personal")
+                .join("vault")
+        );
+    }
+
+    // Test-only constructors/helpers for the knowledge_root test above.
+    impl KernelConfig {
+        fn default_with_workspace_for_test(workspace: &str) -> Self {
+            Self {
+                workspace: workspace.into(),
+                event_bus_capacity: default_event_bus_capacity(),
+                max_agents: default_max_agents(),
+                knowledge_root: None,
+            }
+        }
+    }
+
+    /// Unique OS temp dir per call; auto-removed on drop so the suite
+    /// never accumulates cruft in `$TMPDIR`.
+    fn tempdir() -> TempDir {
+        let base =
+            std::env::temp_dir().join(format!("oxios-kernel-config-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).expect("tempdir create");
+        TempDir(base)
+    }
+
+    struct TempDir(std::path::PathBuf);
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }

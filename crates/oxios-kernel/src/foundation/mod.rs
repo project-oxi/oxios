@@ -54,11 +54,8 @@ pub const FOUNDATION_DIR: &str = ".oxi/foundation";
 /// Versioned root inside the Foundation directory.
 pub const VERSIONED_DIR: &str = "v1";
 
-/// Default Brain daemon socket directory (`~/.oxi/brain`).
+/// Default Brain data directory (`~/.oxi/brain`).
 pub const BRAIN_DIR: &str = ".oxi/brain";
-
-/// Default Brain daemon socket filename.
-pub const BRAIN_SOCKET: &str = "oxibrain.sock";
 
 /// Resolve the Foundation directory for the given home.
 ///
@@ -77,20 +74,22 @@ pub fn packages_dir(home: &Path) -> PathBuf {
     versioned_root(home).join(PACKAGES_DIR)
 }
 
-/// Default Brain socket path used when no explicit override is provided.
-pub fn default_brain_socket(home: &Path) -> PathBuf {
-    home.join(BRAIN_DIR).join(BRAIN_SOCKET)
+/// Default Brain data directory used when no explicit override is provided.
+pub fn default_brain_dir(home: &Path) -> PathBuf {
+    home.join(BRAIN_DIR)
 }
 
-/// State of an external daemon (Brain) used by the bootstrap handshake.
+/// State of the oxibrain server as seen by the bootstrap handshake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DaemonState {
-    /// Daemon responded to the version handshake and is compatible.
+    /// Server completed the capability handshake inside the accepted
+    /// protocol range.
     Compatible,
-    /// Daemon socket is not present / no process is listening.
+    /// No spawnable binary / the session child could not be started.
     Unavailable,
-    /// Daemon responded but its version is outside the supported range.
+    /// Server answered but its protocol or store format is outside the
+    /// supported range.
     Incompatible,
 }
 
@@ -110,8 +109,8 @@ mod tests {
             PathBuf::from("/Users/example/.oxi/foundation/v1")
         );
         assert_eq!(
-            default_brain_socket(home),
-            PathBuf::from("/Users/example/.oxi/brain/oxibrain.sock")
+            default_brain_dir(home),
+            PathBuf::from("/Users/example/.oxi/brain")
         );
     }
 

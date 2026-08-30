@@ -561,11 +561,11 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             id: ToolId::new("kernel.project.update"),
             provider: provider("kernel.kernel"),
             contract_version: V1,
-            description: "Mutate workspace space state.",
+            description: "Mutate project state.",
             tags: leak_slice(&[tag("kernel-mutate")]),
             required_capabilities: leak_slice(&[CapabilityRequirement {
                 resource: ResourceRef::KernelDomain {
-                    domain: "space".into(),
+                    domain: "project".into(),
                 },
                 rights: Rights::WRITE,
             }]),
@@ -588,22 +588,6 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             ui_affordances: leak_slice(&[tag("ui.kernel")]),
             activation_class: ActivationClass::ApprovalOnly,
             registered_name: "kernel_agent",
-        },
-        ToolDescriptor {
-            id: ToolId::new("kernel.cron.update"),
-            provider: provider("kernel.kernel"),
-            contract_version: V1,
-            description: "Mutate scheduled job entries.",
-            tags: leak_slice(&[tag("kernel-mutate")]),
-            required_capabilities: leak_slice(&[CapabilityRequirement {
-                resource: ResourceRef::KernelDomain {
-                    domain: "cron".into(),
-                },
-                rights: Rights::WRITE,
-            }]),
-            ui_affordances: leak_slice(&[tag("ui.kernel")]),
-            activation_class: ActivationClass::ApprovalOnly,
-            registered_name: "cron",
         },
         // ── Kernel observation (OnDemand) ───────────────────────────
         ToolDescriptor {
@@ -705,22 +689,6 @@ fn build_catalog() -> Vec<ToolDescriptor> {
         // an agent is entitled to. The matching registration arms
         // live in `tools::registration::register_from_resolved_profile`
         // and key off these exact ids.
-        ToolDescriptor {
-            id: ToolId::new("kernel.mount.manage"),
-            provider: provider("kernel.kernel"),
-            contract_version: V1,
-            description: "Mount sub-volumes into the agent sandbox.",
-            tags: leak_slice(&[tag("kernel-mutate")]),
-            required_capabilities: leak_slice(&[CapabilityRequirement {
-                resource: ResourceRef::KernelDomain {
-                    domain: "mount".into(),
-                },
-                rights: Rights::WRITE,
-            }]),
-            ui_affordances: leak_slice(&[tag("ui.kernel")]),
-            activation_class: ActivationClass::ApprovalOnly,
-            registered_name: "mount",
-        },
         ToolDescriptor {
             id: ToolId::new("kernel.task.manage"),
             provider: provider("kernel.kernel"),
@@ -877,10 +845,13 @@ mod tests {
     #[test]
     fn catalog_ids_are_unique_and_requirements_nonempty() {
         let catalog = kernel_catalog();
-        // Task 9: 28 base descriptors + 10 long-tail (mount, task,
+        // Task 9: 28 base descriptors + 8 long-tail (task,
         // marketplace, skill_forge, calendar, memo, timeline, email,
-        // image_gen, screenshot).
-        assert!(catalog.len() >= 38);
+        // image_gen, screenshot). Mount and cron descriptors were
+        // dropped: both tools were deleted on main (mounts replaced
+        // by project root_paths; cron scheduling left the kernel tool
+        // surface).
+        assert!(catalog.len() >= 36);
         let mut ids: Vec<_> = catalog.iter().map(|d| d.id.to_string()).collect();
         let total = ids.len();
         ids.sort();

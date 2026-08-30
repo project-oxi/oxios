@@ -1,0 +1,433 @@
+    // ----------------------------------------------------------------
+    // T12 — format-aware note writes via frontformat::write_note
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn note_write_is_format_aware_and_noop_guarded() {
+        let kb = make_test_kb();
+
+        // 1. memo path → synthesized frontmatter (id/created/updated)
+        kb.note_write("docs/a.md", "hello").unwrap();
+        let first = kb.note_read("docs/a.md").unwrap().unwrap();
+        assert!(
+            first.starts_with("---\n"),
+            "memo write must synthesize frontmatter; got: {first:?}"
+        );
+
+        // 2. identical second write → NoOp guard: file bytes unchanged
+        kb.note_write("docs/a.md", "hello").unwrap();
+        let second = kb.note_read("docs/a.md").unwrap().unwrap();
+        assert_eq!(
+            first, second,
+            "NoOp guard must not rewrite unchanged memo content"
+        );
+
+        // 3. system path → raw, never synthesized frontmatter
+        kb.note_write("Chat.md", "- [ ] x\n").unwrap();
+        let chat = kb.note_read("Chat.md").unwrap().unwrap();
+        assert_eq!(
+            chat, "- [ ] x\n",
+            "system path must be raw, no frontmatter; got: {chat:?}"
+        );
+        assert!(!chat.starts_with("---"), "system path must never carry frontmatter");
+    }
+
+    #[test]
+    fn note_write_noop_skips_backlink_reindex_and_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let kb = make_test_kb();
+        let counter = AtomicUsize::new(0);
+        kb.on_file_change(|_path, _change| {
+            counter.fetch_add(1, AtomicOrdering::SeqCst);
+        });
+
+        kb.note_write("brain/Rust.md", "hello world").unwrap();
+        let after_first = counter.load(AtomicOrdering::SeqCst);
+        assert_eq!(after_first, 1, "first write must fire callback exactly once");
+
+        // identical re-write must be a NoOp → no callback
+        kb.note_write("brain/Rust.md", "hello world").unwrap();
+        let after_second = counter.load(AtomicOrdering::SeqCst);
+        assert_eq!(
+            after_second, 1,
+            "NoOp write must NOT call notify_change; got {after_second} callbacks"
+        );
+    }
+
+    #[test]
+    fn note_write_with_meta_refuses_user_authored_frontmatter() {
+        let kb = make_test_kb();
+
+        // Pre-existing file with user-authored (foreign) frontmatter
+        // — has frontmatter block but NO oxios: table.
+        let user_note = "---\ntags: [rust, design]\nauthor: jane\n---\n\n# My note\n";
+        kb.note_write("brain/User.md", user_note).unwrap();
+
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: false,
+            session_id: None,
+            message_index: None,
+            saved_at: None,
+        };
+
+        // Must return Ok(false) — refuse to touch user-authored frontmatter
+        let accepted = kb
+            .note_write_with_meta("brain/User.md", "# My note\nnew body", &meta)
+            .unwrap();
+        assert!(
+            !accepted,
+            "user-authored frontmatter must refuse agent metadata write"
+        );
+
+        // File must still contain the user-authored frontmatter untouched
+        let after = kb.note_read("brain/User.md").unwrap().unwrap();
+        assert!(
+            after.contains("tags: [rust, design]"),
+            "user tags must survive unchanged; got: {after:?}"
+        );
+        assert!(
+            !after.contains("oxios:"),
+            "no oxios: must be synthesized on user-authored file; got: {after:?}"
+        );
+    }
+
+    #[test]
+    fn note_write_with_meta_synthesizes_and_merges() {
+        let kb = make_test_kb();
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: Some("sess-1".to_string()),
+            message_index: Some(2),
+            saved_at: Some("2026-08-21T00:00:00Z".to_string()),
+        };
+
+        // Fresh file → synthesize frontmatter with oxios:
+        let accepted = kb
+            .note_write_with_meta("brain/New.md", "fresh content", &meta)
+            .unwrap();
+        assert!(accepted, "fresh memo must accept metadata write");
+        let after = kb.note_read("brain/New.md").unwrap().unwrap();
+        assert!(after.starts_with("---\n"), "must carry frontmatter; got: {after:?}");
+        assert!(
+            after.contains("oxios:"),
+            "must contain oxios: table; got: {after:?}"
+        );
+
+        // Second write merges: existing oxios: is preserved (id/created survive)
+        let meta2 = NoteMeta {
+            author: "agent2".to_string(),
+            ..meta.clone()
+        };
+        kb.note_write_with_meta("brain/New.md", "edited body", &meta2)
+            .unwrap();
+        let after2 = kb.note_read("brain/New.md").unwrap().unwrap();
+        assert!(after2.contains("id:"), "id must survive merge; got: {after2:?}");
+        assert!(
+            after2.contains("agent2"),
+            "author must be overwritten by new meta; got: {after2:?}"
+        );
+        assert!(
+            after2.contains("edited body"),
+            "body must reflect second write; got: {after2:?}"
+        );
+    }
+
+    #[test]
+    fn restore_merges_legacy_content() {
+        let kb = make_test_kb();
+
+        // Pre-migration blob: oxios: table without id/created/updated.
+        // Restoring it must gain id/created/updated through write_document
+        // synthesis while keeping the oxios: table.
+        let legacy = "---\noxios:\n  author: agent\n  quality: raw\n---\nlegacy body\n";
+        kb.note_restore("brain/Legacy.md", legacy).unwrap();
+
+        let after = kb.note_read("brain/Legacy.md").unwrap().unwrap();
+        assert!(
+            after.contains("id:"),
+            "id must be synthesized on legacy restore; got: {after:?}"
+        );
+        assert!(
+            after.contains("created:"),
+            "created must be synthesized on legacy restore; got: {after:?}"
+        );
+        assert!(
+            after.contains("oxios:"),
+            "oxios: table must survive; got: {after:?}"
+        );
+        assert!(
+            after.contains("legacy body"),
+            "body must survive; got: {after:?}"
+        );
+
+        // Restore must NOT fire on_file_change callbacks
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        let counter = AtomicUsize::new(0);
+        let kb2 = make_test_kb();
+        kb2.on_file_change(|_p, _c| {
+            counter.fetch_add(1, AtomicOrdering::SeqCst);
+        });
+        kb2.note_restore("brain/Legacy2.md", legacy).unwrap();
+        assert_eq!(
+            counter.load(AtomicOrdering::SeqCst),
+            0,
+            "note_restore must suppress callbacks"
+        );
+    }
+
+    #[test]
+    fn notes_needing_review_reads_oxios_table() {
+        let kb = make_test_kb();
+
+        // Two memos, one flagged for review, one not.
+        let flag_meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: None,
+            message_index: None,
+            saved_at: Some("2026-08-21T00:00:00Z".to_string()),
+        };
+        let ok_meta = NoteMeta {
+            needs_review: false,
+            ..flag_meta.clone()
+        };
+
+        kb.note_write_with_meta("brain/Yes.md", "needs review", &flag_meta)
+            .unwrap();
+        kb.note_write_with_meta("brain/No.md", "no review", &ok_meta)
+            .unwrap();
+
+        let flagged = kb.notes_needing_review().unwrap();
+        assert_eq!(flagged.len(), 1, "exactly one note flagged");
+        let (path, _meta) = &flagged[0];
+        assert!(
+            path.starts_with("brain/Yes.md"),
+            "only the flagged note must surface; got: {path}"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // T12 — format-aware note writes via frontformat::write_note
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn note_write_is_format_aware_and_noop_guarded() {
+        let kb = make_test_kb();
+
+        // 1. memo path → synthesized frontmatter (id/created/updated)
+        kb.note_write("docs/a.md", "hello").unwrap();
+        let first = kb.note_read("docs/a.md").unwrap().unwrap();
+        assert!(
+            first.starts_with("---\n"),
+            "memo write must synthesize frontmatter; got: {first:?}"
+        );
+
+        // 2. identical second write → NoOp guard: file bytes unchanged
+        kb.note_write("docs/a.md", "hello").unwrap();
+        let second = kb.note_read("docs/a.md").unwrap().unwrap();
+        assert_eq!(
+            first, second,
+            "NoOp guard must not rewrite unchanged memo content"
+        );
+
+        // 3. system path → raw, never synthesized frontmatter
+        kb.note_write("Chat.md", "- [ ] x\n").unwrap();
+        let chat = kb.note_read("Chat.md").unwrap().unwrap();
+        assert_eq!(
+            chat, "- [ ] x\n",
+            "system path must be raw, no frontmatter; got: {chat:?}"
+        );
+        assert!(!chat.starts_with("---"), "system path must never carry frontmatter");
+    }
+
+    #[test]
+    fn note_write_noop_skips_backlink_reindex_and_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        let kb = make_test_kb();
+        let counter = AtomicUsize::new(0);
+        kb.on_file_change(|_path, _change| {
+            counter.fetch_add(1, AtomicOrdering::SeqCst);
+        });
+
+        kb.note_write("brain/Rust.md", "hello world").unwrap();
+        let after_first = counter.load(AtomicOrdering::SeqCst);
+        assert_eq!(after_first, 1, "first write must fire callback exactly once");
+
+        // identical re-write must be a NoOp → no callback
+        kb.note_write("brain/Rust.md", "hello world").unwrap();
+        let after_second = counter.load(AtomicOrdering::SeqCst);
+        assert_eq!(
+            after_second, 1,
+            "NoOp write must NOT call notify_change; got {after_second} callbacks"
+        );
+    }
+
+    #[test]
+    fn note_write_with_meta_refuses_user_authored_frontmatter() {
+        let kb = make_test_kb();
+
+        // Pre-existing file with user-authored (foreign) frontmatter
+        // — has frontmatter block but NO oxios: table.
+        let user_note = "---\ntags: [rust, design]\nauthor: jane\n---\n\n# My note\n";
+        kb.note_write("brain/User.md", user_note).unwrap();
+
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: false,
+            session_id: None,
+            message_index: None,
+            saved_at: None,
+        };
+
+        // Must return Ok(false) — refuse to touch user-authored frontmatter
+        let accepted = kb
+            .note_write_with_meta("brain/User.md", "# My note\nnew body", &meta)
+            .unwrap();
+        assert!(
+            __omp_shell("accepted,")
+            "user-authored frontmatter must refuse agent metadata write"
+        );
+
+        // File must still contain the user-authored frontmatter untouched
+        let after = kb.note_read("brain/User.md").unwrap().unwrap();
+        assert!(
+            after.contains("tags: [rust, design]"),
+            "user tags must survive unchanged; got: {after:?}"
+        );
+        assert!(
+            __omp_shell("after.contains("oxios:"),")
+            "no oxios: must be synthesized on user-authored file; got: {after:?}"
+        );
+    }
+
+    #[test]
+    fn note_write_with_meta_synthesizes_and_merges() {
+        let kb = make_test_kb();
+        let meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: Some("sess-1".to_string()),
+            message_index: Some(2),
+            saved_at: Some("2026-08-21T00:00:00Z".to_string()),
+        };
+
+        // Fresh file → synthesize frontmatter with oxios:
+        let accepted = kb
+            .note_write_with_meta("brain/New.md", "fresh content", &meta)
+            .unwrap();
+        assert!(accepted, "fresh memo must accept metadata write");
+        let after = kb.note_read("brain/New.md").unwrap().unwrap();
+        assert!(after.starts_with("---\n"), "must carry frontmatter; got: {after:?}");
+        assert!(
+            after.contains("oxios:"),
+            "must contain oxios: table; got: {after:?}"
+        );
+
+        // Second write merges: existing oxios: is preserved (id/created survive)
+        let meta2 = NoteMeta {
+            author: "agent2".to_string(),
+            ..meta.clone()
+        };
+        kb.note_write_with_meta("brain/New.md", "edited body", &meta2)
+            .unwrap();
+        let after2 = kb.note_read("brain/New.md").unwrap().unwrap();
+        assert!(after2.contains("id:"), "id must survive merge; got: {after2:?}");
+        assert!(
+            after2.contains("agent2"),
+            "author must be overwritten by new meta; got: {after2:?}"
+        );
+        assert!(
+            after2.contains("edited body"),
+            "body must reflect second write; got: {after2:?}"
+        );
+    }
+
+    #[test]
+    fn restore_merges_legacy_content() {
+        let kb = make_test_kb();
+
+        // Pre-migration blob: oxios: table without id/created/updated.
+        // Restoring it must gain id/created/updated through write_document
+        // synthesis while keeping the oxios: table.
+        let legacy = "---\noxios:\n  author: agent\n  quality: raw\n---\nlegacy body\n";
+        kb.note_restore("brain/Legacy.md", legacy).unwrap();
+
+        let after = kb.note_read("brain/Legacy.md").unwrap().unwrap();
+        assert!(
+            after.contains("id:"),
+            "id must be synthesized on legacy restore; got: {after:?}"
+        );
+        assert!(
+            after.contains("created:"),
+            "created must be synthesized on legacy restore; got: {after:?}"
+        );
+        assert!(
+            after.contains("oxios:"),
+            "oxios: table must survive; got: {after:?}"
+        );
+        assert!(
+            after.contains("legacy body"),
+            "body must survive; got: {after:?}"
+        );
+
+        // Restore must NOT fire on_file_change callbacks
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        let counter = AtomicUsize::new(0);
+        let kb2 = make_test_kb();
+        kb2.on_file_change(|_p, _c| {
+            counter.fetch_add(1, AtomicOrdering::SeqCst);
+        });
+        kb2.note_restore("brain/Legacy2.md", legacy).unwrap();
+        assert_eq!(
+            counter.load(AtomicOrdering::SeqCst),
+            0,
+            "note_restore must suppress callbacks"
+        );
+    }
+
+    #[test]
+    fn notes_needing_review_reads_oxios_table() {
+        let kb = make_test_kb();
+
+        // Two memos, one flagged for review, one not.
+        let flag_meta = NoteMeta {
+            author: "agent".to_string(),
+            source: NoteSource::Hook,
+            quality: NoteQuality::Raw,
+            needs_review: true,
+            session_id: None,
+            message_index: None,
+            saved_at: Some("2026-08-21T00:00:00Z".to_string()),
+        };
+        let ok_meta = NoteMeta {
+            needs_review: false,
+            ..flag_meta.clone()
+        };
+
+        kb.note_write_with_meta("brain/Yes.md", "needs review", &flag_meta)
+            .unwrap();
+        kb.note_write_with_meta("brain/No.md", "no review", &ok_meta)
+            .unwrap();
+
+        let flagged = kb.notes_needing_review().unwrap();
+        assert_eq!(flagged.len(), 1, "exactly one note flagged");
+        let (path, _meta) = &flagged[0];
+        assert!(
+            path.starts_with("brain/Yes.md"),
+            "only the flagged note must surface; got: {path}"
+        );
+    }

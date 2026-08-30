@@ -10,12 +10,12 @@ use serde::Deserialize;
 
 use oxios_kernel::task::{
     CreateTaskParams, ListTasksParams, SetScheduleParams, SetVerifyParams, TaskRunTrigger,
-    TaskStatus, UpdateTaskParams, execute_task_run, migrate_cron_to_tasks,
+    TaskStatus, UpdateTaskParams, execute_task_run,
 };
 
 /// Ceiling for a synchronous manual task run (`POST /api/tasks/:id/run`).
 /// Longer-running work belongs on a schedule (cron/heartbeat), whose jobs use
-/// the CronScheduler's longer `job_timeout_secs`.
+/// the scheduler's longer timeout.
 const TASK_RUN_TIMEOUT: u64 = 300;
 
 use crate::api::error::AppError;
@@ -526,37 +526,6 @@ pub(crate) async fn handle_task_dependency_remove(
         Err(e) => Err(AppError::BadRequest(format!(
             "Failed to remove dependency: {e}"
         ))),
-    }
-}
-
-// ── Cron migration ────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct MigrateCronRequest {
-    pub dry_run: Option<bool>,
-}
-
-/// POST /api/tasks/migrate-cron — copy cron jobs into scheduled tasks.
-pub(crate) async fn handle_task_migrate_cron(
-    state: State<Arc<AppState>>,
-    Json(req): Json<MigrateCronRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let report = {
-        let store = state.task_store.lock().await;
-        migrate_cron_to_tasks(
-            &state.kernel.infra.list_crons(),
-            &store,
-            req.dry_run.unwrap_or(false),
-        )
-        .await
-    };
-    match report {
-        Ok(r) => Ok(Json(serde_json::to_value(&r).unwrap_or_default())),
-        Err(e) => {
-            tracing::error!(error = %e, "Cron -> task migration failed");
-            Err(AppError::Internal(format!("Migration failed: {e}")))
-        }
     }
 }
 

@@ -16,7 +16,7 @@ mod calendar_routes;
 mod channels_routes;
 mod chat;
 mod cost_routes;
-mod cron_jobs;
+
 mod email_routes;
 mod engine_routes;
 mod events;
@@ -41,17 +41,22 @@ mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
 use search::{handle_browse, handle_search};
-mod mount_routes;
+mod issue_routes;
 mod project_routes;
 mod resource_routes;
 mod secrets_routes;
 mod security_routes;
 mod system;
+mod system_routes;
 mod task_routes;
 mod token_maxing_routes;
 mod tools;
 mod workspace;
+mod workspace_routes;
 mod worktree_routes;
+
+#[cfg(test)]
+mod test_support;
 
 use std::sync::Arc;
 
@@ -59,7 +64,7 @@ use axum::{
     Router,
     routing::{delete, get, patch, post, put},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::api::middleware::{rate_limit_layer, require_auth, require_ready};
 use crate::api::persona_routes;
@@ -98,22 +103,20 @@ pub(crate) use cost_routes::{
     handle_cost_by_model, handle_cost_by_project, handle_cost_daily, handle_cost_providers,
     handle_cost_spend_limit_get, handle_cost_spend_limit_set, handle_cost_summary,
 };
-pub(crate) use cron_jobs::{
-    handle_cron_job_create, handle_cron_job_delete, handle_cron_job_get, handle_cron_job_trigger,
-    handle_cron_jobs_list, update_cron_job,
-};
+
 pub(crate) use email_routes::{
     handle_email_history, handle_email_history_detail, handle_email_setup, handle_email_status,
     handle_email_template_get, handle_email_templates, handle_email_test,
 };
 pub(crate) use engine_routes::{
     handle_add_custom_provider, handle_check_provider_connection, handle_engine_config,
-    handle_engine_delete_api_key, handle_engine_follow_up, handle_engine_models,
-    handle_engine_providers, handle_engine_roles, handle_engine_routing_fallbacks,
-    handle_engine_routing_stats, handle_engine_set_api_key, handle_engine_set_model,
-    handle_engine_set_provider_options, handle_engine_set_quick_ask_model, handle_engine_set_roles,
-    handle_engine_set_routing, handle_engine_validate_key, handle_get_provider_config,
-    handle_remove_custom_provider, handle_set_model_list, handle_set_provider_config,
+    handle_engine_delete_api_key, handle_engine_follow_up, handle_engine_goal_suggestions,
+    handle_engine_models, handle_engine_providers, handle_engine_roles,
+    handle_engine_routing_fallbacks, handle_engine_routing_stats, handle_engine_set_api_key,
+    handle_engine_set_model, handle_engine_set_provider_options, handle_engine_set_quick_ask_model,
+    handle_engine_set_roles, handle_engine_set_routing, handle_engine_validate_key,
+    handle_get_provider_config, handle_remove_custom_provider, handle_set_model_list,
+    handle_set_provider_config,
 };
 pub(crate) use events::{
     handle_approval_approve, handle_approval_reject, handle_approvals_list, handle_events,
@@ -129,6 +132,12 @@ pub(crate) use infra::{
     handle_mcp_server_register, handle_mcp_server_toggle, handle_mcp_server_update,
     handle_mcp_servers_list, handle_mcp_tool_call, handle_mcp_tools_list, handle_metrics,
     handle_permissions_get, handle_permissions_put, handle_security_permissions,
+};
+pub(crate) use issue_routes::{
+    handle_issue_close, handle_issue_create, handle_issue_get, handle_issue_release,
+    handle_issue_reopen, handle_issue_set_milestone, handle_issue_update, handle_issues_list,
+    handle_milestone_create, handle_milestone_delete, handle_milestone_update,
+    handle_milestones_list,
 };
 pub(crate) use knowledge_routes::{
     handle_knowledge_asset_get, handle_knowledge_backlinks, handle_knowledge_chat_append,
@@ -150,14 +159,9 @@ pub(crate) use marketplace::{
 };
 #[cfg(feature = "memo")]
 pub(crate) use memo_routes::{handle_memo_disable, handle_memo_enable, handle_memo_status};
-pub(crate) use mount_routes::{
-    handle_mount_create, handle_mount_delete, handle_mount_get, handle_mount_rescan,
-    handle_mount_update, handle_mounts_list,
-};
 pub(crate) use project_routes::{
-    handle_project_create, handle_project_delete, handle_project_get, handle_project_link_memory,
-    handle_project_memories, handle_project_unlink_memory, handle_project_update,
-    handle_projects_list,
+    handle_project_create, handle_project_delete, handle_project_get, handle_project_roots_status,
+    handle_project_update, handle_projects_list,
 };
 pub(crate) use resource_routes::{
     handle_resource_history, handle_resource_overload, handle_resource_snapshot,
@@ -177,9 +181,8 @@ pub(crate) use task_routes::{
     handle_task_comment_create, handle_task_comment_delete, handle_task_comment_update,
     handle_task_comments_list, handle_task_create, handle_task_create_batch, handle_task_delete,
     handle_task_dependencies_list, handle_task_dependency_add, handle_task_dependency_remove,
-    handle_task_get, handle_task_migrate_cron, handle_task_run, handle_task_runs,
-    handle_task_set_schedule, handle_task_set_verify, handle_task_update,
-    handle_task_update_status, handle_tasks_list,
+    handle_task_get, handle_task_run, handle_task_runs, handle_task_set_schedule,
+    handle_task_set_verify, handle_task_update, handle_task_update_status, handle_tasks_list,
 };
 #[cfg(feature = "timeline")]
 pub(crate) use timeline_routes::{
@@ -191,13 +194,15 @@ pub(crate) use token_maxing_routes::{
 };
 pub(crate) use tools::handle_tools_registry;
 pub(crate) use workspace::{
-    handle_brain_contradictions, handle_brain_entity, handle_brain_recall, handle_brain_search,
-    handle_brain_stats, handle_brain_status, handle_brain_timeline, handle_brain_why,
-    handle_skill_content, handle_skill_content_update, handle_skill_create, handle_skill_delete,
-    handle_skill_disable, handle_skill_enable, handle_skill_get, handle_skill_import_file,
-    handle_skill_import_text, handle_skill_import_url, handle_skills_list,
-    handle_workspace_file_create, handle_workspace_file_delete, handle_workspace_file_get,
-    handle_workspace_file_put, handle_workspace_tree,
+    handle_brain_brief, handle_brain_contradictions, handle_brain_document_history,
+    handle_brain_entity, handle_brain_graph, handle_brain_operations, handle_brain_recall,
+    handle_brain_search, handle_brain_space, handle_brain_spaces, handle_brain_stats,
+    handle_brain_status, handle_brain_timeline, handle_brain_why, handle_skill_content,
+    handle_skill_content_update, handle_skill_create, handle_skill_delete, handle_skill_disable,
+    handle_skill_enable, handle_skill_get, handle_skill_import_file, handle_skill_import_text,
+    handle_skill_import_url, handle_skills_list, handle_workspace_file_create,
+    handle_workspace_file_delete, handle_workspace_file_get, handle_workspace_file_put,
+    handle_workspace_tree,
 };
 
 // ---------------------------------------------------------------------------
@@ -237,6 +242,17 @@ pub fn paginate<T: Clone + serde::Serialize>(
         "page": params.page,
         "limit": limit,
     })
+}
+
+/// Distinguish an absent request field (`None` = don't change) from an
+/// explicit JSON `null` (`Some(None)` = clear). Without this, serde maps
+/// both to `None`, so clearing would be a silent no-op.
+pub(crate) fn deserialize_some<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
 }
 
 /// Builds the axum router with all API routes.
@@ -289,7 +305,7 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/chat/tool-approval/{id}/respond",
             post(handle_tool_approval_respond),
         )
-        // Interactive path-access cards (Mount / temp-allow / deny)
+        // Interactive path-access cards (temp-allow / deny)
         .route(
             "/api/chat/path-access/{id}/respond",
             post(handle_path_access_respond),
@@ -327,6 +343,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/config/meta", get(handle_config_meta))
         // Engine
         .route("/api/engine/follow-up", post(handle_engine_follow_up))
+        .route(
+            "/api/engine/goal-suggestions",
+            post(handle_engine_goal_suggestions),
+        )
         .route("/api/engine/providers", get(handle_engine_providers))
         .route("/api/engine/models", get(handle_engine_models))
         .route("/api/engine/config", get(handle_engine_config))
@@ -388,7 +408,7 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/secrets/{key}/source",
             get(secrets_routes::handle_secret_source),
         )
-        // Workspace
+        // Workspace (kernel state workspace browser — ~/.oxios/workspace)
         .route("/api/workspace/tree", get(handle_workspace_tree))
         .route(
             "/api/workspace/file/{*path}",
@@ -405,6 +425,23 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/workspace/file/{*path}",
             delete(handle_workspace_file_delete),
+        )
+        // Project workspace — session-scoped project filesystem API
+        // (design §4.4). A session without project roots gets 409 before
+        // any filesystem access; paths are canonicalized and
+        // boundary-checked per request.
+        .route(
+            "/api/project/workspace/tree",
+            get(workspace_routes::handle_workspace_tree),
+        )
+        .route(
+            "/api/project/workspace/file",
+            get(workspace_routes::handle_workspace_file_get)
+                .put(workspace_routes::handle_workspace_file_put),
+        )
+        .route(
+            "/api/project/workspace/status",
+            get(workspace_routes::handle_workspace_status),
         )
         // Skills
         .route("/api/skills", get(handle_skills_list))
@@ -425,10 +462,16 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Import — file upload (multipart). Relies on the raised global
         // API_BODY_LIMIT (32 MB); a per-route layer could not exceed it.
         .route("/api/skills/import", post(handle_skill_import_file))
-        // Brain daemon (RFC-047) — replaces the retired /api/memory/* surface
+        // Brain daemonless surface (RFC-047, RFC-049) — replaces the
+        // retired /api/memory/* surface; binary install/run state is
+        // handled by `oxios brain install` (BrainInstaller).
         .route("/api/brain/status", get(handle_brain_status))
         .route("/api/brain/recall", post(handle_brain_recall))
         .route("/api/brain/search", get(handle_brain_search))
+        .route(
+            "/api/brain/document-history",
+            get(handle_brain_document_history),
+        )
         .route("/api/brain/entity/{id}", get(handle_brain_entity))
         .route("/api/brain/timeline", get(handle_brain_timeline))
         .route("/api/brain/why/{statement_id}", get(handle_brain_why))
@@ -437,6 +480,14 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(handle_brain_contradictions),
         )
         .route("/api/brain/stats", get(handle_brain_stats))
+        .route("/api/brain/brief", get(handle_brain_brief))
+        .route("/api/brain/graph", get(handle_brain_graph))
+        .route(
+            "/api/brain/operations/{section}",
+            get(handle_brain_operations),
+        )
+        .route("/api/brain/spaces", get(handle_brain_spaces))
+        .route("/api/brain/space", get(handle_brain_space))
         // Audit log
         .route("/api/audit/entries", get(handle_audit_entries))
         .route("/api/audit/verify", get(handle_audit_verify))
@@ -530,18 +581,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/sessions/{id}/threads",
             post(handle_session_create_thread),
         )
-        // Cron Jobs
-        .route("/api/cron-jobs", get(handle_cron_jobs_list))
-        .route("/api/cron-jobs", post(handle_cron_job_create))
-        .route("/api/cron-jobs/{id}", get(handle_cron_job_get))
-        .route("/api/cron-jobs/{id}", delete(handle_cron_job_delete))
-        .route("/api/cron-jobs/{id}/edit", post(update_cron_job))
-        .route("/api/cron-jobs/{id}/trigger", post(handle_cron_job_trigger))
         // Tasks (RFC-043)
         .route("/api/tasks", get(handle_tasks_list))
         .route("/api/tasks", post(handle_task_create))
         .route("/api/tasks/batch", post(handle_task_create_batch))
-        .route("/api/tasks/migrate-cron", post(handle_task_migrate_cron))
         .route("/api/tasks/{id}", get(handle_task_get))
         .route("/api/tasks/{id}", put(handle_task_update))
         .route("/api/tasks/{id}", delete(handle_task_delete))
@@ -625,22 +668,47 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/projects/{id}", get(handle_project_get))
         .route("/api/projects/{id}", put(handle_project_update))
         .route("/api/projects/{id}", delete(handle_project_delete))
-        .route("/api/projects/{id}/memories", get(handle_project_memories))
         .route(
-            "/api/projects/{id}/memories",
-            post(handle_project_link_memory),
+            "/api/projects/{id}/roots/status",
+            get(handle_project_roots_status),
+        )
+        // Project issues + milestones
+        .route("/api/projects/{id}/issues", get(handle_issues_list))
+        .route("/api/projects/{id}/issues", post(handle_issue_create))
+        .route("/api/projects/{id}/issues/{number}", get(handle_issue_get))
+        .route(
+            "/api/projects/{id}/issues/{number}",
+            patch(handle_issue_update),
         )
         .route(
-            "/api/projects/{id}/memories/{memoryId}",
-            delete(handle_project_unlink_memory),
+            "/api/projects/{id}/issues/{number}/close",
+            post(handle_issue_close),
         )
-        // Mounts (RFC-025)
-        .route("/api/mounts", get(handle_mounts_list))
-        .route("/api/mounts", post(handle_mount_create))
-        .route("/api/mounts/{id}", get(handle_mount_get))
-        .route("/api/mounts/{id}", put(handle_mount_update))
-        .route("/api/mounts/{id}", delete(handle_mount_delete))
-        .route("/api/mounts/{id}/rescan", post(handle_mount_rescan))
+        .route(
+            "/api/projects/{id}/issues/{number}/reopen",
+            post(handle_issue_reopen),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/release",
+            post(handle_issue_release),
+        )
+        .route(
+            "/api/projects/{id}/issues/{number}/milestone",
+            put(handle_issue_set_milestone),
+        )
+        .route("/api/projects/{id}/milestones", get(handle_milestones_list))
+        .route(
+            "/api/projects/{id}/milestones",
+            post(handle_milestone_create),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            patch(handle_milestone_update),
+        )
+        .route(
+            "/api/projects/{id}/milestones/{slug}",
+            delete(handle_milestone_delete),
+        )
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))
         // Budget
@@ -805,6 +873,11 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/system/audit-verify", post(handle_audit_verify_api))
         .route("/api/system/backup", post(handle_backup))
         .route("/api/system/log", get(handle_log))
+        // Native folder picker — local desktop host only (design §4.4)
+        .route(
+            "/api/system/pick-folders",
+            post(system_routes::handle_pick_folders),
+        )
         // Host Tools (RFC-041) — host-CLI discovery inventory
         .route("/api/host-tools", get(handle_host_tools))
         .route("/api/host-tools/detect", post(handle_host_tools_detect))

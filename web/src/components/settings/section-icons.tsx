@@ -1,5 +1,4 @@
 import {
-  Activity,
   BarChart3,
   Bell,
   Bot,
@@ -45,7 +44,6 @@ const ICON_MAP: Record<SectionIconKey, React.ComponentType<{ className?: string 
   audit: Eye,
   update: Sparkles,
   calendar: Calendar,
-  otel: Activity,
   agentLog: ListOrdered,
   resourceMonitor: Gauge,
   browser: Globe,

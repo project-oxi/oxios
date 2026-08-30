@@ -33,12 +33,12 @@ jobs:
       - name: Build dist binary
         run: cargo build --profile dist --locked
       - name: Smoke test
-        run: ./target/dist/oxios --version
+        run: '"${CARGO_TARGET_DIR:-target}/dist/oxios" --version'
       - name: Package and checksum
         run: |
           set -euo pipefail
           ASSET=oxios-aarch64-apple-darwin.tar.gz
-          tar -C target/dist -czf "$ASSET" oxios
+          tar -C "${CARGO_TARGET_DIR:-target}/dist" -czf "$ASSET" oxios
           shasum -a 256 "$ASSET" > "$ASSET.sha256"
           ls -lh "$ASSET" "$ASSET.sha256"
       - name: Create GitHub Release

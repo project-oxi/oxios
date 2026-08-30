@@ -10,6 +10,7 @@ import {
   Download,
   FileUp,
   Globe,
+  KeyRound,
   Link2,
   PackagePlus,
   Pencil,
@@ -54,7 +55,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { api } from '@/lib/api-client'
+import { api, isSubsystemUnavailable } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 import type { ClawHubSearchResult, Skill, SkillFormat, SkillStatus, SkillsShSkill } from '@/types'
 
@@ -192,6 +193,7 @@ function SkillsPage() {
     data: skillsShResults,
     isLoading: ssl,
     isError: sse,
+    error: sserr,
     refetch: ssr,
   } = useQuery({
     queryKey: ['skills-sh', 'search', deferredQuery],
@@ -205,7 +207,7 @@ function SkillsPage() {
     refetchOnWindowFocus: false,
   })
   // Skills.sh trending list (loaded when tab is open and source is skills-sh)
-  const { data: skillsShTrending } = useQuery({
+  const { data: skillsShTrending, error: ssterr } = useQuery({
     queryKey: ['skills-sh', 'trending'],
     queryFn: async () => {
       const r = await api.get<{ data: SkillsShSkill[] }>('/api/marketplace/skills-sh/list', {
@@ -218,6 +220,10 @@ function SkillsPage() {
     refetchOnWindowFocus: false,
     staleTime: 60_000,
   })
+
+  // skills.sh upstream requires a Bearer token on every endpoint; when the
+  // daemon has none it answers 503 — surface a setup hint instead of an error.
+  const skillsShNeedsKey = isSubsystemUnavailable(sserr) || isSubsystemUnavailable(ssterr)
 
   // Updates check
   const { data: updates } = useSkillUpdates()
@@ -366,6 +372,7 @@ function SkillsPage() {
               deferredQuery={deferredQuery}
               isLoading={mktSource === 'clawhub' ? ml : ssl}
               isError={mktSource === 'clawhub' ? me : sse}
+              skillsShNeedsKey={skillsShNeedsKey}
               refetch={() => {
                 mr()
                 ssr()
@@ -582,6 +589,7 @@ function MarketplaceTab({
   isLoading,
   isError,
   refetch,
+  skillsShNeedsKey,
   selectedClawhubSlug,
   onSelectClawhubSlug,
   selectedSkillsShId,
@@ -597,6 +605,7 @@ function MarketplaceTab({
   isLoading: boolean
   isError: boolean
   refetch: () => void
+  skillsShNeedsKey: boolean
   selectedClawhubSlug: string | null
   onSelectClawhubSlug: (s: string | null) => void
   selectedSkillsShId: string | null
@@ -708,8 +717,14 @@ function MarketplaceTab({
             ))}
           </div>
         )
-      ) : // Skills.sh
-      !hasQ && !skillsShResults?.length ? (
+      ) : // Skills.sh — no API key configured shows a setup hint, not an error
+      skillsShNeedsKey ? (
+        <EmptyState
+          icon={<KeyRound className="h-10 w-10" />}
+          title={t('skills.skillsShNeedsKey')}
+          description={t('skills.skillsShNeedsKeyDesc')}
+        />
+      ) : !hasQ && !skillsShResults?.length ? (
         <EmptyState
           icon={<PackagePlus className="h-10 w-10" />}
           title={t('skills.discover')}

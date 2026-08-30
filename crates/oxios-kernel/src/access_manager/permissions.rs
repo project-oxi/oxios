@@ -77,6 +77,21 @@ impl Default for AgentPermissions {
                 "/sys/**".to_string(),
                 "/proc/**".to_string(),
                 ".oxios/**".to_string(),
+                // T18: ecosystem `.oxi/**` is shared vault/brain/settings.
+                //
+                // Enforcement lives in `gate.rs::check_path` via the
+                // canonical-prefix eco-root check (`with_eco_roots` →
+                // `is_path_under_any_eco_root`). The literal `.oxi/**`
+                // pattern is kept here for visibility / debugging only —
+                // a relative-literal glob CANNOT match a canonical
+                // absolute path under `is_path_denied` (which is
+                // full-string glob matching). Mechanism in practice:
+                // file-tool Layer-2 short-circuit on the canonical
+                // `/…/.oxi` and `/…/.oxios` roots. Note that `bash` and
+                // `exec` are NOT in scope here — they do not pass
+                // absolute paths through the gate. Recorded as a known
+                // gap in task-18-report.md.
+                ".oxi/**".to_string(),
             ],
             network_access: false,
             max_execution_time_secs: 300,
@@ -270,6 +285,29 @@ mod tests {
         assert!(perms.is_path_denied("/proc/self/environ"));
         assert!(perms.is_path_denied("/sys/kernel/addr"));
         assert!(perms.is_path_denied(".oxios/config.toml"));
+    }
+
+    #[test]
+    fn test_default_permissions_denies_oxi_vault() {
+        // Default deny list contains the literal `".oxi/**"` entry. This
+        // test asserts LIST MEMBERSHIP + RAW GLOB MATCH against the
+        // canonical-prefix strings an attacker would feed
+        // `is_path_denied` directly. Enforcement on absolute canonical
+        // paths (the real gate flow) is covered separately by the gate
+        // tests in `gate.rs::tests` — see `eco_root_prefix_denies_*`.
+        // Mechanism in practice: file-tool Layer-2 short-circuit on
+        // canonical `/…/.oxi` and `/…/.oxios` roots. Note that `bash`
+        // and `exec` do not pass absolute paths through the gate and
+        // therefore remain a separate known gap.
+        let perms = AgentPermissions::default();
+        assert!(
+            perms.denied_paths.iter().any(|p| p == ".oxi/**"),
+            "default denied_paths must include `.oxi/**`; got {:?}",
+            perms.denied_paths,
+        );
+        assert!(perms.is_path_denied(".oxi/vault/notes/foo.md"));
+        assert!(perms.is_path_denied(".oxi/settings.json"));
+        assert!(perms.is_path_denied(".oxi/brain/index.sqlite"));
     }
 
     #[test]

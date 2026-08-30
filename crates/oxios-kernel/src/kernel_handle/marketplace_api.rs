@@ -84,6 +84,15 @@ impl MarketplaceApi {
 
     // ─── Skills.sh Operations ───────────────────────────────────────
 
+    /// Whether the skills.sh client has an API key configured.
+    ///
+    /// The skills.sh upstream requires a Bearer token on every endpoint.
+    /// When no key is present, callers should fail fast with a clear
+    /// "credentials missing" error instead of a guaranteed upstream 401.
+    pub fn skills_sh_configured(&self) -> bool {
+        self.skills_sh_client.has_api_key()
+    }
+
     /// Search skills.sh for skills.
     pub async fn search_skills_sh(
         &self,

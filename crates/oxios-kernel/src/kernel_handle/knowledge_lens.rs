@@ -6,8 +6,11 @@
 //!
 //! **RFC-003: Knowledge Base Independent Separation**
 //! - Semantic search lives in the kernel (AI layer), not oxios-markdown
-//! - `KnowledgeLens` subscribes to `KnowledgeBase.on_file_change()` so new
-//!   notes are indexed into the brain automatically
+//! - Vault ingestion is the oxibrain daemon's job — the boot sequence
+//!   registers the vault root in the brain's `documents.toml` once. The lens
+//!   is a read-side overlay only; the previous file-change → `remember`
+//!   chain (index_to_brain) was removed in T17 (vault unification) so a
+//!   single ingestion path owns it.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -16,9 +19,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 
-use crate::brain::BrainConnection;
+use crate::brain::BrainSession;
 
 /// Knowledge context injected into agent prompts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,23 +72,18 @@ pub struct CopilotResponse {
 
 /// KnowledgeLens — semantic overlay over KnowledgeBase.
 ///
-/// Keeps the brain in sync with the markdown knowledge base via file-change
-/// callbacks. The brain connection is optional so tests and preliminary
-/// handles can build the lens before the daemon connects.
+/// Read-side: combines markdown note search (via `KnowledgeBase`) with
+/// brain recall (via the daemon). Vault ingestion is the oxibrain
+/// daemon's job (T17 single ingestion path); the lens never writes to the
+/// brain on file-change. The brain connection is optional so tests and
+/// preliminary handles can build the lens before the daemon connects.
 pub struct KnowledgeLens {
     /// The underlying knowledge base.
     kb: Arc<oxios_markdown::KnowledgeBase>,
     /// Brain daemon connection (RFC-047) — `None` when unattached.
-    brain: Option<Arc<BrainConnection>>,
+    brain: Option<Arc<BrainSession>>,
     /// Tracks which files were written by agents.
     agent_writes: Arc<RwLock<HashSet<String>>>,
-    /// Holds the file-change channel sender. The field itself is never read;
-    /// its sole purpose is to keep the sender alive so the background
-    /// file-watcher task draining the receiver does not exit early. Drop this
-    /// and index sync silently stops. Named with a leading underscore to
-    /// signal "intentionally unused" to maintainers.
-    #[allow(dead_code)]
-    _callback_keepalive: Option<mpsc::Sender<oxios_markdown::knowledge::FileChange>>,
 }
 
 impl std::fmt::Debug for KnowledgeLens {
@@ -98,37 +95,17 @@ impl std::fmt::Debug for KnowledgeLens {
 impl KnowledgeLens {
     /// Create a new KnowledgeLens wrapping the given knowledge base.
     ///
-    /// Registers a file-change callback to keep the brain index in sync.
+    /// No file-change subscription: vault ingestion is the daemon's job
+    /// (T17 single ingestion path). The lens is purely read-side.
     pub fn new(
         kb: Arc<oxios_markdown::KnowledgeBase>,
-        brain: Option<Arc<BrainConnection>>,
+        brain: Option<Arc<BrainSession>>,
     ) -> anyhow::Result<Self> {
-        let (tx, mut rx) = mpsc::channel::<oxios_markdown::knowledge::FileChange>(64);
-        let tx_for_cb = tx.clone();
-        kb.on_file_change(move |_path, event| {
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                let _ = tx.send(event).await;
-            });
-        });
-
-        let lens = Self {
+        Ok(Self {
             kb,
             brain,
             agent_writes: Arc::new(RwLock::new(HashSet::new())),
-            _callback_keepalive: Some(tx_for_cb),
-        };
-
-        // Spawn background task to process file-change events
-        let brain = lens.brain.clone();
-        let kb = lens.kb.clone();
-        tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                lens_handle_event(kb.clone(), brain.clone(), event);
-            }
-        });
-
-        Ok(lens)
+        })
     }
 
     /// Get the root path of the knowledge base.
@@ -159,25 +136,33 @@ impl KnowledgeLens {
     /// Recall relevant knowledge for a given context/query.
     ///
     /// Combines markdown note search (via KnowledgeBase) with brain recall
-    /// (via the daemon). Returns notes ranked by relevance.
-    pub async fn recall_for_context(&self, query: &str, limit: usize) -> Result<KnowledgeContext> {
+    /// (via the daemon). Returns notes ranked by relevance. `brain_space`
+    /// selects the oxibrain space to recall from; `None` (unbound turn)
+    /// skips the brain leg and returns knowledge notes only.
+    pub async fn recall_for_context(
+        &self,
+        query: &str,
+        limit: usize,
+        brain_space: Option<&str>,
+    ) -> Result<KnowledgeContext> {
         // Recall relevant memory from the brain (assembled context text).
-        let memories: Vec<MemoryNote> = if let Some(brain) = &self.brain {
-            brain
-                .recall(query, 2000)
-                .await
-                .map(|text| {
-                    vec![MemoryNote {
-                        id: "recall".to_string(),
-                        source: "brain".to_string(),
-                        content: text.chars().take(300).collect(),
-                        importance: 1.0,
-                    }]
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let memories: Vec<MemoryNote> =
+            if let (Some(brain), Some(space)) = (&self.brain, brain_space) {
+                brain
+                    .recall(space, query, 2000)
+                    .await
+                    .map(|text| {
+                        vec![MemoryNote {
+                            id: "recall".to_string(),
+                            source: "brain".to_string(),
+                            content: text.chars().take(300).collect(),
+                            importance: 1.0,
+                        }]
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
         let memories_len = memories.len();
 
         // Search knowledge notes
@@ -208,16 +193,18 @@ impl KnowledgeLens {
             index_entries_used: memories_len,
         })
     }
-
     /// Copilot chat — AI-powered question answering about the knowledge base.
     ///
     /// This method is async (uses `provider.stream()` which is Send).
+    /// `brain_space` selects the oxibrain space for the memory-context leg;
+    /// `None` (no binding at this endpoint) skips the brain search.
     #[allow(clippy::unused_async)]
     pub async fn copilot_chat(
         &self,
         engine_handle: Arc<crate::engine::EngineHandle>,
         question: &str,
         context_path: Option<&str>,
+        brain_space: Option<&str>,
     ) -> Result<CopilotResponse> {
         let mut context_parts = Vec::new();
         let mut referenced_notes = Vec::new();
@@ -246,21 +233,29 @@ impl KnowledgeLens {
 
         // 3. Memory context
         let mut referenced_memories = Vec::new();
-        if let Some(brain) = &self.brain
-            && let Some(value) = brain.search(question, "hybrid", 3).await
-            && let Some(items) = value.get("items").and_then(|i| i.as_array())
+        if let (Some(brain), Some(space)) = (&self.brain, brain_space)
+            && let Some(resp) = brain
+                .search(space, question, "hybrid", 3, Some(&["memory"]))
+                .await
         {
-            for item in items {
+            for item in &resp.memory {
+                // 0.8 envelope uses entity_* keys; fall back to the
+                // legacy /target/* shape so older daemon builds still
+                // produce useful context. Prefer `entity_surface` for
+                // the label (display name) over `entity_id`.
                 let kind = item
-                    .pointer("/target/kind")
+                    .pointer("/entity_type")
+                    .or_else(|| item.pointer("/target/kind"))
                     .and_then(|k| k.as_str())
                     .unwrap_or("memory");
-                let id = item
-                    .pointer("/target/id")
-                    .and_then(|i| i.as_str())
+                let label = item
+                    .pointer("/entity_surface")
+                    .or_else(|| item.pointer("/entity_id"))
+                    .or_else(|| item.pointer("/target/id"))
+                    .and_then(|v| v.as_str())
                     .unwrap_or("?");
-                context_parts.push(format!("## Memory [{kind}]: {id}"));
-                referenced_memories.push(id.to_string());
+                context_parts.push(format!("## Memory [{kind}]: {label}"));
+                referenced_memories.push(label.to_string());
             }
         }
 
@@ -316,47 +311,6 @@ impl KnowledgeLens {
             referenced_memories,
         })
     }
-}
-
-// ─── File change event handler ────────────────────────────────────────────────
-
-fn lens_handle_event(
-    kb: Arc<oxios_markdown::KnowledgeBase>,
-    brain: Option<Arc<BrainConnection>>,
-    event: oxios_markdown::knowledge::FileChange,
-) {
-    use oxios_markdown::knowledge::FileChange::*;
-    match event {
-        Created(path) | Updated(path) => {
-            if let Ok(Some(content)) = kb.note_read(&path) {
-                index_to_brain(&path, &content, brain.as_ref());
-            }
-        }
-        // Episodes are immutable in the brain — there is no forget-by-note-id.
-        // Deleted notes simply stop being re-indexed; their episodes remain
-        // as historical traces (source "knowledge:lens").
-        Deleted(_path) => {}
-        Moved { old: _, new } => {
-            let kb = kb.clone();
-            let brain = brain.clone();
-            let new_path = new.clone();
-            tokio::spawn(async move {
-                if let Ok(Some(content)) = kb.note_read(&new_path) {
-                    index_to_brain(&new_path, &content, brain.as_ref());
-                }
-            });
-        }
-    }
-}
-
-fn index_to_brain(path: &str, content: &str, brain: Option<&Arc<BrainConnection>>) {
-    let Some(brain) = brain else { return };
-    let source = format!("knowledge:lens:{path}");
-    let content = content.to_string();
-    let brain = brain.clone();
-    tokio::spawn(async move {
-        let _ = brain.remember(&content, &source).await;
-    });
 }
 
 #[cfg(test)]

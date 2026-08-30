@@ -107,11 +107,6 @@ impl StateApi {
         self.state_store.list_sessions().await
     }
 
-    /// RFC-025 Phase 5: Load all sessions in full (for the promotion scanner).
-    pub async fn load_all_sessions(&self) -> anyhow::Result<Vec<Session>> {
-        self.state_store.load_all_sessions().await
-    }
-
     /// Delete session.
     pub async fn delete_session(&self, id: &SessionId) -> anyhow::Result<bool> {
         self.state_store.delete_session(id).await

@@ -24,7 +24,6 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::types::AgentId;
-use uuid::Uuid;
 
 /// Unique identifier for a capability.
 ///
@@ -182,11 +181,6 @@ pub enum ResourceRef {
         /// Skill name as registered in the skill manager.
         name: String,
     },
-    /// A workspace space.
-    Space {
-        /// Space identifier.
-        id: Uuid,
-    },
     /// Another agent (for inter-agent communication).
     Agent {
         /// Agent identifier.
@@ -221,7 +215,6 @@ impl fmt::Display for ResourceRef {
         match self {
             ResourceRef::KernelDomain { domain } => write!(f, "kernel:{domain}"),
             ResourceRef::Skill { name } => write!(f, "skill:{name}"),
-            ResourceRef::Space { id } => write!(f, "space:{id}"),
             ResourceRef::Agent { id } => write!(f, "agent:{id}"),
             ResourceRef::Exec { mode } => write!(f, "exec:{mode}"),
             ResourceRef::Browser => write!(f, "browser"),

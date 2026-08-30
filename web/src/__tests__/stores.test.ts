@@ -1,4 +1,5 @@
 import { waitFor } from '@testing-library/react'
+import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -17,6 +18,7 @@ import {
 import { usePortalStore } from '@/stores/portal'
 import { useSidebarStore } from '@/stores/sidebar'
 import type { ChatMessage, StreamChunk } from '@/types'
+import { server } from './msw/server'
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -714,9 +716,9 @@ describe('multi-turn accumulation (turn-boundary targeting)', () => {
 })
 
 // The message-transform primitives route every chunk through a single shared
-// path in chat.ts; both the chat store and the quick-ask store call them, so
+// path in chat.ts; both the chat store and the oxios-copilot store call them, so
 // these tests guard the Cmd+J (one-shot) path too (which has no store tests).
-describe('message-transform primitives (shared by chat + quick-ask stores)', () => {
+describe('message-transform primitives (shared by chat + oxios-copilot stores)', () => {
   const ctx = { placeholderModel: 'gpt-x' }
   const assistant = (over: Partial<ChatMessage> = {}): ChatMessage => ({
     id: 'a1',
@@ -953,6 +955,173 @@ describe('useChatStore sendMessage turn start', () => {
     const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
     expect(payload.request_id).toBeUndefined()
     expect(payload.session_id).toBe('s1')
+  })
+})
+
+// Task 7 — session brain-space binding: persisted store field, picker
+// action, and the `brain_space` key the chat ingress validates (empty
+// string = unconnected turn). Since Task 9 the payload carries the
+// RESOLVED binding — with no defaults seeded these tests still exercise
+// the explicit-selection layer alone.
+describe('useChatStore activeBrainSpace (task 7)', () => {
+  let sendSpy: Mock
+  const mockWs = (): WebSocket =>
+    ({ readyState: 1, send: sendSpy, close: vi.fn() }) as unknown as WebSocket
+
+  beforeEach(() => {
+    localStorage.clear()
+    __clearStreamProcessorsForTesting()
+    sendSpy = vi.fn()
+    useChatStore.setState({
+      messages: [],
+      isStreaming: false,
+      streamStartedAt: null,
+      connected: true,
+      _ws: mockWs(),
+      _pendingQueue: [],
+      _reconnectTimer: null,
+      _pingTimer: null,
+      activeSessionId: 's1',
+      activeBrainSpace: null,
+      brainDefaults: { project: null, global: '' },
+    })
+  })
+
+  it('defaults to null (unconnected)', () => {
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('setActiveBrainSpace sets the binding and persists it', async () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    expect(useChatStore.getState().activeBrainSpace).toBe('personal')
+    // Persist middleware flushes the partialized state — wait out the tick.
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('oxios-chat-persist')!) as {
+        state: Record<string, unknown>
+      }
+      expect(persisted.state.activeBrainSpace).toBe('personal')
+    })
+  })
+
+  it('setActiveBrainSpace(null) clears the binding', () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    useChatStore.getState().setActiveBrainSpace(null)
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('sendMessage carries the explicit selection as brain_space', () => {
+    useChatStore.setState({ activeBrainSpace: 'personal' })
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.brain_space).toBe('personal')
+  })
+
+  it('sendMessage sends an empty brain_space when unconnected', () => {
+    useChatStore.getState().sendMessage('hello')
+    const payload = JSON.parse(sendSpy.mock.calls[0]![0]!)
+    expect(payload.brain_space).toBe('')
+  })
+
+  it('clearPersist resets the binding', () => {
+    useChatStore.getState().setActiveBrainSpace('personal')
+    useChatStore.getState().clearPersist()
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+
+  it('loadSession rehydrates the binding from the session record', async () => {
+    server.use(
+      http.get('/api/sessions/s-bind', () =>
+        HttpResponse.json({
+          id: 's-bind',
+          user_messages: [],
+          agent_responses: [],
+          trajectory_steps: [],
+          reasoning_records: [],
+          active_persona_id: null,
+          // Top-level field (kernel Session.brain_space) — not yet exposed
+          // by the GET handler, so the store falls back to session metadata.
+          metadata: { brain_space: 'work' },
+          compression: null,
+        }),
+      ),
+    )
+    await useChatStore.getState().loadSession('s-bind')
+    expect(useChatStore.getState().activeBrainSpace).toBe('work')
+  })
+
+  it('loadSession clears the binding when the session record has none', async () => {
+    useChatStore.setState({ activeBrainSpace: 'stale' })
+    server.use(
+      http.get('/api/sessions/s-free', () =>
+        HttpResponse.json({
+          id: 's-free',
+          user_messages: [],
+          agent_responses: [],
+          trajectory_steps: [],
+          reasoning_records: [],
+          metadata: {},
+          compression: null,
+        }),
+      ),
+    )
+    await useChatStore.getState().loadSession('s-free')
+    expect(useChatStore.getState().activeBrainSpace).toBeNull()
+  })
+})
+
+// Task 9 — default-brain inheritance: the payload carries the RESOLVED
+// binding (explicit ?? project default ?? global default) so the kernel
+// records the effective binding, and '' when no layer provides a space.
+describe('useChatStore resolved brain_space payload (task 9)', () => {
+  let sendSpy: Mock
+  const mockWs = (): WebSocket =>
+    ({ readyState: 1, send: sendSpy, close: vi.fn() }) as unknown as WebSocket
+
+  beforeEach(() => {
+    localStorage.clear()
+    __clearStreamProcessorsForTesting()
+    sendSpy = vi.fn()
+    useChatStore.setState({
+      messages: [],
+      isStreaming: false,
+      streamStartedAt: null,
+      connected: true,
+      _ws: mockWs(),
+      _pendingQueue: [],
+      _reconnectTimer: null,
+      _pingTimer: null,
+      activeSessionId: 's1',
+      activeBrainSpace: null,
+      brainDefaults: { project: null, global: '' },
+    })
+  })
+
+  const sendBrainSpace = () => {
+    useChatStore.getState().sendMessage('hello')
+    return JSON.parse(sendSpy.mock.calls[0]![0]!).brain_space as string
+  }
+
+  it('explicit selection wins over both defaults', () => {
+    useChatStore.setState({
+      activeBrainSpace: 'personal',
+      brainDefaults: { project: 'work', global: 'global-space' },
+    })
+    expect(sendBrainSpace()).toBe('personal')
+  })
+
+  it('project default applies when nothing is picked', () => {
+    useChatStore.setState({ brainDefaults: { project: 'work', global: 'global-space' } })
+    expect(sendBrainSpace()).toBe('work')
+  })
+
+  it('global default applies when the project has none', () => {
+    useChatStore.setState({ brainDefaults: { project: null, global: 'global-space' } })
+    expect(sendBrainSpace()).toBe('global-space')
+  })
+
+  it('resolves to empty string (unconnected) when no layer provides a space', () => {
+    useChatStore.setState({ brainDefaults: { project: null, global: '' } })
+    expect(sendBrainSpace()).toBe('')
   })
 })
 
@@ -1547,7 +1716,7 @@ describe('useChatStore loadSession (Task 10 — surfacing load failures)', () =>
   })
 })
 
-describe('useChatStore branchFrom / rateMessage (Task 22)', () => {
+describe('useChatStore branchFrom (Task 22)', () => {
   beforeEach(() => {
     useChatStore.setState({
       activeSessionId: 'sess-a',
@@ -1581,38 +1750,6 @@ describe('useChatStore branchFrom / rateMessage (Task 22)', () => {
     expect(s.activeSessionId).toBe('sess-a')
     expect(s.messages.map((m) => m.id)).toEqual(['u1'])
   })
-
-  it('rateMessage stores the rating in message metadata', () => {
-    useChatStore.setState({
-      messages: [{ id: 'a1', role: 'assistant', content: 'two' }] as never,
-    })
-    useChatStore.getState().rateMessage('a1', 1)
-    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: 1 } })
-    // Re-rating switches the value instead of stacking.
-    useChatStore.getState().rateMessage('a1', -1)
-    expect(useChatStore.getState().messages[0]).toMatchObject({ metadata: { rating: -1 } })
-  })
-
-  it('rateMessage clears an existing rating when passed null', () => {
-    useChatStore.setState({
-      messages: [{ id: 'a1', role: 'assistant', content: 'two', metadata: { rating: 1 } }] as never,
-    })
-    useChatStore.getState().rateMessage('a1', null)
-    expect(useChatStore.getState().messages[0]?.metadata?.rating).toBeUndefined()
-  })
-
-  it('rateMessage preserves other metadata fields', () => {
-    useChatStore.setState({
-      messages: [
-        { id: 'a1', role: 'assistant', content: 'two', metadata: { phase: 'execute' } },
-      ] as never,
-    })
-    useChatStore.getState().rateMessage('a1', 1)
-    expect(useChatStore.getState().messages[0]?.metadata).toMatchObject({
-      phase: 'execute',
-      rating: 1,
-    })
-  })
 })
 
 describe('parseChunk', () => {
@@ -1633,5 +1770,189 @@ describe('parseChunk', () => {
     const chunk = parseChunk({ type: 'not_a_real_chunk_type' })
     expect(chunk.type).toBe('error')
     expect('error' in chunk).toBe(true)
+  })
+})
+
+// ── §8.1 chat quality bar (project-roots workbench, Task 8) ────────────────
+
+// Shared WS boot: fake socket that opens on the same setTimeout(0) schedule
+// the store uses, plus the auth/status stubs connect() fetches.
+function stubOpenWebSocket(handlers: {
+  send?: (payload: string) => void
+  onDeliver?: (deliver: (data: string) => void) => void
+}) {
+  class FakeWebSocket {
+    static OPEN = 1
+    static CLOSED = 3
+    url: string
+    readyState = 0
+    onopen: (() => void) | null = null
+    onclose: (() => void) | null = null
+    onmessage: ((_e: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(url: string) {
+      this.url = url
+      setTimeout(() => {
+        this.readyState = 1
+        this.onopen?.()
+      }, 0)
+      if (handlers.onDeliver) {
+        handlers.onDeliver((data: string) => this.onmessage?.({ data }))
+      }
+    }
+    close() {
+      this.readyState = 3
+    }
+    send(payload: string) {
+      handlers.send?.(payload)
+    }
+  }
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ auth_enabled: false }),
+    })),
+  )
+}
+
+// §8.1: Stop cancels the server-side turn on the SAME session turn key the
+// stream uses, retains the partial answer, and marks the turn interrupted
+// (metadata.cancelled → InterruptedNotice) rather than successful.
+describe('useChatStore stop (§8.1 stop_marks_turn_interrupted_and_keeps_partial)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    __clearAuthCacheForTesting()
+    __clearStreamProcessorsForTesting()
+    __clearResolvedApprovalIdsForTesting()
+    useChatStore.setState({
+      connected: false,
+      isStreaming: false,
+      _ws: null,
+      _sendQueue: [],
+      _pendingQueue: [],
+      _reconnectAttempts: 0,
+      _reconnectTimer: null,
+      _pingTimer: null,
+      messages: [],
+    })
+  })
+
+  it('stop_marks_turn_interrupted_and_keeps_partial', async () => {
+    vi.useFakeTimers()
+    const sent: string[] = []
+    stubOpenWebSocket({ send: (payload) => sent.push(payload) })
+
+    await useChatStore.getState().connect()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(useChatStore.getState().connected).toBe(true)
+
+    useChatStore.setState({
+      activeSessionId: 'sess-stop',
+      messages: [
+        { id: 'u1', role: 'user', content: 'long task' },
+        { id: 'a1', role: 'assistant', content: 'partial ans', generating: true },
+      ] as never,
+      isStreaming: true,
+      activeToolApproval: { id: 'ap1', toolName: 'bash', reason: 'run ls' },
+    })
+
+    // The Stop button path (chat.tsx handleCancel): an explicit server
+    // cancel frame keyed by the session turn key (no request_id once a
+    // session exists).
+    useChatStore.getState().cancelTurn()
+    expect(sent).toHaveLength(1)
+    expect(JSON.parse(sent[0]!)).toEqual({
+      type: 'cancel',
+      session_id: 'sess-stop',
+      request_id: null,
+    })
+
+    // Server confirms with the cancelled terminal: partial retained,
+    // generating cleared, metadata.cancelled set, never an error card.
+    useChatStore
+      .getState()
+      .handleChunk({ type: 'error', kind: 'cancelled', message: 'Turn cancelled by user' } as never)
+    const msgs = useChatStore.getState().messages
+    expect(msgs).toHaveLength(2)
+    expect(msgs[1]!.content).toBe('partial ans')
+    expect(msgs[1]!.generating).toBe(false)
+    expect(msgs[1]!.metadata?.cancelled).toBe(true)
+    expect(msgs[1]!.metadata?.isError).toBeFalsy()
+    const s = useChatStore.getState()
+    expect(s.isStreaming).toBe(false)
+    expect(s.activeToolApproval).toBeNull()
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})
+
+// §8.1: after a reconnect the server's replay buffer re-delivers messages
+// the client already applied; the dedup ring must drop them so the terminal
+// message is ONE complete transcript, not duplicated blocks.
+describe('useChatStore reconnect dedup (§8.1 reconnect_dedups_replayed_blocks)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    __clearAuthCacheForTesting()
+    __clearStreamProcessorsForTesting()
+    __clearResolvedApprovalIdsForTesting()
+    useChatStore.setState({
+      connected: false,
+      isStreaming: false,
+      _ws: null,
+      _sendQueue: [],
+      _pendingQueue: [],
+      _reconnectAttempts: 0,
+      _reconnectTimer: null,
+      _pingTimer: null,
+      messages: [],
+    })
+  })
+
+  it('reconnect_dedups_replayed_blocks', async () => {
+    vi.useFakeTimers()
+    let deliver: ((data: string) => void) | null = null
+    stubOpenWebSocket({ onDeliver: (d) => (deliver = d) })
+
+    await useChatStore.getState().connect()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(useChatStore.getState().connected).toBe(true)
+
+    useChatStore.setState({
+      messages: [
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '',
+          timestamp: new Date().toISOString(),
+          generating: true,
+        },
+      ] as never,
+      isStreaming: true,
+    })
+
+    // First delivery applies. The replayed frame (same msg id — server
+    // buffer overlap after a fast reconnect) must be dropped; the next id
+    // applies normally.
+    deliver!(JSON.stringify({ seq: 1, id: 'm1', type: 'token', content: 'hello ' }))
+    deliver!(JSON.stringify({ seq: 1, id: 'm1', type: 'token', content: 'hello ' }))
+    deliver!(JSON.stringify({ seq: 2, id: 'm2', type: 'token', content: 'world' }))
+    // Tokens are batched behind one rAF flush (F9) — fire the frame.
+    await vi.advanceTimersByTimeAsync(32)
+
+    const msgs = useChatStore.getState().messages
+    const last = msgs.at(-1)!
+    expect(msgs).toHaveLength(1)
+    expect(last.content).toBe('hello world')
+
+    useChatStore.getState().disconnect()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 })

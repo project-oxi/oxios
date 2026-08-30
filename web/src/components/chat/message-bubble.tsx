@@ -2,7 +2,7 @@
 //
 // Phase 2 (2026-07-21): the monolithic renderer was split into role-specific
 // components under messages/. This file preserves the public MessageBubble
-// export so existing consumers (routes/chat.tsx, quick-ask-dialog.tsx) keep
+// export so existing consumers (routes/chat.tsx, oxios-copilot-dialog.tsx) keep
 // working without changes. New code should import MessageView directly.
 //
 // See docs/designs/2026-07-21-lobehub-chat-port-design.md §7 Phase 2.

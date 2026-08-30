@@ -367,6 +367,10 @@
   --p-neutral-500: oklch(0.705 0.015 286.067);
   --p-neutral-900: oklch(0.985 0 0);
   --p-neutral-950: oklch(0.13 0.005 285.823);
+  /* Input unfocused borders need more presence on dark surfaces than the
+     10%-white card border: inputs are bg-transparent, so the 1px shadow
+     ring is the ONLY shape cue. 24% white stays quieter than focus state. */
+  --input-shadow: 0 0 0 1px oklch(1 0 0 / 24%);
   /* Surfaces */
   --color-surface:        var(--p-neutral-950);
   --color-surface-raised: oklch(0.19 0.008 265);

@@ -3,15 +3,14 @@
 // Strategy (advisory 2026-07-21): split chunks by concern.
 //   • Content streaming (token/reasoning/tool_*/usage/done/error) → ChatEvent[]
 //     consumed by StreamProcessor.
-//   • Oxios-semantic (model/memory/interview_question/tool_approval/mount_detected)
+//   • Oxios-semantic (model/memory/interview_question/tool_approval)
 //     → passthrough as raw StreamChunk; the store's existing reducer arms handle
 //     these because each drives a feature that has no ChatEvent equivalent yet
-//     (patchAssistantModel, activities, _interviewQuestions, GatedTool flow,
-//     mount suggestion UI).
+//     (patchAssistantModel, activities, _interviewQuestions, GatedTool flow).
 //   • `done` and `error` are DUAL-PATH: emit ChatEvents (reasoning.end +
 //     stream.stop) AND passthrough raw chunk. The store's `case 'done'` arm is
-//     ~150 lines that handle session_id persistence, mount detection, queue
-//     drain, etc.; the `case 'error'` arm creates a dedicated error message
+//     ~150 lines that handle session_id persistence, queue drain, etc.; the
+//     `case 'error'` arm creates a dedicated error message
 //     with kind-specific copy. Both must run.
 //
 // See docs/designs/2026-07-21-lobehub-chat-port-design.md §5.1.
@@ -125,10 +124,12 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
             severity: 'error',
           }
         : undefined
-      // Backend may send either `tool_result` (structured) or `output_summary`
-      // (pre-formatted string). Pass either through; StreamProcessor's
-      // summariseResult will format appropriately.
-      const result = raw.tool_result ?? raw.output_summary
+      // Backend may send `results` (a structured payload from the kernel's
+      // StructuredResultBus — web-search hits, a todo snapshot, an issue),
+      // `tool_result` (structured) or `output_summary` (pre-formatted
+      // string). Prefer `results`: the matching tool render draws a card
+      // from it, and falls back to the text only when it is absent.
+      const result = raw.results ?? raw.tool_result ?? raw.output_summary
       return {
         events: [
           {
@@ -172,8 +173,8 @@ export function adaptChunk(raw: StreamChunk, ctx: { msgId: string }): AdaptedChu
           },
         ],
         // CRITICAL: passthrough raw chunk — store's `case 'done'` arm
-        // performs session_id/project_id persistence, mount_tag/mount_ids
-        // detection, completion metadata, queue drain, and tool-only
+        // performs session_id/project_id persistence, completion metadata,
+        // queue drain, and tool-only
         // placeholder creation. Without passthrough these die.
         passthrough: raw,
       }

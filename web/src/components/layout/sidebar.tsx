@@ -25,7 +25,6 @@ import {
   ShieldCheck,
   Sparkles,
   Theater,
-  Timer,
   Trash2,
   Wallet,
   Zap,
@@ -111,7 +110,6 @@ export const consoleNavGroups: { labelKey: string; items: NavItem[] }[] = [
         href: '/projects',
         icon: <FolderKanban className="h-4 w-4" />,
       },
-      { labelKey: 'common.mounts', href: '/mounts', icon: <FolderPlus className="h-4 w-4" /> },
     ],
   },
   {
@@ -128,7 +126,6 @@ export const consoleNavGroups: { labelKey: string; items: NavItem[] }[] = [
   {
     labelKey: 'common.operations',
     items: [
-      { labelKey: 'common.cronJobs', href: '/cron-jobs', icon: <Timer className="h-4 w-4" /> },
       { labelKey: 'common.cost', href: '/budget', icon: <Wallet className="h-4 w-4" /> },
       {
         labelKey: 'common.tokenMaxing',
@@ -257,6 +254,11 @@ function BrainNav() {
       labelKey: 'brain.contradictions',
       href: '/brain/contradictions',
       icon: <AlertTriangle className="h-4 w-4" />,
+    },
+    {
+      labelKey: 'brain.operations',
+      href: '/brain/operations',
+      icon: <Activity className="h-4 w-4" />,
     },
   ]
 

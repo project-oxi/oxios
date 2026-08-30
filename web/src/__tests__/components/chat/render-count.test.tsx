@@ -32,7 +32,7 @@ describe('useAssistantActions subscription scope', () => {
     render(<Probe />)
     const before = renders
     act(() => {
-      useChatStore.setState({ activeMountIds: 'mount-1' })
+      useChatStore.setState({ temperature: 0.5 })
     })
     expect(renders).toBe(before)
   })

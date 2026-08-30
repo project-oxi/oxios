@@ -5,6 +5,383 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **Project issues and milestones.** Every Project gets a GitHub-shaped
+  issue tracker: project-scoped numbers (`#12`), status, priority, labels,
+  a markdown body, and milestones that group issues and show derived
+  progress. Issues are markdown documents under
+  `~/.oxi/oxios/projects/<id>/issues/`, backed by `oxicode-sdk` 0.77's
+  `FileIssueStore` (atomic writes, content-hash CAS, `flock`-based
+  assignment liveness). Reachable from chat through the `issue` tool and
+  from the Web UI through Issues and Milestones tabs on the project page.
+
+  Oxios issues are **not** shared with `oxicode`'s per-folder
+  `.oxicode/issues/` store: the two products track different scopes, and
+  converging them would reduce the engine to a TUI skin. We reuse the SDK
+  implementation without sharing its data.
+
+  The storage address doubles as the security boundary — the existing
+  `~/.oxi` whole-root deny already keeps issue files out of reach of the
+  file tools, so the agent can only mutate an issue through the tool that
+  maintains the CAS check and the assignment lock.
+
+  Milestone membership rides a reserved `milestone:<slug>` label, because
+  `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write.
+  Progress is derived, never stored, so it cannot go stale.
+
+- **Session todo plans, rendered live in chat.** The agent's `todo` tool is
+  now wired to a session-scoped `TodoRegistry`, so a plan survives across
+  the turns of a conversation instead of resetting each message. The
+  transcript shows a live checklist (status glyphs, strikethrough on closed
+  tasks, the in-progress task emphasised, block reasons inline), and a
+  sticky strip above the composer shows `completed/total · current task`
+  while work is outstanding.
+
+### Fixed
+
+- **`AgentConfig.session_id` was `None`,** so `ToolContext.session_id` was
+  empty for every tool. Issue assignment derives its ownership identity from
+  it, and the SDK's lock only protects anything when that identity is
+  non-empty and backed by a `flock` the process holds — the same defect the
+  engine documents as its #13. Two existing consumers (`hook_runner`,
+  `task_tool`) also stop receiving an empty value.
+- **A test that never ran.** `format_results_matches_sdk_shape` in
+  `search_provider` had lost its `#[test]` attribute.
+
+### Changed
+
+- **`SearchResultBus` → `StructuredResultBus`,** lifted out of
+  `search_provider` into its own module. It was already a generic
+  `tool_call_id -> Value` map; `todo` and `issue` are the second and third
+  consumers, so a per-tool bus would have been duplication. The delivery
+  path (kernel event → WS `tool_end.results` → tool render) is unchanged.
+- **`oxicode-sdk` / `oxicode-agent` / `oxicode-ai` 0.73.0 → 0.77.0.** No
+  source changes were required; 0.77 adds the issue store and tool to the
+  SDK surface and keeps the todo tool and `TodoStateProvider`.
+- **The always-on tool tier and the gate's Layer-0 exemption list are now
+  one shared constant** (`gate::LAYER0_EXEMPT_TOOLS`) with a parity test. A
+  tool registered in the tier but missing from the list is registered (so
+  the LLM calls it) and then hard-denied on every call — the catch-22 that
+  previously shipped for `web_search`.
+
+- **Unified home layout (`oxi_home` resolver)** — all oxios state now
+  resolves under the shared Oxi home: `oxios_home()` =
+  `$OXIOS_HOME` override, else `oxi_home()/oxios` where
+  `oxi_home()` = `$OXI_HOME` or `~/.oxi`. Production sites that
+  hardcoded `~/.oxios` now route through the resolver: the agent
+  deny gate (sensitive sub-path denies cover BOTH the canonical
+  `~/.oxi/oxios` and the legacy `~/.oxios` while it exists; the
+  `.oxi` whole-root deny honors `OXI_HOME`), `POST /api/system/backup`
+  tarballs (`<oxios home>/backups/`), web-dist staging, and knowledge
+  curation reports (relocated from inside the shared vault to
+  `<oxios home>/state/curation_reports/` — no app writes another
+  app's subtree). Config discovery is canonical-first with a legacy
+  READ-ONLY fallback: when `~/.oxi/oxios/config.toml` is missing but
+  `~/.oxios/config.toml` exists, it is loaded read-only; writes always
+  target the canonical path. `share/install.sh` and
+  `share/migrate-knowledge.sh` follow the same
+  `OXIOS_HOME > OXI_HOME/oxios > ~/.oxi/oxios` precedence.
+
+- **Brain cutover to the oxibrain 0.10 agent-first CLI contract** —
+  one process per operation, nothing resident. Agent-facing ops
+  (`recall`, `ingest`, `search`, `brief`, `traverse`, `why`,
+  `contradictions`) run as one-shot `oxibrain --dir <dir> <op> --json -`
+  subprocesses: payload on stdin, stable response envelope, exit-code-
+  aware degradation, 90 s per-op timeout. Console-only reads the 14-op
+  CLI surface does not expose (`stats`, `pending_stats`,
+  `document_history`, `spaces/list`, `entity://` / `timeline://`
+  resources) speak JSON-RPC over a `serve --stdio` child spawned per
+  call (`oxibrain-client` 0.8 → 0.10). Deleted: the persistent session
+  child, spawn backoff machinery, the Foundation JSON-RPC handshake
+  (now a one-shot `describe` probe), and the binary crate's production
+  `oxibrain-client` usage (`oxios brain status` reads `admin stats`;
+  the dep moved to dev-dependencies). Admin verbs renamed
+  (`admin index`, `admin extract --pending`) across the boot warm-up,
+  the 600 s drain timer, and `oxios brain reindex|extract`.
+  `review_merges` degrades until upstream ships `admin review`.
+  The `brain` skill now teaches the op contract. Design:
+  `docs/designs/2026-08-29-brain-cli-op-cutover-design.md`.
+
+- **`oxios migrate` + journaled unified-home migration** — new CLI
+  command that copies the legacy `~/.oxios` home into the canonical
+  `~/.oxi/oxios`, engine in `oxios-kernel::home_migrate`. Copy-only
+  (the source is never deleted or modified — removal is deferred to
+  the cutover release). Preflight reports source, destination, file
+  count, total bytes, and a state of `nothing_to_do` / `ready` /
+  `already_migrated` / `conflict`; a conflict (destination exists and
+  at least one source file differs by size or SHA-256) aborts without
+  touching either side. A JSON journal at
+  `~/.oxi/oxios.migration-journal.json` is written atomically (temp +
+  fsync + rename) BEFORE the first mutation and flipped to `complete`
+  after a verify walk, so interrupted runs resume by rerunning; copies
+  are idempotent per file (size + SHA-256 skip, else
+  `<dest>.part-<pid>` + fsync + rename) and relative symlinks are
+  recreated. An explicit `OXIOS_HOME` never merges with the legacy
+  home. `--dry-run` prints the plan and mutates nothing.
+  `oxios doctor` gained a home-layout section (oxi root, oxios home,
+  legacy presence, migration state, journal status).
+
+### Added
+
+- **Managed install (rustup-model updater)** — Oxios now ships a
+  versioned binary store at `$OXIOS_HOME/versions/<v>/` with a single
+  launcher symlink at `$OXIOS_HOME/bin/oxios` that is flipped atomically
+  on every update. Replaces the previous `cargo install`-only update
+  strategy that left stale copies shadowing the new binary on PATH
+  (the 2026-08-26 PATH-shadow incident). Design + plan in
+  `docs/designs/2026-08-27-managed-install-{design,plan}.md`.
+- **`share/install.sh` curl installer** — single-line install:
+  `curl -fsSL https://raw.githubusercontent.com/project-oxi/oxios/main/share/install.sh | sh`.
+  Resolves the latest GitHub Release, downloads
+  `oxios-aarch64-apple-darwin.tar.gz` + `.sha256`, verifies the
+  checksum, extracts into `$OXIOS_HOME/versions/<v>/`, atomically
+  flips the launcher, prunes to `keep-2`, and appends an idempotent
+  managed `PATH` block to `~/.zshrc` (or `~/.zprofile`). Includes a
+  shadow report at the end of the run. Supported platform: macOS
+  ARM64 only. Shellchecked in CI.
+- **`oxios update` channel-aware dispatch** — detects the channel from
+  the resolved executable path of the running binary (not whichever
+  `oxios` happens to be first on `PATH`): `Managed`, `Brew`, `Cargo`,
+  `Dev`, `Unmanaged`. Each channel has its own behaviour: `Managed`
+  / `Unmanaged` / `Cargo` (default) fetches the tarball, sha256-
+  verifies it, disk-prechecks, extracts, atomically flips, prunes to
+  `keep-2`, and restarts the daemon. `Brew` prints `brew upgrade
+  oxios` and exits 0. `Dev` refuses with a `cargo build` suggestion.
+  `--via cargo` keeps the legacy `cargo install oxios --locked` path
+  verbatim.
+- **`oxios update --rollback`** — flips the launcher back to the
+  previous version stored in `$OXIOS_HOME/versions/` and restarts the
+  daemon. The previous version is kept on disk indefinitely after
+  every update, so rollback is always available while `keep-2` is
+  satisfied.
+- **`oxios update --dry-run`** — prints the channel, planned install
+  directory, launcher flip target, prune candidates, and any PATH
+  shadows ahead of the managed launcher, without mutating the
+  filesystem or touching the network.
+- **PATH shadow audit** — `audit_shadows(oxios_home, PATH)` enumerates
+  every directory in `$PATH` that contains an `oxios` binary, dedups
+  while preserving PATH order, skips `$OXIOS_HOME/bin`, and reports
+  size + resolved symlink target. Surfaced by `oxios update`
+  (pre-migration preview) and `oxios doctor`.
+- **PATH shadow migration plan + applier** — for `Cargo` and
+  `Unmanaged` channels, `oxios update` audits shadows and offers to
+  repoint symlinks (e.g. `~/bin/oxios → ~/.oxios/bin/oxios`) and rename
+  real files to `<path>.bak.<YYYYMMDD>` (one copy preserved for
+  rollback). When the migration applies, it also ensures the managed
+  `PATH` block (`$OXIOS_HOME/bin`) exists in `~/.zshrc`/`~/.zprofile`
+  so a renamed-away plain-file shadow never leaves `oxios` off PATH.
+  TTY confirm or `--adopt` for non-TTY.
+- **`oxios doctor` shadow report + `--cleanup`** — `oxios doctor` now
+  reports the shadow list as part of the diagnostics. `--cleanup`
+  deletes `.bak.*` and stale versioned copies listed by the audit,
+  with TTY confirm (or `--yes` for non-TTY). This is the official
+  reclaim path for the accumulated `oxios-1.42.0-livestream*` copies
+  in `~/bin/`.
+- **`DaemonManager::with_exe`** (kernel) — the daemon manager accepts
+  an `exe_override` builder that makes `start()` and `install_service()`
+  spawn the launcher path instead of `std::env::current_exe()`. This
+  fixes the root cause of the 2026-08-26 incident where the updater
+  restarted the daemon through its own (stale) resolved path and the
+  next release never reached the daemon process. Behaviour unchanged
+  when `with_exe` is not called.
+- **`POST /api/system/update` channel awareness** — the HTTP update
+  route gains the same channel dispatch as the CLI and a `via` field
+  (`"cargo"` accepted, anything else rejected 400). Unmanaged installs
+  over HTTP never auto-migrate (no TTY): they return the shadow list
+  and instruct the caller to re-run `oxios update` in a terminal.
+
+### Changed
+
+- **BREAKING: mount subsystem deleted — project roots are the sole
+  filesystem scope** (`docs/designs/2026-08-29-project-roots-persona-workbench-design.md`).
+  Projects are now a reduced record `{ name, root_paths, instructions }`:
+  roots are validated (absolute, existing directory, canonicalized,
+  de-duplicated) before persistence, `root_paths[0]` is the working
+  directory, and an empty list is a first-class **folderless project**.
+  Sessions bind by `project_id` (legacy `metadata.project_id(s)` still
+  read); every turn's execution scope comes from the project's roots
+  alone — a deleted project detaches its sessions, and nothing ever falls
+  back to an ambient workspace. Session-detail responses gain a
+  server-derived `effective_profile` (`{ persona_id, tool_profile,
+  affordances }`) that is the single source for conditional chat/workbench
+  affordances. The web ships a conversation-first coding workbench
+  (project bar, activity rail, artifact cards) and a native-folder-picker
+  project create/edit flow with stale-root surfacing
+  (`GET /api/projects/{id}/roots/status`). Project workspace HTTP moves
+  to `/api/project/workspace/{tree,file,status}` (session-scoped), and
+  `POST /api/system/pick-folders` exposes the local folder picker.
+  **Release note:** this cutover resets on-disk state — existing
+  `~/.oxios` data may be deleted on upgrade; back up before updating.
+
+- **Daemonless brain cutover (oxibrain 0.8).** oxibrain 0.8 deleted the
+  resident daemon, the listening socket, the vault watcher, and the
+  background extraction queue; Oxios now consumes it the way its ecosystem
+  contracts prescribe — three lanes, one binary, one data dir
+  (`docs/designs/2026-08-27-daemonless-brain-design.md`, superseding the
+  transport/lifecycle half of RFC-047 and all of RFC-049):
+  - **Session child** — one lazily-spawned, kernel-owned
+    `oxibrain serve --stdio` child (`BrainSession`, via `oxibrain-client`
+    0.8 from crates.io) serves all interactive surfaces; it dies with the
+    Oxios process. No launchd, no PID files, no reconnect machinery.
+  - **One-shot CLI** — admin verbs (`index --documents --embed`,
+    `extract --pending`, `--version` probes) run as short-lived invocations;
+    `BrainInstaller` keeps only the GitHub-Releases install path
+    (`~/.oxi/bin/oxibrain`, sha256-verified) plus a one-time daemon-era
+    cleanup (launchd plist bootout, stale socket/pid).
+  - **Skill + CLI for agents** — the `memory_{write,read,search}` kernel
+    tools are removed; agents get the first-party `brain` skill and call
+    the pre-allowed `oxibrain` CLI through exec structured mode (fifteen
+    verbs instead of three proxied tools).
+  - **Vault ingestion is a declaration** — boot idempotently seeds
+    `~/.oxi/brain/documents.toml` with the vault root instead of a
+    registration RPC; `search`/`recall` auto-materialize, so a failed
+    boot-time warm index never blocks.
+  - **Extraction drain owned by Oxios** — `remember` parks episodes in the
+    backlog; a 10-minute kernel timer (while a session child is alive)
+    drains it via `oxibrain extract --pending`.
+  - **Config** — `[brain] socket_path` and `auto_manage` removed (old
+    configs warn-and-ignore); new `dir` and `auto_install`.
+  - **CLI** — `oxios brain {ingest,ask,start,stop}` removed;
+    `oxios brain {status,install,uninstall,reindex,extract}` remain, and
+    query/ingest move to `oxibrain ask` / `oxibrain ingest`. `reindex`
+    degrades the best-effort `--embed` step (stock oxibrain 0.8.0 ships
+    no CLI embedder) and still reports the lexical reconcile.
+  - **Web** — Brain tab renders two-plane search (memory + documents),
+    a daemonless status banner, and gix-backed document history.
+  - Degradation contract unchanged: missing binary → empty results,
+    turns still complete, boot never blocks.
+
+- **`oxios update` binary strategy: cargo install → release tarball.**
+  The default `oxios update` no longer shells out to `cargo install`;
+  it downloads the GitHub Release tarball, sha256-verifies it, and
+  installs into the managed version store. `cargo install` remains a
+  first-class option via `oxios update --via cargo` (CLI) or
+  `POST /api/system/update {"via": "cargo"}` (HTTP). The tarball path
+  is faster, reproducible across machines (no local Rust toolchain
+  needed), and avoids the silent "PATH shadow" failure mode that
+  `cargo install` could not detect.
+
+### Removed
+
+- **Mount subsystem** — `crates/oxios-kernel/src/mount/`, `MountApi`,
+  the `mounts` SQLite table, mount UI/routes/navigation, and every mount
+  contract are removed in the same change that introduces project roots
+  (design §10 step 2: no implementation may preserve a mount fallback).
+  `MountApi`'s facade slot is absorbed by `ProjectApi`.
+
+- **`memory_{write,read,search}` kernel tools** — replaced by the `brain`
+  skill + allowlisted `oxibrain` CLI (daemonless brain cutover).
+- **`oxios brain {ingest,ask,start,stop}`** — `ingest`/`ask` move to
+  `oxibrain ingest`/`ask`; `start`/`stop` are meaningless without a
+  daemon.
+
+## [1.44.0] - 2026-08-26
+
+### Added
+- **`oxi-vault-git` shared crate replaces in-tree `git_layer`** — oxios
+  now consumes the same vault-git implementation as oximemo
+  (`oxi-vault-git@0.1.0`, crates.io); the in-tree `git_layer` module was
+  deleted. Behavior unchanged for callers (`commit_file`, `log`,
+  `restore_file`, foreign-repo adoption gating), but bugfixes to the
+  shared crate (e.g. the `.oxi-vault-git`/`.oxios-git` ownership marker
+  handling) now land once for both apps instead of drifting.
+- **RFC-050: ecosystem vault unification** — one shared knowledge vault at
+  `~/.oxi/vault/`, converged on the new neutral `oxi-frontmatter` format
+  (constrained YAML subset). oxios, oximemo, and the oxibrain daemon read
+  and write the same `.md` files; each app keeps its own derived
+  indexes. Full design and migration runbook in
+  `docs/rfc-050-vault-unification.md`.
+- **`oxi-frontmatter` contract crate** (path dep during plan, swap to
+  crates.io at finishing) — single `write_document` atomic-preserving
+  API; nine oximemo write sites converted; `NoOp` is semantic, not
+  byte-level, so re-saving an unchanged editor buffer never churns
+  mtime.
+- **Vault watcher** (`oxios-markdown`) — debounced (400 ms),
+  read-only; refreshes the KnowledgeBase index on file change.
+  `WatchGuard` joins on drop.
+- **Vault-rooted GitLayer** — `~/.oxi/vault/.git/` (oxios-owned);
+  curation goes through `knowledge_git`; foreign-repo adoption gated
+  by `[git] adopt_foreign_repo` with a loud warn-and-degrade path.
+- **oxibrain vault registration** — `register_vault_source` with
+  5 s→60 s retry cap (10 min) and dir recheck;
+  `resolve_space` reads the canonical `~/.oxi/config.toml [vault]
+  space` first (per-app overrides warn loudly).
+- **One-time `oxios-migrate-vault` binary** — converts legacy oximemo
+  v3 TOML frontmatter (`+++`) into v4 YAML (`---`) blocks via the
+  shared contract; imports git history; cross-tree collision pre-write
+  refuses with `MergeRequired`; HEAD-tracked removal gated; atomic
+  verbatim copy. Default invocation is a dry-run; `--apply` performs
+  backup → move/convert → git history import.
+- **Agent deny list expanded (RFC-050 §3.1)** — covers the
+  `~/.oxi/` whole root and the `~/.oxios/` sensitive-subpath set
+  (workspace/mount grants preserved); backups relocate to
+  `~/.oxios/backups/` and are denied by construction.
+  `OXIOS_HOME_DENY_SUBPATHS` is a single source of truth shared by
+  the web/run gates.
+
+- **Brain reads over MCP resources (full daemon surface)** — the daemon
+  removed the `get_entity`/`timeline` MCP tools in favor of `entity://` and
+  `timeline://` resources; `BrainConnection` now reads those resources
+  (from/to bounds preserved) and gains passthroughs with the same
+  degradation contract (unreachable daemon → empty results, turns still
+  complete): `brief`, `traverse`, `review_merges`, `spaces`,
+  `space_overview`. New routes:
+  `/api/brain/{brief,graph,operations/{section},spaces,space}`.
+- **Brain tab rebuilt on the real oxibrain wire contracts (web)** — the
+  old tab read removed shapes (`RankingResult`, `data.items`) and rendered
+  nothing for search and `@`-mentions. `types/brain.ts` now mirrors the
+  verified daemon contracts; entity pages render the brief markdown,
+  beliefs, timeline, and per-statement provenance (in-place `entity://`
+  links behind `rehype-sanitize` with an entity-protocol-scoped URL
+  transform), search shows real hit rows, contradictions render as
+  structured cards with why drill-down, and a new operations page exposes
+  merges / extraction failures / sources.
+- **Session-scoped persona selection with category taxonomy** — `Persona`
+  gains `category`/`genre`/`default_mount_ids` (serde-default, v2
+  compatible); five new defaults (Normal, Novelist, Scenarist, Essayist,
+  Blogger) and nine existing defaults re-categorized. `persona_id`
+  threads WS/HTTP ingress → gateway metadata → `ExecEnv`, overriding the
+  global active persona per turn; invalid ids rejected at ingress;
+  `session.active_persona_id` persisted.
+- **Persona picker in the chat composer (web)** — a PersonaPicker pill
+  next to the model picker with rows grouped by category and genre badges;
+  selecting a persona with `default_mount_ids` auto-attaches those mounts
+  (chips stay removable — persona is a preset, never authority). The
+  personas page regroups cards by category; `['personas']` react-query
+  cache unified to full records.
+- **Homebrew tap auto-bump on release** — each tag release rewrites
+  `url`/`sha256` in `project-oxi/homebrew-tap` `Formula/oxios.rb` so
+  `brew upgrade oxios` tracks GitHub Releases.
+
+### Changed
+- **Default knowledge root** — `~/.oxios/workspace/knowledge/` →
+  `~/.oxi/vault/`. The retired `~/.oxios/knowledge/` path is gone;
+  `AGENTS.md` path table reflects the new location. See
+  `docs/rfc-050-vault-unification.md` for the migration runbook.
+- **`~/.oxios/backups/`** — new location for pre-vault-unification
+  knowledge backups; agents are denied by construction
+  (RFC-050 §3.1).
+
+### Fixed
+- **GitLayer commit/history/restore under new vault root** — `commit_file`
+  bailed on workspace/knowledge paths; kernel.rs prefix fallback removed;
+  seven prefix sites updated to the new canonical vault root.
+- **Vault-rooted repository detection** — `adopt_foreign_repo` warns
+  loudly when disabled; `disabled_reason` accessor added so the
+  Web/API surfaces the cause instead of a silent degradation.
+- **Adopt-branch degradation** — never blocks boot; vault remains usable
+  even when the foreign-branch strategy can't be applied.
+
+- **Post-completion action gating (web)** — assistant-turn affordances
+  (action bar, reactions, save-to-knowledge) render only after the turn
+  completes; the streaming placeholder mounts with `generating=true`,
+  removing the action-row flash during the `agent_start` →
+  first-content-chunk gap.
+- **Korean mode-tab label wrapping in the sidebar (web)**.
+
 ## [1.43.0] - 2026-08-19
 
 ### Added

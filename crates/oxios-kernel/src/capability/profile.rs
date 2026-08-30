@@ -23,7 +23,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use uuid::Uuid;
 
 use super::descriptor::{ToolContractVersion, ToolDescriptor, ToolId, ToolProviderId, ToolTag};
 use super::types::{ResourceRef, Rights};
@@ -90,8 +89,6 @@ pub enum ResourceSelector {
     KernelDomain(Arc<str>),
     /// An installed skill by registered name.
     Skill(Arc<str>),
-    /// A workspace space by its UUID.
-    Space(Uuid),
     /// Another agent by its [`AgentId`].
     Agent(AgentId),
     /// Execution mode — `"shell"` or `"structured"`.
@@ -123,7 +120,7 @@ impl ResourceSelector {
     ///
     /// The conversion is total and lossless for the variants that have
     /// a single canonical target (the unit variants and `KernelDomain`
-    /// / `Skill` / `Space` / `Agent` / `Mcp` / `Exec` carry their
+    /// / `Skill` / `Agent` / `Mcp` / `Exec` carry their
     /// identifying payload across verbatim).
     pub fn to_resource_ref(&self) -> ResourceRef {
         match self {
@@ -133,7 +130,6 @@ impl ResourceSelector {
             ResourceSelector::Skill(name) => ResourceRef::Skill {
                 name: name.to_string(),
             },
-            ResourceSelector::Space(id) => ResourceRef::Space { id: *id },
             ResourceSelector::Agent(id) => ResourceRef::Agent { id: *id },
             ResourceSelector::Exec { mode } => ResourceRef::Exec {
                 mode: mode.to_string(),
@@ -158,7 +154,7 @@ impl ResourceSelector {
     ///   `Memory`, `Knowledge`, `Browser`, `A2a`.
     /// - `KernelDomain(name)` covers `ResourceRef::KernelDomain`
     ///   with equal name.
-    /// - `Skill(name)`, `Space(id)`, `Agent(id)`, `Exec { mode }`
+    /// - `Skill(name)`, `Agent(id)`, `Exec { mode }`
     ///   cover their unit counterparts with equal payload.
     /// - `Mcp { server }` covers equal `server`, or any MCP resource
     ///   when `server == "*"`.
@@ -174,7 +170,6 @@ impl ResourceSelector {
                 a.as_ref() == b
             }
             (ResourceSelector::Skill(a), ResourceRef::Skill { name: b }) => a.as_ref() == b,
-            (ResourceSelector::Space(a), ResourceRef::Space { id: b }) => a == b,
             (ResourceSelector::Agent(a), ResourceRef::Agent { id: b }) => a == b,
             (ResourceSelector::Exec { mode: a }, ResourceRef::Exec { mode: b }) => a.as_ref() == b,
             (ResourceSelector::Mcp { server: a }, ResourceRef::Mcp { server: b }) => {

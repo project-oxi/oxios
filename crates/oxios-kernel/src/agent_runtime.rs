@@ -38,12 +38,14 @@ use std::sync::Arc;
 // RFC-014 Phase D: `ToolRegistry::register_arc` is used in the AgentBuilder
 // path to attach CSpace tools after `builder.build()` returns.
 
-use crate::access_manager::{AccessGate, AgentContext, TracingAuditSink, TrailAuditSink};
+use crate::access_manager::{
+    AccessGate, AgentContext, OXI_HOME_DENY_ROOTS, OXIOS_HOME_DENY_SUBPATHS, TracingAuditSink,
+    TrailAuditSink, oxi_deny_root, oxios_deny_roots,
+};
 use crate::capability::resolve::resolve_cspace;
-use crate::capability::resolver::ResolvedExecutionProfile;
 use crate::engine::OxiosEngine;
-use crate::persona::PersonaManager;
-use crate::tools::registration::register_from_resolved_profile;
+use crate::persona::{PersonaManager, ToolProfile, resolve_turn_persona};
+use crate::tools::registration::register_tools_from_cspace_gated;
 
 use crate::KernelHandle;
 use crate::event_bus::KernelEvent;
@@ -329,13 +331,16 @@ impl AgentRuntime {
             &directive.constraints,
             &directive.acceptance_criteria,
             env.cspace_hint.as_deref(),
-            &env.mount_paths,
+            &env.root_paths,
+            env.project_id,
             env.workspace_context.as_deref(),
             session_ctx,
             session_id,
             Some(directive),
             env.model_override.as_deref(),
             env.role.as_deref(),
+            env.persona_id.as_deref(),
+            env.brain_space.as_deref(),
             env.restore_state.as_ref(),
         )
         .await
@@ -356,7 +361,12 @@ impl AgentRuntime {
         constraints: &[String],
         acceptance_criteria: &[String],
         cspace_hint: Option<&str>,
-        mount_paths: &[std::path::PathBuf],
+        root_paths: &[std::path::PathBuf],
+        // Active project for the turn. Resolved by
+        // `Orchestrator::resolve_exec_env` from explicit `project_ids` or
+        // auto-detection; carried here so the `issue` tool can scope itself
+        // to the project without re-resolving it.
+        project_id: Option<uuid::Uuid>,
         workspace_context: Option<&str>,
         // Retained for API compatibility; recall timing moved to the brain.
         _session_ctx: &mut SessionContext,
@@ -364,69 +374,37 @@ impl AgentRuntime {
         persistence_directive: Option<&Directive>,
         model_override: Option<&str>,
         role: Option<&str>,
+        persona_id: Option<&str>,
+        brain_space: Option<&str>,
         restore_state: Option<&serde_json::Value>,
     ) -> Result<ExecutionResult> {
         let prompt = build_user_prompt_inner(goal, acceptance_criteria);
 
-        // Get active persona system prompt.
-        let persona_prompt = self
-            .persona_manager
+        // Resolve the turn's persona: an explicit session-scoped override
+        // (chat persona picker) wins when it exists and is enabled;
+        // otherwise fall back to the global active persona (RFC-039).
+        // Invalid/disabled overrides degrade to the global default rather
+        // than failing the turn — ingress layers validate up front.
+        let persona = resolve_turn_persona(self.persona_manager.as_deref(), persona_id);
+
+        // Get persona system prompt.
+        let persona_prompt = persona
             .as_ref()
-            .map(|pm| pm.active_system_prompt())
+            .map(|p| p.system_prompt.clone())
             .filter(|s| !s.trim().is_empty());
 
-        // Determine persona role for CSpace resolution.
-        let persona_role = self
-            .persona_manager
-            .as_ref()
-            .and_then(|pm| pm.get_active_persona().map(|p| p.role.clone()));
+        // Determine persona role for model routing (role_routing[role]).
+        let persona_role = persona.as_ref().map(|p| p.role.clone());
 
-        // Resolve CSpace from persona role, hint, or default.
-        let cspace = resolve_cspace(
-            cspace_hint,
-            persona_role.as_deref(),
-            Some("worker"),
-            agent_id,
-        );
-
-        // Task 8: resolve the tool profile via the precedence chain
-        //   1. cspace_hint (if it names a built-in profile),
-        //   2. persona.tool_profile (if the active persona declares one),
-        //   3. persona.role (legacy role-as-profile-slug fallback),
-        //   4. "worker" (final fallback).
-        // The resolved profile is then mapped against the CSpace
-        // produced above, which acts as the bounding authority.
-        let active = self
-            .persona_manager
-            .as_ref()
-            .and_then(|pm| pm.get_active_persona());
-        let profile_override = cspace_hint
-            .and_then(|h| crate::capability::builtin_profiles::builtin_profile(h.trim()));
-        let persona_profile = active
-            .as_ref()
-            .and_then(|p| p.tool_profile.as_ref())
-            .and_then(|r| crate::capability::builtin_profiles::builtin_profile(&r.id));
-        let legacy_role_profile = active
-            .as_ref()
-            .map(|p| p.role.trim().to_lowercase())
-            .and_then(|r| crate::capability::builtin_profiles::builtin_profile(&r));
-        let resolved_profile = profile_override
-            .or(persona_profile)
-            .or(legacy_role_profile)
-            .unwrap_or_else(|| {
-                crate::capability::builtin_profiles::builtin_profile("worker")
-                    .expect("worker is a built-in profile preset")
-            });
-        let resolved =
-            crate::capability::resolver::resolve(resolved_profile, &cspace, agent_id, None);
-        tracing::info!(
-            profile = %resolved_profile.id,
-            revision = resolved_profile.revision.0,
-            requested = resolved.tools.len(),
-            "Resolved tool profile"
-        );
+        // Resolve CSpace from the persona's tool profile (base | code |
+        // minimal | control). An explicit directive hint overrides the profile.
+        let tool_profile = persona.as_ref().map(|p| p.tool_profile).unwrap_or_default();
+        let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
+        // The `brain` skill bullet is advertised only when a brain is bound
+        // to this chat (design §4.3).
+        let brain_line = brain_space_line(brain_space);
         let mut system_prompt = build_system_prompt_inner(
             goal,
             original_request,
@@ -436,13 +414,17 @@ impl AgentRuntime {
             persona_prompt.as_deref(),
             None,
             None,
+            brain_line.as_deref(),
         );
 
         // Semantic capability retrieval: find tools relevant to this task's goal.
         let capabilities_xml = if let Some(ref retriever) = self.tool_retriever {
             match retriever.embedder().embed(goal).await {
                 Ok(query_vec) => {
-                    let results = retriever.retrieve(&query_vec, 8);
+                    let mut results = retriever.retrieve(&query_vec, 8);
+                    // Unbound chats have no brain: the `brain` skill must not
+                    // surface in the capability index (design §4.3).
+                    filter_brain_capabilities(&mut results, brain_space);
                     if results.is_empty() {
                         None
                     } else {
@@ -460,15 +442,15 @@ impl AgentRuntime {
             None
         };
 
-        // Build kernel manifest from the *resolved* effective CSpace, not the
-        // legacy bounding CSpace. Tool selection can attenuate domains away
-        // (e.g. dropping every `kernel.browse.*` descriptor removes the
-        // `browser` ResourceRef from the effective CSpace). The bounding
-        // CSpace would still report the attenuated domain as "active",
-        // prompting the model with capabilities it cannot actually call.
-        // Using `resolved.effective_cspace` keeps the manifest in lock-step
-        // with what the resolver actually registers downstream.
-        let kernel_manifest = build_kernel_manifest_from_cspace(&resolved.effective_cspace);
+        // Build kernel manifest from CSpace active domains. The `memory`
+        // domain is advertised only to chats with a bound brain (design §4.3).
+        let kernel_manifest = {
+            let mut domains = cspace.active_domains();
+            if brain_space.is_none() {
+                domains.retain(|d| *d != "memory");
+            }
+            (!domains.is_empty()).then(|| crate::tools::retrieval::build_kernel_manifest(&domains))
+        };
 
         // Rebuild system prompt with capabilities and manifest if available.
         if capabilities_xml.is_some() || kernel_manifest.is_some() {
@@ -481,15 +463,19 @@ impl AgentRuntime {
                 persona_prompt.as_deref(),
                 capabilities_xml.as_deref(),
                 kernel_manifest.as_deref(),
+                brain_line.as_deref(),
             );
         }
 
-        // Blend relevant memories into system prompt (RFC-047: brain recall).
-        if let Some(brain) = &self.kernel_handle.brain {
-            match brain.recall(goal, 3000).await {
+        // Blend relevant memories into system prompt (brain recall) — only
+        // when a brain is connected to this chat (design §4.3).
+        if let (Some(brain), Some(space)) = (&self.kernel_handle.brain, brain_space) {
+            match brain.recall(space, goal, 3000).await {
                 Some(context) => {
-                    tracing::info!("Recalled brain context for task");
-                    system_prompt.push_str(&format!("\n\n## Relevant Memory\n{context}\n",));
+                    tracing::info!(space, "Recalled brain context for task");
+                    system_prompt.push_str(&format!(
+                        "\n\n## Connected Brain\nSpace: `{space}`. All `oxibrain` payloads MUST set `\"space\": \"{space}\"`.\n\n## Relevant Memory\n{context}\n"
+                    ));
                 }
                 None => tracing::debug!("No brain context recalled"),
             }
@@ -519,7 +505,7 @@ impl AgentRuntime {
         match self
             .kernel_handle
             .knowledge_lens
-            .recall_for_context(goal, 5)
+            .recall_for_context(goal, 5, brain_space)
             .await
         {
             Ok(ctx) if !ctx.notes.is_empty() => {
@@ -603,12 +589,14 @@ impl AgentRuntime {
                 goal.to_string(),
                 agent_id,
                 cspace,
-                resolved,
                 audit_trail,
                 self.routing_stats.clone(),
                 session_id.clone(),
-                mount_paths,
+                brain_space,
+                root_paths,
+                project_id,
                 restore_state,
+                tool_profile,
             )
             .await?
         };
@@ -737,6 +725,7 @@ impl AgentRuntime {
                 *idx += 1;
                 current
             };
+            let hook_brain_space = brain_space.map(str::to_string);
             tokio::spawn(async move {
                 match hook
                     .evaluate(
@@ -756,7 +745,13 @@ impl AgentRuntime {
                                 "PersistenceHook executing plan"
                             );
                             let session_id = sid.unwrap_or_default();
-                            hook.execute_plan(plan, &session_id, msg_index).await;
+                            hook.execute_plan(
+                                plan,
+                                &session_id,
+                                msg_index,
+                                hook_brain_space.as_deref(),
+                            )
+                            .await;
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, "PersistenceHook evaluate failed"),
@@ -765,6 +760,60 @@ impl AgentRuntime {
         }
 
         Ok(result)
+    }
+}
+
+/// Derive the execution CWD and the project-derived path grants from an
+/// [`ExecEnv`] (design §6.1). Pure and unit-testable.
+///
+/// Contract: `root_paths[0]` is the CWD and EVERY root is a grant. With
+/// empty roots the CWD falls back to `config.workspace_dir` (or the temp
+/// dir) but the grants list is EMPTY — the fallback is a working directory,
+/// never an authority grant.
+pub fn derive_execution_paths(
+    env: &ExecEnv,
+    config: &AgentRuntimeConfig,
+) -> (std::path::PathBuf, Vec<std::path::PathBuf>) {
+    let cwd = env.root_paths.first().cloned().unwrap_or_else(|| {
+        config
+            .workspace_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("oxios-agent-workspace"))
+    });
+    (cwd, env.root_paths.clone())
+}
+
+/// Apply the execution-scope path grants for a run — the REAL grant path
+/// used by `run_agent` (design §6.1).
+///
+/// Grants, exhaustively:
+/// 1. Project roots — the ONLY project-derived grants. Empty roots ⇒
+///    nothing here (no ambient fallback): the workspace_dir / temp CWD is a
+///    working directory, never authority.
+/// 2. Kernel state-store workspace — kernel-internal (`~/.oxios/...`), not
+///    user data.
+/// 3. `/tmp/**` — general temp file access.
+///
+/// The process CWD is deliberately NOT granted.
+pub fn apply_execution_grants(
+    perms: &mut crate::access_manager::AgentPermissions,
+    root_grants: &[std::path::PathBuf],
+    kernel_ws: &std::path::Path,
+) {
+    for root in root_grants {
+        let pattern = format!("{}/**", root.to_string_lossy().trim_end_matches('/'));
+        if !perms.allowed_paths.iter().any(|p| p == &pattern) {
+            perms.allow_path(&pattern);
+        }
+    }
+
+    let kernel_ws_pattern = format!("{}/**", kernel_ws.to_string_lossy().trim_end_matches('/'));
+    if !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern) {
+        perms.allow_path(&kernel_ws_pattern);
+    }
+
+    if !perms.allowed_paths.iter().any(|p| p == "/tmp/**") {
+        perms.allow_path("/tmp/**");
     }
 }
 
@@ -784,12 +833,14 @@ async fn run_agent(
     goal: String,
     agent_id: AgentId,
     cspace: crate::capability::CSpace,
-    resolved: ResolvedExecutionProfile,
     audit_trail: Option<Arc<AuditTrail>>,
     routing_stats: Option<Arc<crate::kernel_handle::RoutingStats>>,
     session_id: Option<String>,
-    mount_paths: &[std::path::PathBuf],
+    brain_space: Option<&str>,
+    root_paths: &[std::path::PathBuf],
+    project_id: Option<uuid::Uuid>,
     restore_state: Option<&serde_json::Value>,
+    tool_profile: ToolProfile,
 ) -> Result<(
     String,
     usize,
@@ -805,100 +856,40 @@ async fn run_agent(
     String,
     Vec<oxios_ouroboros::ReasoningSegment>,
 )> {
-    // Extract workspace.
-    // RFC-025: the primary Mount's first path is the CWD; otherwise the
-    // configured workspace_dir, otherwise a per-agent temp dir. Paths now
-    // come only from Mounts — the legacy config.project_paths fallback was
-    // removed when the RFC-025 migration completed.
-    let workspace = if !mount_paths.is_empty() {
-        mount_paths[0].clone()
-    } else if let Some(ws) = &config.workspace_dir {
-        ws.clone()
-    } else {
-        std::env::temp_dir()
+    // Extract workspace + grants (design §6.1): the first project root is
+    // the CWD; grants come ONLY from project roots. With no roots the CWD
+    // falls back to workspace_dir / a per-agent temp dir — a working
+    // directory, never an authority grant.
+    let (mut workspace, root_grants) = derive_execution_paths(
+        &ExecEnv {
+            root_paths: root_paths.to_vec(),
+            ..Default::default()
+        },
+        config,
+    );
+    if root_paths.is_empty() && config.workspace_dir.is_none() {
+        // Refine the generic temp fallback to a per-agent directory.
+        workspace = std::env::temp_dir()
             .join("oxios-agent-workspace")
-            .join(agent_id.to_string())
-    };
+            .join(agent_id.to_string());
+    }
 
     // Ensure workspace exists.
     let _ = std::fs::create_dir_all(&workspace);
 
     tracing::debug!(workspace = %workspace.display(), "Agent workspace scoped");
 
-    // Ensure all paths the agent might access are in allowed_paths.
-    //
-    // AgentLifecycleManager::ensure_permissions() adds kernel.workspace (~/.oxios/workspace),
-    // but the agent operates in different directories depending on context:
-    //
-    //   1. Process CWD — oxicode-sdk 0.35+ bakes `workspace_dir` into file tools
-    //      via `with_cwd`, so ReadTool/LsTool resolve relatives against the
-    //      workspace, NOT the process CWD. However, oxios's own CSpace tools
-    //      (kernel-bridge tools wrapped in GatedTool) and bash/exec
-    //      subprocesses may still resolve against the process CWD. We grant
-    //      it as a safety net so those tools aren't denied by GatedTool.
-    //   2. The designated workspace — computed from mount_paths / workspace_dir / temp.
-    //   3. Kernel workspace — state store path for sessions, etc.
-    //   4. /tmp -- general temp file access.
-    //
-    // All four must be in allowed_paths before GatedTool wraps any tool.
+    // Grant the execution scope (design §6.1): project roots ONLY plus the
+    // two kernel-infrastructure entries (state-store workspace under
+    // `~/.oxios`, `/tmp`). The process CWD is deliberately NOT granted —
+    // filesystem authority comes exclusively from project roots; relative
+    // paths outside the scope fail closed at GatedTool.
     {
         use crate::access_manager::{Role, Subject};
         let agent_name = format!("agent-{agent_id}");
         let mut am = kernel_handle.exec.access_manager().lock();
         let perms = am.get_or_create_permissions(&agent_name);
-
-        // 1. CWD -- critical: oxicode-sdk resolves relative paths here
-        if let Ok(cwd) = std::env::current_dir() {
-            let cwd_pattern = format!("{}/**", cwd.to_string_lossy().trim_end_matches('/'));
-            if !perms.allowed_paths.iter().any(|p| p == &cwd_pattern) {
-                perms.allow_path(&cwd_pattern);
-                tracing::debug!(
-                    agent = %agent_name,
-                    path = %cwd_pattern,
-                    "Added CWD to agent allowed paths"
-                );
-            }
-        }
-
-        // 2. Designated workspace
-        let ws_pattern = format!("{}/**", workspace.to_string_lossy().trim_end_matches('/'));
-        if !perms.allowed_paths.iter().any(|p| p == &ws_pattern) {
-            perms.allow_path(&ws_pattern);
-        }
-
-        // 2b. RFC-025: every bound Mount grants path access.
-        //     This fixes the latent gap where only project_paths[0] was
-        //     accessible — now all Mount paths (multi-path work) are allowed.
-        //     Parent patterns already covering a path are skipped.
-        for mount_path in mount_paths {
-            let pattern = format!("{}/**", mount_path.to_string_lossy().trim_end_matches('/'));
-            if !perms.allowed_paths.iter().any(|p| p == &pattern) {
-                perms.allow_path(&pattern);
-                tracing::debug!(
-                    agent = %agent_name,
-                    path = %pattern,
-                    "Added Mount path to agent allowed paths (RFC-025)"
-                );
-            }
-        }
-
-        // 3. Kernel workspace (state store path)
-        let kernel_ws = kernel_handle
-            .state
-            .workspace_path()
-            .to_string_lossy()
-            .to_string();
-        let kernel_ws_pattern = format!("{}/**", kernel_ws.trim_end_matches('/'));
-        if kernel_ws_pattern != ws_pattern
-            && !perms.allowed_paths.iter().any(|p| p == &kernel_ws_pattern)
-        {
-            perms.allow_path(&kernel_ws_pattern);
-        }
-
-        // 4. /tmp -- for general temp file access
-        if !perms.allowed_paths.iter().any(|p| p == "/tmp/**") {
-            perms.allow_path("/tmp/**");
-        }
+        apply_execution_grants(perms, &root_grants, kernel_handle.state.workspace_path());
 
         // Ensure RBAC Superuser role so AccessGate Layer 1 passes.
         let rbac_subject = Subject::Agent(agent_id);
@@ -921,6 +912,8 @@ async fn run_agent(
         agent_id,
         agent_name: format!("agent-{agent_id}"),
         cspace: Arc::new(cspace.clone()),
+        // Per-chat brain binding: prompt gating and exec denial read it here.
+        brain_space: brain_space.map(str::to_string),
     };
 
     // Build audit sink: TrailAuditSink (Merkle chain + JSONL) when audit_trail
@@ -935,12 +928,66 @@ async fn run_agent(
     } else {
         Arc::new(TracingAuditSink)
     };
-    // Build access gate from kernel's security infrastructure
-    let access_gate = Arc::new(AccessGate::new(
+    // Build access gate from kernel's security infrastructure.
+    //
+    // T18 (R2 reconciliation): the gate carries two scoped deny
+    // policies — whole-root for `~/.oxi` (a surface where NO sub-path
+    // is safe — vault, brain index, settings, sessions) and
+    // sub-path for `~/.oxios` (a surface whose workspace subtree is
+    // the agent's documented operating context). Whole-root denial on
+    // `~/.oxios` would kill legitimate grants (`~/.oxios/workspace/**`
+    // at agent_runtime.rs:824-826 + agent_lifecycle.rs:305-307) —
+    // see R2 review feedback.
+    //
+    // Each deny rule canonicalizes its root at construction, so a
+    // `~/.oxi` or `~/.oxios` symlink pointing elsewhere cannot escape
+    // the deny. See gate.rs for the full contract.
+    let mut deny_gate_builder = AccessGate::new(
         kernel_handle.exec.access_manager().clone(),
         Arc::new(kernel_handle.exec.config_snapshot()),
         audit_sink,
-    ));
+    );
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        // Whole-root deny for surfaces where NO sub-path is safe.
+        // Both lists come from the single-source-of-truth constants
+        // in gate.rs so the production wiring and the parity test in
+        // gate.rs cannot drift apart. T18 R4 adds `~/.oxicode` —
+        // the shared oxicode-cli credential store that oxios's
+        // CredentialStore reads as a legacy `auth.json` fallback;
+        // a broadly-allowed agent should not be able to exfiltrate
+        // stored keys via `read`/`grep`.
+        //
+        // Unified home: the `.oxi` leaf resolves through `oxi_home()`
+        // (honoring `OXI_HOME`) so the deny moves with the data; all
+        // other leaves stay anchored at `$HOME`.
+        for leaf in OXI_HOME_DENY_ROOTS {
+            deny_gate_builder = deny_gate_builder.with_deny_root(oxi_deny_root(leaf, &home));
+        }
+
+        // Sub-path deny for `<oxios home>/<sensitive>` on BOTH roots
+        // that can carry sensitive oxios state during the unified-home
+        // transition (copy-only migration): the canonical resolver
+        // root (`OXIOS_HOME` override or `oxi_home()/oxios`) and the
+        // legacy `$HOME/.oxios` while it exists. Each entry is the
+        // sensitive subtree; agents retain access to `workspace/` and
+        // any project root path. See [`OXIOS_HOME_DENY_SUBPATHS`]
+        // doc for the per-entry rationale. T18 R4 adds `backups/` —
+        // the output dir for `POST /api/system/backup` tarballs,
+        // which carry credential-bearing entries.
+        let oxios_roots = oxios_deny_roots(
+            &crate::oxi_home::oxios_home(),
+            crate::oxi_home::legacy_home_dir().as_deref(),
+        );
+        for oxios_root in oxios_roots {
+            for sub in OXIOS_HOME_DENY_SUBPATHS {
+                deny_gate_builder = deny_gate_builder.with_deny_subpath(&oxios_root, sub);
+            }
+        }
+    } else {
+        tracing::warn!("HOME unset at gate construction; ecosystem deny is disabled for this run");
+    }
+
+    let access_gate = Arc::new(deny_gate_builder);
 
     // Build the RFC-035 ApprovalGate: declared policies + config overrides +
     // the always-on SecurityBlacklist as the single global resolver, plus
@@ -985,10 +1032,10 @@ async fn run_agent(
     {
         tracing::warn!("browser engine unavailable, browse tools disabled: {e:#}");
     }
-    register_from_resolved_profile(
+    register_tools_from_cspace_gated(
         &registry,
         &kernel_handle,
-        &resolved,
+        &cspace,
         search_cache,
         agent_id,
         access_gate,
@@ -997,13 +1044,14 @@ async fn run_agent(
         Some(approval_event_bus),
         Some(approval_pending),
         Some(path_access_pending),
+        tool_profile != ToolProfile::Control,
+        project_id,
     );
 
     tracing::info!(
         exec_id = %exec_id,
-        profile = %resolved.profile_id,
-        tools = resolved.tools.len(),
-        "Tools registered from resolved profile"
+        tools = registry.names().len(),
+        "Tools registered from the turn CSpace"
     );
 
     // Task 8: append the registry-derived tool list to the system prompt
@@ -1041,7 +1089,17 @@ async fn run_agent(
         workspace_dir: Some(workspace.clone()),
         output_mode: None,
         provider_options: config.provider_options.clone(),
-        session_id: None,
+        // Carries into `ToolContext.session_id`. The `issue` tool derives
+        // its ownership identity from this, and the SDK's assignment lock is
+        // only meaningful when that identity is non-empty and backed by a
+        // flock this process holds (see `IssueApi`). Leaving it `None` — the
+        // prior value — made every claim instantly reclaimable.
+        session_id: session_id.clone(),
+        // Session-scoped todo state, so a plan survives across the turns of
+        // one conversation instead of resetting every message.
+        todo: session_id.as_deref().map(|sid| {
+            kernel_handle.todos.for_session(sid) as Arc<dyn oxicode_sdk::TodoStateProvider>
+        }),
         // RFC-035 Phase B/C: pass through gap 1/3 config to oxicode-sdk 0.54.0+.
         max_tool_result_bytes: config.max_tool_result_bytes,
         // subagent_depth = CURRENT depth (0 = top-level). The in-process
@@ -1134,15 +1192,16 @@ async fn run_agent(
     // Shared mutable state for the event callback.
     let exec_state = Arc::new(Mutex::new(ExecuteState::default()));
     let exec_state_cb = Arc::clone(&exec_state);
-    let brain_for_callback: Option<Arc<crate::brain::BrainConnection>> =
-        kernel_handle.brain.as_ref().map(|b| b.connection());
+    let brain_for_callback: Option<Arc<crate::brain::BrainSession>> =
+        kernel_handle.brain.as_ref().map(|b| b.session());
     let session_id_for_callback = exec_id.to_string();
     let model_id_for_callback = config.model_id.clone();
     let agent_id_for_callback = agent_id.to_string();
-    let routing_stats_for_cb = routing_stats.clone();
+    let brain_space_for_callback = brain_space.map(str::to_string);
     // RFC-015: real-time event publishing for chat transparency.
     // Falls back to None when the caller did not opt in.
     let transparency_session: Option<String> = session_id.clone();
+    let routing_stats_for_cb = routing_stats.clone();
     let kernel_handle_for_cb: Arc<KernelHandle> = Arc::clone(&kernel_handle);
     // P1 chat transparency: per-session streaming sink registry. The
     // callback looks up the sink for this session and pushes live text
@@ -1273,8 +1332,13 @@ async fn run_agent(
                     }
                 }
                 s.tool_error_map.insert(tool_call_id.clone(), is_error);
-                // RFC-015: broadcast tool completion.
+                // RFC-015: broadcast tool completion. Structured results
+                // (e.g. web_search result arrays) ride the kernel search
+                // side-channel bus — the SDK event boundary drops
+                // AgentToolResult metadata, so tools stash payloads keyed
+                // by tool_call_id and we take them here.
                 if let Some(ref sid) = transparency_session {
+                    let results = kernel_handle_for_cb.tool_results.take(&tool_call_id);
                     let _ =
                         kernel_handle_for_cb
                             .infra
@@ -1285,6 +1349,7 @@ async fn run_agent(
                                 duration_ms,
                                 is_error,
                                 output_summary: summary,
+                                results,
                             });
                 }
             }
@@ -1361,9 +1426,10 @@ async fn run_agent(
                     result.summary.clone(),
                     session_id_for_callback.clone(),
                     brain_for_callback.clone(),
+                    brain_space_for_callback.clone(),
                 );
                 // RFC-015: compaction is a form of reasoning — expose it.
-                if let Some(ref sid) = transparency_session {
+                if let Some(sid) = &transparency_session {
                     let _ = kernel_handle_for_cb
                         .infra
                         .publish(KernelEvent::ReasoningFragment {
@@ -1653,28 +1719,6 @@ fn truncate_json_str(json_str: &str, max_len: usize) -> String {
     format!("{truncated}...")
 }
 
-/// Build the kernel manifest markdown for the system prompt from a CSpace.
-///
-/// Returns `None` when the CSpace has no active domains (no `## Kernel Manifest`
-/// block emitted), and `Some(markdown)` otherwise. Pure function — depends
-/// only on the CSpace passed in, so it is trivially testable in isolation.
-///
-/// Callers must pass the *resolved* effective CSpace
-/// (`ResolvedExecutionProfile.effective_cspace`) and NOT the legacy bounding
-/// CSpace used to drive resolution: a profile can attenuate a domain away
-/// (e.g. by removing every `kernel.browse.*` selector), and the bounding
-/// CSpace would still report that domain as active. The manifest is the
-/// contract that promises the model "here is what you can call" — it MUST
-/// reflect the post-resolution set, never the pre-resolution bound.
-fn build_kernel_manifest_from_cspace(cspace: &crate::capability::CSpace) -> Option<String> {
-    let domains = cspace.active_domains();
-    if domains.is_empty() {
-        None
-    } else {
-        Some(crate::tools::retrieval::build_kernel_manifest(&domains))
-    }
-}
-
 /// Build the "Available tools" section of the system prompt from the actual
 /// registry contents.
 ///
@@ -1782,23 +1826,36 @@ fn infer_domain(goal: &str) -> String {
 
 /// Handle compaction completion by storing the summary in the brain.
 ///
-/// Extracts the compaction summary from the event and spawns a background
-/// task to persist it via the brain daemon (RFC-047).
+/// Spawns a background task so a degraded brain never blocks the turn.
+/// Extraction is deferred to the kernel's backlog-drain timer.
 fn handle_compaction(
     summary: String,
     session_id: String,
-    brain: Option<Arc<crate::brain::BrainConnection>>,
+    brain: Option<Arc<crate::brain::BrainSession>>,
+    brain_space: Option<String>,
 ) {
     let content = if session_id.is_empty() {
         summary
     } else {
-        format!("[session {session_id}]\n{summary}")
+        format!("[session {session_id}] {summary}")
     };
     tokio::spawn(async move {
-        if let Some(brain) = brain
-            && brain.remember(&content, "compaction").await.is_none()
-        {
-            tracing::debug!("brain unavailable — compaction summary not stored");
+        // Skip-unless-bound: without a chat-scoped space there is no space
+        // to store the summary in (the boot-time space is gone).
+        if let (Some(brain), Some(space)) = (brain.as_ref(), brain_space.as_deref()) {
+            if brain
+                .remember(space, &content, "compaction")
+                .await
+                .is_none()
+            {
+                tracing::debug!("brain unavailable — compaction summary not stored");
+            }
+        } else if brain_space.is_some() {
+            // Space bound but the kernel brain is absent — a different
+            // failure from an unbound chat, so it gets its own log line.
+            tracing::debug!("brain unavailable — compaction summary not stored (space bound)");
+        } else {
+            tracing::debug!("brain unbound — compaction summary not stored");
         }
     });
 }
@@ -1815,6 +1872,7 @@ fn build_directive_system_prompt(
     capabilities_xml: Option<&str>,
     kernel_manifest: Option<&str>,
 ) -> String {
+    let brain_line = brain_space_line(env.brain_space.as_deref());
     build_system_prompt_inner(
         &directive.goal,
         &directive.original_request,
@@ -1824,6 +1882,7 @@ fn build_directive_system_prompt(
         persona_prompt,
         capabilities_xml,
         kernel_manifest,
+        brain_line.as_deref(),
     )
 }
 
@@ -1854,6 +1913,26 @@ const ARTIFACT_PROTOCOL: &str = "\n\n\
     short snippets that are part of an explanation belong in a normal fenced\n\
     code block. Use an artifact only for content the user would open to view,\n\
     not copy-and-paste. Limit one artifact per self-contained piece.\n";
+/// Drop the brain skill from retrieved capabilities when the chat is unbound.
+///
+/// Installed skills are indexed as `skill:{name}` (see `build_tool_retriever`
+/// in the binary crate), so the brain skill's entry name is `skill:brain` —
+/// builtin OS tools carry bare names, none of them "brain".
+fn filter_brain_capabilities(
+    results: &mut Vec<crate::tools::retrieval::ScoredTool>,
+    brain_space: Option<&str>,
+) {
+    if brain_space.is_none() {
+        results.retain(|scored| scored.entry.name != "skill:brain");
+    }
+}
+
+/// The `Memory` bullet suffix naming the chat's connected brain space, or
+/// `None` when unbound (bullet omitted entirely — the skill stays hidden).
+fn brain_space_line(brain_space: Option<&str>) -> Option<String> {
+    brain_space.map(|space| format!("Connected brain space: `{space}`."))
+}
+
 /// Shared system-prompt builder for the directive path.
 ///
 /// Composes the static agent prelude, goal/constraints/criteria sections,
@@ -1869,11 +1948,28 @@ fn build_system_prompt_inner(
     persona_prompt: Option<&str>,
     capabilities_xml: Option<&str>,
     kernel_manifest: Option<&str>,
+    brain_line: Option<&str>,
 ) -> String {
     let mut prompt = String::from(
         "You are an autonomous agent in the Oxios operating system.\n\
          You execute Seeds — immutable specifications with goals, constraints, and\n\
          acceptance criteria.\n\n\
+         ## Available Tools\n\
+         You have the following tools:\n\
+         - **File tools**: read, write, edit files; grep, find, ls for searching\n\
+         - **Web tools**: web_search for searching the web, get_search_results for retrieving cached results\n\
+         - **Exec**: run shell commands\n",
+    );
+    // Brain-gated Memory bullet: advertise the `brain` skill — the connected
+    // oxibrain CLI — only to chats with a bound brain (design §4.3).
+    if let Some(line) = brain_line {
+        prompt.push_str(&format!(
+            "- **Memory**: the `brain` skill — the connected oxibrain CLI. {line}\n"
+        ));
+    }
+    prompt.push_str(
+        "- **Knowledge**: knowledge — personal markdown vault for documents and notes\n\
+         - **Kernel tools**: agent, project, persona, cron, security, budget, resource\n\n\
          **Important**: When the task involves fetching information from the internet,\n\
          websites, or online services, use `web_search` first — do NOT search local files.\n\
          When the task asks to \"get\", \"fetch\", \"find online\", or \"look up\" something\n\
@@ -1904,9 +2000,9 @@ fn build_system_prompt_inner(
         }
     }
 
-    // ── Workspace Context (RFC-025) ──
-    // Inject active Mounts + project instructions AFTER the goal/constraints
-    // and BEFORE the persona, so the agent sees its workspace before it acts.
+    // ── Workspace Context ──
+    // Inject project instructions AFTER the goal/constraints and BEFORE the
+    // persona, so the agent sees its workspace before it acts.
     if let Some(ctx) = workspace_context.filter(|s| !s.trim().is_empty()) {
         prompt.push_str("\n## Workspace Context\n");
         prompt.push_str(ctx);
@@ -1999,6 +2095,42 @@ impl std::fmt::Debug for AgentRuntime {
         f.debug_struct("AgentRuntime")
             .field("model_id", &self.engine_handle.get().default_model_id())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod persona_resolution_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn turn_override_wins_when_enabled() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        let persona = resolve_turn_persona(Some(&pm), Some("dev")).expect("override resolves");
+        assert_eq!(persona.id, "dev");
+    }
+
+    #[tokio::test]
+    async fn disabled_override_falls_through_to_global() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        pm.store().set_enabled("review", false).unwrap();
+        let persona = resolve_turn_persona(Some(&pm), Some("review")).expect("global resolves");
+        assert_eq!(persona.id, "research");
+    }
+
+    #[tokio::test]
+    async fn none_uses_global_active() {
+        let pm = PersonaManager::new();
+        pm.set_active("research").await.unwrap();
+        let persona = resolve_turn_persona(Some(&pm), None).expect("global resolves");
+        assert_eq!(persona.id, "research");
+    }
+
+    #[test]
+    fn no_manager_no_persona() {
+        assert!(resolve_turn_persona(None, Some("dev")).is_none());
+        assert!(resolve_turn_persona(None, None).is_none());
     }
 }
 
@@ -2126,6 +2258,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         // The four pinned type values must appear verbatim (the frontend
         // matches these exact substrings — paraphrasing breaks the preview).
@@ -2151,82 +2284,88 @@ mod tests {
         assert!(empty.contains("## Available tools"));
     }
 
-    /// Task 8 fix round: `build_kernel_manifest_from_cspace` must emit
-    /// exactly the active domains of the CSpace it is given, no more and
-    /// no less. The bounding CSpace (used as input to resolution) and the
-    /// resolved effective CSpace (post-attenuation) can diverge — a
-    /// profile can strip a domain by removing every selector that
-    /// requires it. The runtime must build the manifest from the latter
-    /// so the prompt never advertises capabilities the agent cannot
-    /// actually call.
     #[test]
-    fn build_kernel_manifest_from_cspace_emits_exactly_cspace_domains() {
-        use crate::capability::{CSpace, Capability, ResourceRef, Rights};
-        use crate::types::AgentId;
+    fn test_system_prompt_hides_brain_skill_when_unbound() {
+        let prompt = build_system_prompt_inner(
+            "build a dashboard",
+            "build a dashboard",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(
+            !prompt.contains("brain skill"),
+            "unbound prompt must not advertise the brain skill"
+        );
+        assert!(
+            !prompt.contains("**Memory**"),
+            "unbound prompt must not contain a Memory bullet"
+        );
+    }
 
-        let agent = AgentId::new_v4();
+    #[test]
+    fn test_system_prompt_advertises_brain_skill_when_bound() {
+        let brain_line = brain_space_line(Some("work"));
+        let prompt = build_system_prompt_inner(
+            "build a dashboard",
+            "build a dashboard",
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            brain_line.as_deref(),
+        );
+        assert!(prompt.contains(
+            "- **Memory**: the `brain` skill — the connected oxibrain CLI. Connected brain space: `work`."
+        ));
+    }
+    #[tokio::test]
+    async fn test_capability_filter_removes_indexed_brain_skill_when_unbound() {
+        use crate::embedding::TfIdfEmbeddingProvider;
+        use crate::tools::retrieval::{ToolEntry, ToolRetriever};
 
-        // Bounding CSpace: the agent holds capabilities for `space`,
-        // `knowledge`, and `program` (all `KernelDomain` variants, which
-        // round-trip through `active_domains()` and survive the
-        // KNOWN_DOMAINS filter inside `build_kernel_manifest`).
-        let mut bounding = CSpace::new(agent);
-        for domain in ["space", "knowledge", "program"] {
-            bounding.insert(Capability::kernel(
-                ResourceRef::KernelDomain {
-                    domain: domain.into(),
-                },
-                Rights::READ,
-            ));
+        // Mirror the production index shape: installed skills are indexed as
+        // `skill:{name}` (src/kernel.rs build_tool_retriever).
+        let mut retriever = ToolRetriever::new(Arc::new(TfIdfEmbeddingProvider));
+        for (name, desc) in [
+            ("skill:brain", "remember and recall personal memories"),
+            ("skill:deploy", "deploy the project to production"),
+            ("exec", "run shell commands"),
+        ] {
+            retriever
+                .index_tool(ToolEntry {
+                    name: name.into(),
+                    category: "skill".into(),
+                    description: desc.into(),
+                    skill_path: None,
+                    command: None,
+                })
+                .await;
         }
+        let query = retriever
+            .embedder()
+            .embed("remember this fact for me")
+            .await
+            .expect("tfidf embed");
 
-        // Resolved effective CSpace: identical to bounding EXCEPT
-        // `program` has been attenuated away by the profile selector —
-        // a tool that required `program` was deselected, so the resolver
-        // never arms it into the effective CSpace. This is the CSpace the
-        // manifest builder must reflect.
-        let mut resolved = CSpace::new(agent);
-        for domain in ["space", "knowledge"] {
-            resolved.insert(Capability::kernel(
-                ResourceRef::KernelDomain {
-                    domain: domain.into(),
-                },
-                Rights::READ,
-            ));
-        }
+        // Unbound: the indexed brain skill must be filtered out.
+        let mut unbound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut unbound, None);
+        assert!(
+            unbound.iter().all(|s| s.entry.name != "skill:brain"),
+            "unbound chats must not see the indexed `skill:brain` capability"
+        );
+        assert!(unbound.iter().any(|s| s.entry.name == "skill:deploy"));
 
-        // Manifest built from the resolved CSpace must mention the two
-        // surviving domains and MUST NOT mention the attenuated one.
-        let manifest = build_kernel_manifest_from_cspace(&resolved)
-            .expect("non-empty effective CSpace should produce a manifest");
-        assert!(
-            manifest.contains("Active domains: knowledge, space"),
-            "expected surviving domains in the active list (sorted), got: {manifest}"
-        );
-        assert!(
-            !manifest.contains("### program") && !manifest.contains("program"),
-            "manifest leaked the attenuated `program` domain: {manifest}"
-        );
-
-        // The bounding CSpace DOES contain `program` — this sanity
-        // check guards against a regression where the builder
-        // accidentally reads from the bounding CSpace. If the
-        // implementation ever switches back to `cspace` (bounding)
-        // instead of `resolved.effective_cspace`, the previous assertion
-        // would have failed because `program` would leak into the
-        // prompt. Without this guard the regression could pass silently
-        // (an empty manifest would also satisfy the assertions above).
-        let bounding_manifest = build_kernel_manifest_from_cspace(&bounding).unwrap();
-        assert!(
-            bounding_manifest.contains("Active domains: knowledge, program, space"),
-            "sanity check: bounding CSpace should still advertise program              so the regression guard above remains meaningful, got: {bounding_manifest}"
-        );
-
-        // Empty CSpace produces no manifest block.
-        let empty = CSpace::new(agent);
-        assert!(
-            build_kernel_manifest_from_cspace(&empty).is_none(),
-            "empty CSpace must yield None so the prompt stays well-formed"
-        );
+        // Bound: the brain skill survives.
+        let mut bound = retriever.retrieve(&query, 8);
+        filter_brain_capabilities(&mut bound, Some("work"));
+        assert!(bound.iter().any(|s| s.entry.name == "skill:brain"));
     }
 }

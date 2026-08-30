@@ -13,7 +13,6 @@ use axum::{
 };
 use oxios_kernel::capability::builtin_profiles::{builtin_profile, builtin_profile_names};
 use oxios_kernel::capability::descriptor::{ToolDescriptor, kernel_catalog};
-use oxios_kernel::capability::profile::ToolProfileRef;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -31,21 +30,31 @@ pub struct PersonaSummary {
     role: String,
     description: String,
     enabled: bool,
+    /// Whether this persona is the global active persona.
+    active: bool,
+    /// Tool access profile: `base` | `code` | `minimal` | `control`.
+    tool_profile: String,
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
-    /// Built-in tool profile driving this persona's execution surface
-    /// (execution profiles). `null` when the persona has none.
-    tool_profile: Option<ToolProfileRef>,
+    /// UI taxonomy bucket (normal | coding | writing | research |
+    /// operations | general; free string).
+    category: String,
+    /// Writing sub-category (novel | scenario | essay | blog).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    genre: Option<String>,
 }
 
 /// GET /api/personas — List all personas.
 pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<PersonaSummary>> {
     let personas = state.kernel.persona.list();
+    let active_id = state.kernel.persona.active_id();
     Json(
         personas
             .into_iter()
             .map(|p| PersonaSummary {
+                active: active_id.as_deref() == Some(p.id.as_str()),
+                tool_profile: p.tool_profile.to_string(),
                 id: p.id,
                 name: p.name,
                 role: p.role,
@@ -53,7 +62,8 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
                 enabled: p.enabled,
                 personality_traits: p.personality_traits,
                 capabilities: p.capabilities,
-                tool_profile: p.tool_profile,
+                category: p.category,
+                genre: p.genre,
             })
             .collect(),
     )
@@ -75,16 +85,19 @@ pub async fn handle_persona_get(
             "model": p.model,
             "personality_traits": p.personality_traits,
             "capabilities": p.capabilities,
-            "tool_profile": p.tool_profile,
+            "category": p.category,
+            "genre": p.genre,
+            "active": state.kernel.persona.active_id().as_deref() == Some(p.id.as_str()),
+            "tool_profile": p.tool_profile.to_string(),
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
-
 /// Request body for creating a persona.
 #[derive(Debug, Deserialize)]
 pub struct PersonaCreateRequest {
     name: String,
+    #[serde(default = "default_role")]
     role: String,
     description: String,
     system_prompt: String,
@@ -95,10 +108,27 @@ pub struct PersonaCreateRequest {
     personality_traits: Vec<String>,
     #[serde(default)]
     capabilities: Option<Vec<String>>,
+    /// UI taxonomy bucket. Defaults to `general` when absent.
+    #[serde(default)]
+    category: Option<String>,
+    /// Writing sub-category (novel | scenario | essay | blog).
+    #[serde(default)]
+    genre: Option<String>,
+    /// Tool access profile: `base` | `code` | `minimal`. Defaults to `code`.
+    #[serde(default)]
+    tool_profile: Option<String>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_category() -> String {
+    "general".to_string()
+}
+
+fn default_role() -> String {
+    "assistant".to_string()
 }
 
 /// POST /api/personas — Create a new persona.
@@ -117,7 +147,13 @@ pub async fn handle_persona_create(
         model: body.model,
         personality_traits: body.personality_traits,
         capabilities: body.capabilities.unwrap_or_default(),
-        tool_profile: None,
+        category: body.category.unwrap_or_else(default_category),
+        genre: body.genre,
+        tool_profile: body
+            .tool_profile
+            .as_deref()
+            .map(oxios_kernel::ToolProfile::from_str_loose)
+            .unwrap_or_default(),
     };
     let created_id = persona.id.clone();
     let created_name = persona.name.clone();
@@ -148,27 +184,9 @@ pub struct PersonaUpdateRequest {
     model: Option<String>,
     personality_traits: Option<Vec<String>>,
     capabilities: Option<Vec<String>>,
-    /// Optional built-in tool profile reference. `Some` replaces the
-    /// existing profile; `None` keeps it (merge semantics like `model`).
-    tool_profile: Option<ToolProfileRef>,
-}
-
-/// Validate a client-supplied `ToolProfileRef`.
-///
-/// The `id` must name a built-in tool profile; unknown ids are rejected
-/// with a message that lists the available built-ins so clients can
-/// self-correct. The handler surfaces this as `400 BAD_REQUEST`.
-fn validate_tool_profile_ref(r: &ToolProfileRef) -> Result<(), String> {
-    let names = builtin_profile_names();
-    if names.iter().any(|n| *n == r.id) {
-        Ok(())
-    } else {
-        Err(format!(
-            "unknown tool profile id '{}' (available: {})",
-            r.id,
-            names.join(", ")
-        ))
-    }
+    category: Option<String>,
+    genre: Option<String>,
+    tool_profile: Option<String>,
 }
 
 /// PUT /api/personas/:id — Update a persona.
@@ -183,9 +201,6 @@ pub async fn handle_persona_update(
         .persona
         .get(&id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Persona '{id}' not found")))?;
-    if let Some(tp) = &body.tool_profile {
-        validate_tool_profile_ref(tp).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    }
     let updated = Persona {
         id: existing.id,
         name: body.name.unwrap_or(existing.name),
@@ -198,7 +213,13 @@ pub async fn handle_persona_update(
             .personality_traits
             .unwrap_or(existing.personality_traits),
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
-        tool_profile: body.tool_profile.or(existing.tool_profile),
+        category: body.category.unwrap_or(existing.category),
+        genre: body.genre.or(existing.genre),
+        tool_profile: body
+            .tool_profile
+            .as_deref()
+            .map(oxios_kernel::ToolProfile::from_str_loose)
+            .unwrap_or(existing.tool_profile),
     };
 
     state
@@ -367,7 +388,6 @@ pub async fn handle_tool_profiles() -> Json<Vec<ToolProfileSummary>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxios_kernel::capability::profile::ProfileRevision;
 
     /// F1 regression: the list endpoint must echo back `capabilities`.
     /// The original bug was that the field never reached the client, so
@@ -386,10 +406,10 @@ mod tests {
             enabled: true,
             personality_traits: vec!["pragmatic".into()],
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
-            tool_profile: Some(ToolProfileRef {
-                id: "coding".into(),
-                revision: ProfileRevision(1),
-            }),
+            category: "general".into(),
+            genre: None,
+            active: true,
+            tool_profile: "base".into(),
         };
         let json = serde_json::to_value(&summary).expect("serialize");
         let caps: Vec<String> = json
@@ -405,36 +425,6 @@ mod tests {
             caps,
             vec!["terminal".to_string(), "diff-viewer".to_string()]
         );
-        // Execution profiles: the summary must echo the tool profile
-        // reference as {id, revision}.
-        assert_eq!(json["tool_profile"]["id"], "coding");
-        assert_eq!(json["tool_profile"]["revision"], 1);
-    }
-
-    #[test]
-    fn validate_tool_profile_ref_rejects_unknown_ids() {
-        let bad = ToolProfileRef {
-            id: "nope".to_string(),
-            revision: ProfileRevision(1),
-        };
-        let err = validate_tool_profile_ref(&bad).unwrap_err();
-        assert!(
-            err.contains("nope"),
-            "error should name the rejected id: {err}"
-        );
-        // The message lists the built-ins so clients can self-correct.
-        assert!(
-            err.contains("coding"),
-            "error should list available profiles: {err}"
-        );
-    }
-
-    #[test]
-    fn validate_tool_profile_ref_accepts_builtin_ids() {
-        let good = ToolProfileRef {
-            id: "coding".to_string(),
-            revision: ProfileRevision(1),
-        };
-        assert!(validate_tool_profile_ref(&good).is_ok());
+        assert_eq!(json["tool_profile"], "base");
     }
 }

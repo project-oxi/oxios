@@ -19,8 +19,7 @@ use crate::agent_lifecycle::AgentLifecycleManager;
 use crate::event_bus::EventBus;
 use crate::git_layer::GitLayer;
 use crate::metrics::get_metrics;
-use crate::mount::{MountId, MountManager};
-use crate::project::{ConversationBuffer, ProjectManager};
+use crate::project::{ConversationBuffer, Project, ProjectManager};
 use crate::state_store::StateStore;
 use crate::types::AgentId;
 
@@ -72,6 +71,19 @@ impl SubTask {
     }
 }
 
+/// Resolved workspace for a single turn, derived from a project alone
+/// (design §4.3: `project_id` is the only persisted workspace binding).
+#[derive(Debug, Clone, Default)]
+pub struct ProjectWorkspace {
+    /// The resolved project — `None` when no project is bound or the
+    /// binding is stale.
+    pub project: Option<Project>,
+    /// The project's canonical root paths (empty for unscoped turns).
+    pub root_paths: Vec<std::path::PathBuf>,
+    /// Rendered `## Workspace Context` body (without the header).
+    pub context_body: String,
+}
+
 /// The orchestrator coordinates the unified intent lifecycle (RFC-027).
 #[allow(dead_code)]
 pub struct Orchestrator {
@@ -88,8 +100,6 @@ pub struct Orchestrator {
     a2a: Option<Arc<crate::a2a::A2AProtocol>>,
     /// Project manager for context partitioning.
     project_manager: RwLock<Option<Arc<ProjectManager>>>,
-    /// Mount manager for path-alias context (RFC-025).
-    mount_manager: RwLock<Option<Arc<MountManager>>>,
     /// Conversation buffer for topic shift detection.
     conversation_buffer: RwLock<ConversationBuffer>,
     /// Orchestrator configuration (Ouroboros protocol settings).
@@ -168,7 +178,6 @@ impl Orchestrator {
             lifecycle,
             a2a: None,
             project_manager: RwLock::new(None),
-            mount_manager: RwLock::new(None),
             conversation_buffer: RwLock::new(ConversationBuffer::default()),
             delegation_config: DelegationConfig::default(),
             intent_config: RwLock::new(crate::config::IntentConfig::default()),
@@ -206,181 +215,35 @@ impl Orchestrator {
     pub fn set_project_manager(&self, manager: Arc<ProjectManager>) {
         *self.project_manager.write() = Some(manager);
     }
-
-    /// Set the MountManager for path-alias context (RFC-025).
-    pub fn set_mount_manager(&self, manager: Arc<MountManager>) {
-        *self.mount_manager.write() = Some(manager);
-    }
-
-    /// Get a reference to the MountManager, if set (RFC-025).
-    pub fn mount_manager(&self) -> Option<Arc<MountManager>> {
-        self.mount_manager.read().as_ref().cloned()
-    }
-
     /// Get a reference to the ProjectManager, if set.
     pub fn project_manager(&self) -> Option<Arc<ProjectManager>> {
         self.project_manager.read().as_ref().cloned()
     }
 
-    /// Detect a project from a message, returning tag string.
-    pub fn detect_project_tag(&self, message: &str) -> Option<String> {
-        self.project_manager.read().as_ref().and_then(|pm| {
-            let projects = pm.list_projects();
-            let result = crate::project::detect_project(message, &projects);
-            match result {
-                crate::project::DetectionResult::Found(id) => pm.get_project(id).map(|p| p.tag()),
-                crate::project::DetectionResult::NoMatch { .. } => None,
-            }
-        })
-    }
-
-    /// Resolve the active Mounts for a message (RFC-025).
+    /// Resolve the workspace for a turn from a project id alone (design §4.3).
     ///
-    /// Parses explicit `mount_ids` ("uuid1,uuid2,...", primary first); when
-    /// none are given, auto-detects from the message. Returns:
-    /// - the ordered list of active [`MountId`]s,
-    /// - the rendered `## Workspace Context` body (without the header),
-    /// - all resolved filesystem paths (primary first),
-    /// - a display tag like `[🔧 oxios + oxicode-sdk]`.
-    ///
-    /// Honors the sticky-primary model: when `mount_ids` is explicitly
-    /// provided they are used as-is (detection is skipped). Detection only
-    /// runs when `mount_ids` is `None`, seeding the primary slot — it never
-    /// replaces an explicit primary, only appends a secondary.
-    fn resolve_mount_workspace(
-        &self,
-        mount_ids: Option<&str>,
-        project_ids: Option<&str>,
-        user_message: &str,
-    ) -> (
-        Vec<MountId>,
-        Option<String>,
-        Vec<std::path::PathBuf>,
-        String,
-    ) {
-        use crate::mount::Mount;
-
-        let Some(mm) = self.mount_manager() else {
-            return (Vec::new(), None, Vec::new(), String::new());
+    /// Blank/`None` ids, unparseable ids, and stale bindings (project no
+    /// longer exists) all resolve to an empty [`ProjectWorkspace`] — the run
+    /// turns scopeless instead of falling back to any ambient workspace.
+    pub fn resolve_project_workspace(&self, project_id: Option<&str>) -> ProjectWorkspace {
+        let Some(pid) = project_id.map(str::trim).filter(|s| !s.is_empty()) else {
+            return ProjectWorkspace::default();
         };
-
-        // Parse explicit mount_ids; otherwise auto-detect (seeds the primary slot).
-        let mut ids: Vec<MountId> = if let Some(ids_str) = mount_ids {
-            ids_str
-                .split(',')
-                .filter_map(|s| MountId::parse_str(s.trim()).ok())
-                .collect()
-        } else {
-            match mm.detect(user_message) {
-                crate::mount::DetectionResult::Found(id) => vec![id],
-                crate::mount::DetectionResult::NoMatch { .. } => vec![],
-            }
+        let Some(pm) = self.project_manager.read().clone() else {
+            return ProjectWorkspace::default();
         };
-        // De-duplicate while preserving order (handles non-consecutive dups).
-        let mut seen = std::collections::HashSet::new();
-        ids.retain(|id| seen.insert(*id));
-
-        // ── Project-referenced Mount activation (RFC-025) ──
-        // When a project_id is provided, auto-activate its referenced Mounts
-        // BEFORE we derive mounts/tag/context/paths, so they are fully
-        // visible in the system prompt and the badge — not just granted
-        // path access. (Previously this ran after the prompt was built, so
-        // project-referenced Mounts were invisible in the context body.)
-        let project_for_instructions: Option<crate::project::Project> = if let Some(project_ids_str) =
-            project_ids
-            && let Some(first_id_str) = project_ids_str.split(',').next()
-            && let Some(pm) = self.project_manager()
-            && let Ok(pid) = Uuid::parse_str(first_id_str.trim())
-        {
-            let proj = pm.get_project(pid);
-            if let Some(ref project) = proj {
-                for mid in &project.mount_ids {
-                    if !ids.contains(mid) {
-                        ids.push(*mid);
-                    }
-                }
-            }
-            proj
-        } else {
-            None
+        let Ok(uuid) = uuid::Uuid::parse_str(pid) else {
+            return ProjectWorkspace::default();
         };
-
-        if ids.is_empty() {
-            return (Vec::new(), None, Vec::new(), String::new());
+        match pm.get_project(uuid) {
+            Some(p) => ProjectWorkspace {
+                context_body: render_project_context(&p),
+                root_paths: p.root_paths.clone(),
+                project: Some(p),
+            },
+            // Stale binding: turns run scopeless (design §9).
+            _ => ProjectWorkspace::default(),
         }
-
-        // Touch each active Mount (record activity) — now includes any
-        // Project-referenced Mounts activated above.
-        for id in &ids {
-            mm.touch(*id);
-        }
-
-        let mounts: Vec<Mount> = mm.get_mounts_ordered(&ids);
-        if mounts.is_empty() {
-            return (Vec::new(), None, Vec::new(), String::new());
-        }
-
-        // Collect all paths (primary first, deduped) over the full Mount set.
-        let mut paths: Vec<std::path::PathBuf> = Vec::new();
-        for m in &mounts {
-            for p in &m.paths {
-                if !paths.contains(p) {
-                    paths.push(p.clone());
-                }
-            }
-        }
-
-        // Display tag.
-        let tag = if mounts.len() == 1 {
-            mounts[0].tag()
-        } else {
-            let names: Vec<&str> = mounts.iter().map(|m| m.name.as_str()).collect();
-            format!("[🔧 {}]", names.join(" + "))
-        };
-
-        let mut context = build_workspace_context_body(&mounts).unwrap_or_default();
-
-        // ── Project instructions (RFC-025) ──
-        // Inject the project's instructions into the context body. The
-        // "### Active Mounts" header above is only present when there are
-        // actual mount entries in `context`; the Project Instructions section
-        // stands on its own when only instructions exist.
-        if let Some(project) = project_for_instructions {
-            // Cap instructions to stay within the prompt budget (~500 tokens).
-            let instructions = if project.instructions.len() > 2000 {
-                let mut end = 2000;
-                while end > 0 && !project.instructions.is_char_boundary(end) {
-                    end -= 1;
-                }
-                format!("{}...", &project.instructions[..end])
-            } else {
-                project.instructions.clone()
-            };
-            if !instructions.is_empty() {
-                context.push_str(&format!(
-                    "\n### Project Instructions: {}\n{}\n",
-                    project.name, instructions
-                ));
-            }
-        }
-
-        // Enforce a hard prompt budget on the final context body (~1500 tokens).
-        const MAX_CONTEXT_CHARS: usize = 6000;
-        if context.len() > MAX_CONTEXT_CHARS {
-            let mut end = MAX_CONTEXT_CHARS;
-            while end > 0 && !context.is_char_boundary(end) {
-                end -= 1;
-            }
-            context.truncate(end);
-            context.push_str("\n...(context truncated)...\n");
-        }
-
-        let context_opt = if context.is_empty() {
-            None
-        } else {
-            Some(context)
-        };
-        (ids, context_opt, paths, tag)
     }
 
     /// Set the A2A protocol for inter-agent task delegation.
@@ -445,7 +308,7 @@ impl Orchestrator {
     /// # Parameters
     /// - `engine` — the LLM-backed intent engine (review only, RFC-033).
     /// - `msg` — the user's raw message text.
-    /// - `ctx` — per-message context (session, history, project/mount hints).
+    /// - `ctx` — per-message context (session, history, project hints).
     pub async fn handle(
         &self,
         engine: &dyn oxios_ouroboros::IntentEngineOps,
@@ -456,7 +319,7 @@ impl Orchestrator {
         let mut directive = oxios_ouroboros::Directive::from_message(msg);
 
         // 2. Resolve the execution environment from MsgCtx.
-        let env = self.resolve_exec_env(ctx, msg);
+        let env = self.resolve_exec_env(ctx);
 
         // 3. Execute — every message streams through the agent loop.
         let mut result = self.execute_directive(&directive, &env).await?;
@@ -497,11 +360,12 @@ impl Orchestrator {
         user_id: &str,
         msg: &str,
         session_id: Option<&str>,
-        project_ids: Option<&str>,
-        mount_ids: Option<&str>,
+        project_id: Option<&str>,
         role: Option<&str>,
         model_override: Option<&str>,
         model_params: Option<oxios_ouroboros::ModelParams>,
+        persona_id: Option<&str>,
+        brain_space: Option<&str>,
         request_id: &str,
     ) -> Result<OrchestrationResult> {
         // Get the IntentEngine (always wired by the kernel assembler).
@@ -517,10 +381,11 @@ impl Orchestrator {
         let ctx = oxios_ouroboros::MsgCtx {
             session_id: sid.clone(),
             history,
-            project_ids: project_ids.map(String::from),
-            mount_ids: mount_ids.map(String::from),
+            project_id: project_id.map(String::from),
             role: role.map(String::from),
             model_override: model_override.map(String::from),
+            persona_id: persona_id.map(String::from),
+            brain_space: brain_space.map(String::from),
             user_id: user_id.to_string(),
             model_params,
         };
@@ -567,6 +432,7 @@ impl Orchestrator {
             evaluation_passed,
         } = response;
 
+        let project_id = env.project_id.map(|u| u.to_string());
         // RFC-032: when execution failed (budget/quota/auth/etc) and the
         // output is empty, generate a user-friendly error message so the WS
         // handler can relay it as an `type: "error"` chunk.
@@ -593,11 +459,10 @@ impl Orchestrator {
         }
         OrchestrationResult {
             session_id: Some(ctx.session_id.clone()),
+            response: response_text,
             primary_project_id: env.project_id,
             project_tag: None,
-            active_mount_ids: Vec::new(),
-            mount_tag: None,
-            response: response_text,
+            project_id,
             agent_id: None,
             phase_reached: "execute".to_string(),
             evaluation_passed,
@@ -610,61 +475,34 @@ impl Orchestrator {
             reasoning_segments: result.reasoning_segments.clone(),
         }
     }
-    ///
-    /// Mirrors the Mount workspace resolution done by `handle_message()`
-    /// and `chat()` but packages the result as the new [`ExecEnv`] type.
-    /// Independent of the directive — runs whether the task is Trivial
-    /// or Substantial.
-    fn resolve_exec_env(
-        &self,
-        ctx: &oxios_ouroboros::MsgCtx,
-        msg: &str,
-    ) -> oxios_ouroboros::ExecEnv {
-        let (active_mount_ids, workspace_context, mount_paths, _mount_tag) =
-            self.resolve_mount_workspace(ctx.mount_ids.as_deref(), ctx.project_ids.as_deref(), msg);
-        // active_mount_ids + mount_tag are surfaced via the legacy path;
-        // ExecEnv carries the resolved paths/context/project that the
-        // agent runtime actually consumes.
-        let _ = active_mount_ids;
+    /// Resolve the [`ExecEnv`] from the message context: the workspace is
+    /// derived purely from the bound project (roots + context body).
+    /// Independent of the directive — runs for every message.
+    fn resolve_exec_env(&self, ctx: &oxios_ouroboros::MsgCtx) -> oxios_ouroboros::ExecEnv {
+        let workspace = self.resolve_project_workspace(ctx.project_id.as_deref());
 
-        // Resolve a primary project ID (matches handle_message semantics):
-        // explicit project_ids takes precedence over auto-detection.
-        let project_id = ctx
-            .project_ids
-            .as_deref()
-            .and_then(|ids| {
-                ids.split(',')
-                    .next()
-                    .and_then(|s| Uuid::parse_str(s.trim()).ok())
-            })
-            .or_else(|| {
-                self.detect_project_tag(msg).and_then(|_tag| {
-                    self.project_manager().and_then(|pm| {
-                        let projects = pm.list_projects();
-                        match crate::project::detect_project(msg, &projects) {
-                            crate::project::DetectionResult::Found(id) => Some(id),
-                            crate::project::DetectionResult::NoMatch { .. } => None,
-                        }
-                    })
-                })
-            });
-
-        // Touch the project to record activity (mirrors handle_message).
-        if let Some(pid) = project_id
+        // Touch the project to record activity.
+        if let Some(project) = &workspace.project
             && let Some(pm) = self.project_manager()
         {
-            pm.touch(pid);
+            pm.touch(project.id);
         }
 
         oxios_ouroboros::ExecEnv {
-            workspace_context,
-            mount_paths,
-            project_id,
+            workspace_context: if workspace.context_body.is_empty() {
+                None
+            } else {
+                Some(workspace.context_body)
+            },
+            root_paths: workspace.root_paths,
+            project_id: workspace.project.map(|p| p.id),
             cspace_hint: None,
             model_override: ctx.model_override.clone(),
             role: ctx.role.clone(),
+            persona_id: ctx.persona_id.clone(),
             restore_state: None,
             session_id: Some(ctx.session_id.clone()),
+            brain_space: ctx.brain_space.clone(),
             model_params: ctx.model_params.clone(),
         }
     }
@@ -795,12 +633,10 @@ pub struct OrchestrationResult {
     /// Space decoration tag for the response (e.g. "[🔧 oxios]").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_tag: Option<String>,
-    /// Active Mount IDs for this message (RFC-025), primary first.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub active_mount_ids: Vec<MountId>,
-    /// Mount decoration tag for the response (e.g. "[🔧 oxios + oxicode-sdk]").
+    /// The project bound to this turn, as a string id — `None` when the
+    /// turn ran scopeless (no project or stale binding).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub mount_tag: Option<String>,
+    pub project_id: Option<String>,
     /// The response to send back to the user.
     pub response: String,
     /// The agent that executed (if execute phase was reached).
@@ -892,156 +728,171 @@ fn failure_class_to_user_message(class: Option<&oxios_ouroboros::FailureClass>) 
     }
 }
 
-/// Render the body of the `## Workspace Context` prompt section (RFC-025).
-///
-/// The caller (`build_system_prompt`) wraps this in the `## Workspace
-/// Context` header. Returns `None` when there are no Mounts to describe.
-///
-/// Fill order respects the prompt budget (~1500 tokens soft):
-/// 1. Primary Mount — full (description + summary + path).
-/// 2. Secondary Mounts — name + path + one-line summary only.
-fn build_workspace_context_body(mounts: &[crate::mount::Mount]) -> Option<String> {
-    if mounts.is_empty() {
-        return None;
+/// Render the body of the `## Workspace Context` prompt section for a
+/// project (design §4.3). The caller wraps this in the `## Workspace
+/// Context` header. Roots and instructions are rendered only when present,
+/// so a folderless project contributes instructions alone.
+fn render_project_context(p: &Project) -> String {
+    /// Char-boundary-safe truncation with an ellipsis marker.
+    fn cap(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            return s.to_string();
+        }
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
-    let mut out = String::new();
-    out.push_str("### Active Mounts\n");
 
-    for (i, m) in mounts.iter().enumerate() {
-        let primary = i == 0;
-        let path = m
-            .primary_path()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "(no path)".to_string());
+    const MAX_INSTRUCTIONS_CHARS: usize = 2000;
+    const MAX_CONTEXT_CHARS: usize = 6000;
 
-        if primary {
-            out.push_str(&format!("- **{}** → {}\n", m.name, path));
-            if !m.auto_description.is_empty() {
-                // First ~3 lines of the agent-written description.
-                let desc: String = m
-                    .auto_description
-                    .lines()
-                    .take(3)
-                    .collect::<Vec<_>>()
-                    .join("\n  ");
-                out.push_str(&format!("  {}\n", desc));
-            }
-            let summary = m.summary_line();
-            if !summary.is_empty() {
-                out.push_str(&format!("  _{}_\n", summary));
-            }
-            if m.enrichment_pending {
-                out.push_str("  _(content changed — consider re-scanning this Mount)_\n");
-            }
-        } else {
-            // Secondary: name + path + one-line summary only.
-            let summary = m.summary_line();
-            let suffix = if summary.is_empty() {
-                String::new()
-            } else {
-                format!(" — {}", summary)
-            };
-            out.push_str(&format!("- **{}** → {}{}\n", m.name, path, suffix));
+    let mut s = format!("### Project: {}\n", p.name);
+    if !p.root_paths.is_empty() {
+        s.push_str("Filesystem roots (the first root is the working directory):\n");
+        for r in &p.root_paths {
+            s.push_str(&format!("- {}\n", r.display()));
         }
     }
-
-    Some(out)
+    if !p.instructions.trim().is_empty() {
+        s.push_str(&format!(
+            "\nProject instructions:\n{}\n",
+            cap(p.instructions.trim(), MAX_INSTRUCTIONS_CHARS)
+        ));
+    }
+    // Whole-body cap: the context block must stay a
+    // bounded slice of the system prompt.
+    cap(&s, MAX_CONTEXT_CHARS)
 }
 
 #[cfg(test)]
-mod mount_workspace_tests {
+mod project_workspace_tests {
     use super::*;
-    use crate::mount::{Mount, MountSource};
-    use std::path::PathBuf;
+    use crate::supervisor::NoOpSupervisor;
 
-    #[test]
-    fn test_workspace_context_primary_full_secondary_terse() {
-        let mut oxios =
-            Mount::from_name_and_path("oxios", PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"));
-        oxios.auto_description = "Agent OS.\nRust + tokio.".to_string();
-        oxios.auto_meta.summary = "Rust agent OS".to_string();
-
-        let mut oxi = Mount::from_name_and_path("oxi", PathBuf::from("/oxi"));
-        oxi.auto_meta.summary = "SDK".to_string();
-
-        let body = build_workspace_context_body(&[oxios, oxi]).unwrap();
-        assert!(body.contains("### Active Mounts"));
-        // Primary gets full description.
-        assert!(body.contains("Agent OS."));
-        assert!(body.contains("_Rust agent OS_"));
-        // Secondary is terse.
-        assert!(body.contains("**oxi** → /oxi — SDK"));
+    /// Minimal orchestrator wired with a real ProjectManager over an
+    /// in-memory DB — enough to exercise `resolve_project_workspace`.
+    fn workspace_orchestrator() -> (Orchestrator, Arc<ProjectManager>) {
+        let event_bus = EventBus::new(64);
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state_store = Arc::new(StateStore::new(tmp.path().to_path_buf()).expect("state store"));
+        let access_manager = Arc::new(parking_lot::Mutex::new(
+            crate::access_manager::AccessManager::new(),
+        ));
+        let a2a = Arc::new(crate::a2a::A2AProtocol::new(event_bus.clone()));
+        let lifecycle = AgentLifecycleManager::new(
+            Arc::new(NoOpSupervisor),
+            access_manager,
+            a2a,
+            event_bus.clone(),
+            300,
+            vec![],
+            true,
+            "/tmp/oxios-test-workspace".to_string(),
+            Arc::new(crate::turn_registry::TurnRegistry::new()),
+        );
+        let orch = Orchestrator::new(event_bus, state_store, lifecycle);
+        let db = Arc::new(crate::kernel_db::KernelDatabase::open_in_memory().expect("db"));
+        let pm = Arc::new(ProjectManager::new(db, None).expect("project manager"));
+        orch.set_project_manager(pm.clone());
+        (orch, pm)
     }
 
     #[test]
-    fn test_workspace_context_empty_is_none() {
-        assert!(build_workspace_context_body(&[]).is_none());
+    fn resolution_by_id_returns_roots_and_context() {
+        let (orch, pm) = workspace_orchestrator();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let project = pm
+            .create("oxios", vec![root.clone()], "keep tests fast")
+            .expect("create");
+
+        let ws = orch.resolve_project_workspace(Some(&project.id.to_string()));
+        let resolved = ws.project.expect("project resolved");
+        assert_eq!(resolved.id, project.id);
+        assert_eq!(ws.root_paths.len(), 1);
+        assert!(ws.context_body.contains("### Project: oxios"));
+        assert!(ws.context_body.contains("Filesystem roots"));
+        assert!(ws.context_body.contains("keep tests fast"));
+        // The canonicalized root appears in the context body.
+        let canon = std::fs::canonicalize(&root).expect("canonicalize");
+        assert!(
+            ws.context_body
+                .contains(&canon.to_string_lossy().to_string())
+        );
     }
 
-    /// End-to-end: a real MountManager + Orchestrator-less call to
-    /// `resolve_mount_workspace` proves that detection seeds the primary,
-    /// builds the context body, and collects all paths (multi-path access).
     #[test]
-    fn test_resolve_mount_workspace_detects_and_collects_paths() {
-        use crate::kernel_db::KernelDatabase;
-        use crate::mount::MountManager;
-        use std::sync::Arc;
+    fn unknown_id_returns_default() {
+        let (orch, _pm) = workspace_orchestrator();
+        let ws = orch.resolve_project_workspace(Some(&Uuid::new_v4().to_string()));
+        assert!(ws.project.is_none());
+        assert!(ws.root_paths.is_empty());
+        assert!(ws.context_body.is_empty());
+    }
 
-        let db = Arc::new(KernelDatabase::open_in_memory().unwrap());
-        let mm = Arc::new(MountManager::new(db, None).unwrap());
-
-        // Register two mounts.
-        let oxios = mm
-            .create_mount(
-                "oxios".to_string(),
-                vec![PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios")],
-                MountSource::Manual,
-            )
-            .unwrap();
-        let oxicode_sdk = mm
-            .create_mount(
-                "oxicode-sdk".to_string(),
-                vec![PathBuf::from("/Users/me/oxi")],
-                MountSource::Manual,
-            )
-            .unwrap();
-        mm.update_enrichment(oxios.id, Some("Agent OS in Rust.".to_string()), None)
-            .unwrap();
-
-        // Build a minimal Orchestrator-free resolver path: replicate what
-        // resolve_mount_workspace does, but against the manager directly,
-        // since the full Orchestrator needs many subsystems.
-        let mounts = mm.get_mounts_ordered(&[oxios.id, oxicode_sdk.id]);
-        assert_eq!(mounts.len(), 2);
-
-        let body = build_workspace_context_body(&mounts).unwrap();
-        assert!(body.contains("oxios"));
-        assert!(body.contains("Agent OS in Rust."));
-        assert!(body.contains("oxicode-sdk"));
-
-        // Collect paths like the orchestrator does.
-        let mut paths = Vec::new();
-        for m in &mounts {
-            for p in &m.paths {
-                if !paths.contains(p) {
-                    paths.push(p.clone());
-                }
-            }
+    #[test]
+    fn none_or_blank_or_malformed_returns_default() {
+        let (orch, _pm) = workspace_orchestrator();
+        for input in [None, Some(""), Some("   "), Some("not-a-uuid")] {
+            let ws = orch.resolve_project_workspace(input);
+            assert!(
+                ws.project.is_none(),
+                "input {input:?} must resolve scopeless"
+            );
+            assert!(ws.root_paths.is_empty());
+            assert!(ws.context_body.is_empty());
         }
-        assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0], PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"));
-        assert_eq!(paths[1], PathBuf::from("/Users/me/oxi"));
     }
 
-    /// Detection layer 1 (name match) seeds the primary when no explicit
-    /// mount_ids are given — the core promise of RFC-025.
     #[test]
-    fn test_detection_seeds_primary_on_name_mention() {
-        use crate::mount::{DetectionResult, detect_mounts};
+    fn instructions_only_project_renders_instructions_and_empty_roots() {
+        let (orch, pm) = workspace_orchestrator();
+        let project = pm
+            .create("writing", vec![], "write in English")
+            .expect("create");
 
-        let oxios =
-            Mount::from_name_and_path("oxios", PathBuf::from("/Volumes/MERCURY/PROJECTS/oxios"));
-        let result = detect_mounts("oxios 코드리뷰해줘", std::slice::from_ref(&oxios));
-        assert!(matches!(result, DetectionResult::Found(id) if id == oxios.id));
+        let ws = orch.resolve_project_workspace(Some(&project.id.to_string()));
+        assert!(ws.project.is_some());
+        assert!(ws.root_paths.is_empty());
+        assert!(ws.context_body.contains("### Project: writing"));
+        assert!(ws.context_body.contains("write in English"));
+        assert!(!ws.context_body.contains("Filesystem roots"));
+    }
+
+    #[test]
+    fn long_instructions_and_context_are_capped() {
+        let (orch, pm) = workspace_orchestrator();
+        let big = "x".repeat(5000);
+        let project = pm.create("big", vec![], &big).expect("create");
+        let ws = orch.resolve_project_workspace(Some(&project.id.to_string()));
+        assert!(ws.context_body.chars().count() <= 6000);
+
+        // Instructions themselves cap at 2000 chars, with an ellipsis marker.
+        let ctx = super::render_project_context(&project);
+        let instructions = ctx.split("Project instructions:\n").nth(1).unwrap_or("");
+        let trimmed = instructions.trim_end_matches('\n');
+        assert!(trimmed.chars().count() <= 2001, "instructions capped");
+        assert!(trimmed.ends_with('…'), "ellipsis marker present");
+    }
+
+    #[test]
+    fn removed_project_detaches_scope() {
+        // Design §9: deleting the active project cannot silently keep a
+        // scope — a stale binding resolves scopeless.
+        let (orch, pm) = workspace_orchestrator();
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let project = pm
+            .create("gone", vec![dir.path().to_path_buf()], "")
+            .expect("create");
+        let pid = project.id.to_string();
+        pm.remove_project(project.id).expect("remove");
+
+        let ws = orch.resolve_project_workspace(Some(&pid));
+        assert!(ws.project.is_none());
+        assert!(ws.root_paths.is_empty());
+        assert!(ws.context_body.is_empty());
     }
 }

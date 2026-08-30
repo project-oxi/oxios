@@ -11,11 +11,11 @@ pub mod engine_api;
 pub mod exec_api;
 pub mod extension_api;
 pub mod infra_api;
+pub mod issue_api;
 pub mod knowledge_lens;
 pub mod marketplace_api;
 pub mod mcp_api;
 pub mod memo_api;
-pub mod mount_api;
 pub mod persona_api;
 pub mod project_api;
 #[cfg(feature = "browser")]
@@ -42,13 +42,13 @@ pub use exec_api::ExecApi;
 pub use exec_api::SharedExecConfig;
 pub use extension_api::ExtensionApi;
 pub use infra_api::InfraApi;
+pub use issue_api::{AssignmentInfo, IssueApi, IssueQuery, IssueView, MilestoneView, NewIssue};
 pub use knowledge_lens::{
     CopilotResponse, KnowledgeContext, KnowledgeLens, KnowledgeNote, MemoryNote,
 };
 pub use marketplace_api::MarketplaceApi;
 pub use mcp_api::McpApi;
 pub use memo_api::MemoApi;
-pub use mount_api::{MountApi, MountInfo};
 pub use persona_api::PersonaApi;
 pub use project_api::{ProjectApi, ProjectInfo};
 #[cfg(feature = "browser")]
@@ -75,8 +75,7 @@ use std::sync::Arc;
 /// - [`PersonaApi`]   — multi-persona management
 /// - [`ExtensionApi`] — programs, skills, host tools
 /// - [`McpApi`]       — MCP server bridge
-/// - [`MountApi`]      — Mount (path alias) management (RFC-025)
-/// - [`ProjectApi`]    — Project management, memory linking
+/// - [`ProjectApi`]  — Project management, memory linking
 /// - [`ExecApi`]      — execution config, access management
 /// - [`A2aApi`]       — agent-to-agent communication
 /// - [`EngineApi`]    — LLM engine providers, models, config
@@ -98,8 +97,6 @@ pub struct KernelHandle {
     pub infra: InfraApi,
     /// Project management: work context (RFC-011).
     pub projects: Option<ProjectApi>,
-    /// Mount management: path aliases (RFC-025).
-    pub mounts: Option<MountApi>,
     /// Brain daemon (RFC-047): oxibrain connection facade. `None` only on the
     /// incomplete preliminary handle; the cached handle attaches it via
     /// [`KernelHandle::with_brain`](Self::with_brain).
@@ -111,7 +108,7 @@ pub struct KernelHandle {
     /// Agent-to-agent communication.
     pub a2a: A2aApi,
     /// Engine: LLM providers, models, config.
-    pub engine: EngineApi,
+    pub engine: Arc<EngineApi>,
     /// Knowledge base: markdown notes (direct access, no kernel dependency).
     pub knowledge: Arc<oxios_markdown::KnowledgeBase>,
     /// Semantic knowledge overlay (HNSW index + agent recall).
@@ -166,6 +163,18 @@ pub struct KernelHandle {
     /// the kernel assembler so the web routes, the auto-run tick, and the
     /// `task` agent tool share ONE store. `None` on the preliminary handle.
     pub task_store: Option<Arc<tokio::sync::Mutex<crate::task::TaskStore>>>,
+    /// Structured tool-result side channel: tools insert payloads keyed by
+    /// `tool_call_id`; the agent-runtime completion callback takes them when
+    /// publishing `KernelEvent::ToolExecutionFinished`. Consumers today are
+    /// `web_search`/`get_search_results`, `todo`, and `issue`.
+    pub tool_results: Arc<crate::tools::StructuredResultBus>,
+    /// Per-project issue tracking + milestones. Shared across handles by the
+    /// assembler so the store cache and the ownership `flock` guards are
+    /// common — two instances would not see each other's claims.
+    pub issues: Arc<issue_api::IssueApi>,
+    /// Session-scoped todo plans. Shared across handles by the assembler so
+    /// a plan created on one turn is found again on the next.
+    pub todos: Arc<crate::tools::TodoRegistry>,
 }
 
 impl KernelHandle {
@@ -185,7 +194,7 @@ impl KernelHandle {
         projects: Option<ProjectApi>,
         exec: ExecApi,
         a2a: A2aApi,
-        engine: EngineApi,
+        engine: Arc<EngineApi>,
         knowledge: Arc<oxios_markdown::KnowledgeBase>,
         knowledge_lens: Arc<KnowledgeLens>,
         marketplace_api: MarketplaceApi,
@@ -201,7 +210,6 @@ impl KernelHandle {
             mcp,
             infra,
             projects,
-            mounts: None,
             brain: None,
             exec,
             browser: None,
@@ -218,6 +226,14 @@ impl KernelHandle {
             compression: None,
             host_tools: HostToolsApi::new(),
             streaming_sinks: Arc::new(crate::streaming_sink::StreamingSinkRegistry::new()),
+            // Structured tool-result side channel (tools → runtime callback).
+            // Per-handle by default; the assembler may inject a shared
+            // instance across handles via `with_tool_results`.
+            tool_results: Arc::new(crate::tools::StructuredResultBus::new()),
+            // Per-handle by default; the assembler injects a shared instance
+            // via `with_issues` so ownership guards are observed everywhere.
+            issues: Arc::new(issue_api::IssueApi::new()),
+            todos: Arc::new(crate::tools::TodoRegistry::new()),
             turns: Arc::new(crate::turn_registry::TurnRegistry::new()),
             // RFC-024 SP4: default Warming/no-deadline. The Kernel
             readiness: Arc::new(ReadinessGate::new(0)),
@@ -227,18 +243,8 @@ impl KernelHandle {
         }
     }
 
-    /// Attach a MountManager-backed API (RFC-025).
-    ///
-    /// Called by the kernel assembler after SQLite initializes the
-    /// `MountManager`. Leaves the [`Self::projects`] facade untouched so
-    /// RFC-011 Projects continue to work during the migration.
-    pub fn with_mounts(mut self, mounts: MountApi) -> Self {
-        self.mounts = Some(mounts);
-        self
-    }
-
-    /// Attach the brain daemon facade (RFC-047). Called by the kernel
-    /// assembler at boot after `BrainConnection::connect`.
+    /// Attach the brain facade (RFC-047). Called by the kernel
+    /// assembler at boot after the `BrainSession` is built.
     pub fn with_brain(mut self, brain: BrainApi) -> Self {
         self.brain = Some(brain);
         self
@@ -267,11 +273,6 @@ impl KernelHandle {
     /// Set the AssetStore in place (post-construction wiring).
     pub fn set_asset_store(&mut self, store: Arc<crate::asset_store::AssetStore>) {
         self.asset_store = Some(store);
-    }
-
-    /// Set the Mounts facade in place (post-construction wiring).
-    pub fn set_mounts(&mut self, mounts: MountApi) {
-        self.mounts = Some(mounts);
     }
 
     /// Attach the TokenMaxing facade (RFC-031). Called by the kernel
@@ -327,6 +328,33 @@ impl KernelHandle {
         self
     }
 
+    /// Share one [`crate::tools::StructuredResultBus`] across handles.
+    ///
+    /// Called by the kernel assembler so the preliminary handle (AgentRuntime)
+    /// and the cached control-plane handle observe the same structured
+    /// tool payloads.
+    pub fn with_tool_results(mut self, bus: Arc<crate::tools::StructuredResultBus>) -> Self {
+        self.tool_results = bus;
+        self
+    }
+
+    /// Share one [`issue_api::IssueApi`] across handles.
+    ///
+    /// Required for correctness, not just efficiency: the facade holds the
+    /// `flock` guards backing issue assignment, so separate instances would
+    /// each believe the other's claims belong to a dead session.
+    pub fn with_issues(mut self, issues: Arc<issue_api::IssueApi>) -> Self {
+        self.issues = issues;
+        self
+    }
+
+    /// Share one [`crate::tools::TodoRegistry`] across handles, so a plan
+    /// created on one turn is found again on the next.
+    pub fn with_todos(mut self, todos: Arc<crate::tools::TodoRegistry>) -> Self {
+        self.todos = todos;
+        self
+    }
+
     /// Attach the task store (RFC-043).
     pub fn with_task_store(
         mut self,
@@ -373,6 +401,7 @@ impl KernelHandle {
             None,
             None,
             None,
+            None, // brain_space
             &request_id,
         )
         .await
@@ -456,64 +485,6 @@ impl KernelHandle {
     /// Flush audit trail and commit to git (Security + Infra).
     pub fn flush_audit(&self) -> anyhow::Result<()> {
         self.security.flush(self.infra.git())
-    }
-
-    /// Schedule a cron job by expression (convenience wrapper).
-    ///
-    /// **Note:** the `persona` argument is currently NOT wired into the cron
-    /// executor — `CronJob` has no persona field yet. Passing a non-default
-    /// value logs a warning so callers are not silently surprised. The
-    /// parameter is retained for forward compatibility with multi-persona
-    /// scheduling (RFC tracking).
-    pub async fn schedule(
-        &self,
-        cron_expr: &str,
-        task: &str,
-        persona: Option<&str>,
-    ) -> anyhow::Result<String> {
-        if let Some(p) = persona
-            && !p.is_empty()
-            && p != "default"
-        {
-            tracing::warn!(
-                persona = p,
-                "schedule: persona argument is not yet honored by the cron executor; job will run with the default persona"
-            );
-        }
-        let job = crate::cron::CronJob::new(
-            format!("job_{}", uuid::Uuid::new_v4()),
-            cron_expr.to_string(),
-            task.to_string(),
-        );
-        let job_id = self.infra.add_cron(job).await?;
-        Ok(job_id.to_string())
-    }
-
-    /// Unschedule a cron job by string ID (convenience wrapper).
-    ///
-    /// Returns `Ok(true)` when the job existed and was removed, `Ok(false)`
-    /// when no job with that ID was registered, and `Err(...)` when the
-    /// scheduler itself fails (DB corruption, lock poisoning). The previous
-    /// implementation collapsed scheduler errors into `Ok(false)`, hiding
-    /// real failures from callers.
-    pub async fn unschedule(&self, job_id: &str) -> anyhow::Result<bool> {
-        let uuid =
-            uuid::Uuid::parse_str(job_id).map_err(|e| anyhow::anyhow!("invalid job id: {e}"))?;
-        match self.infra.remove_cron(uuid).await {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                let msg = format!("{e}");
-                if msg.to_lowercase().contains("not found") {
-                    // Legitimate "already removed" case — not an error.
-                    Ok(false)
-                } else {
-                    Err(anyhow::anyhow!("failed to remove cron job {job_id}: {e}"))
-                }
-            }
-        }
-    }
-    pub fn list_schedules(&self) -> Vec<crate::cron::CronJob> {
-        self.infra.list_crons()
     }
 
     /// Load JSON from state store.

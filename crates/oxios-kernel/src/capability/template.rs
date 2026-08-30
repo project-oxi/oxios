@@ -10,7 +10,7 @@
 //! ```text
 //! worker()     → Exec + Browser + Fs(RW) + WebSearch(EXECUTE)
 //!   standard() → worker + Memory(READ) + Knowledge(READ)
-//!   operator() → standard + Space + Agent + A2a + Persona + Program + Mcp + Memory(WRITE) + Knowledge(WRITE)
+//!   operator() → standard + Agent + A2a + Persona + Program + Mcp + Memory(WRITE) + Knowledge(WRITE)
 //!   supervisor() → operator + Security + Budget + Resource + Cron
 //!
 //! # Example
@@ -24,7 +24,6 @@
 //! ```
 
 use crate::types::AgentId;
-use uuid::Uuid;
 
 use super::types::{CSpace, Capability, CapabilityId, Issuer, ResourceRef, Rights};
 
@@ -89,7 +88,7 @@ impl CapabilityTemplate {
         t
     }
 
-    /// **Operator** — standard + space, agent, A2A, persona, program,
+    /// **Operator** — standard + agent, A2A, persona, program,
     /// MCP, and memory write + knowledge write.
     ///
     /// Intended for agents that coordinate work across multiple
@@ -101,10 +100,6 @@ impl CapabilityTemplate {
     pub fn operator() -> Self {
         let mut t = Self::standard();
         let extra = vec![
-            (
-                ResourceRef::Space { id: Uuid::nil() },
-                Rights::READ | Rights::WRITE,
-            ),
             (
                 ResourceRef::Agent { id: AgentId::nil() },
                 Rights::READ | Rights::WRITE,
@@ -145,7 +140,7 @@ impl CapabilityTemplate {
         t
     }
 
-    /// **Supervisor** — operator + security, budget, resource, and cron
+    /// **Supervisor** — operator + security, budget, and resource
     /// kernel domains.
     ///
     /// The most privileged built-in template. Use sparingly.
@@ -170,12 +165,6 @@ impl CapabilityTemplate {
                 },
                 Rights::READ | Rights::WRITE,
             ),
-            (
-                ResourceRef::KernelDomain {
-                    domain: "cron".into(),
-                },
-                Rights::READ | Rights::WRITE | Rights::EXECUTE,
-            ),
         ];
         t.caps.extend(admin);
         t
@@ -196,6 +185,101 @@ impl CapabilityTemplate {
                 Rights::EXECUTE | Rights::READ,
             ));
         }
+        t
+    }
+
+    // ── Persona tool-profile templates ─────────────────────────────
+    //
+    // These back `Persona::tool_profile`. They grant exactly the
+    // resources the CSpace→tool registration walk understands
+    // (`tools::registration::register_tools_from_cspace_gated`):
+    // `ResourceRef::Exec` / `Browser` for those tiers, and
+    // `KernelDomain` names for kernel tools. Registration presence is
+    // the restriction mechanism — kernel tools are not wrapped in the
+    // access gate, so an ungranted domain means the tool is simply
+    // absent from the agent's registry.
+
+    /// **Code** — coding/working tools, no Oxios control.
+    ///
+    /// Always-on file/web-search tools (registered unconditionally) plus
+    /// exec, browser, memory, and knowledge. No persona/cron/security/
+    /// budget/resource/agent/a2a/project registration.
+    pub fn code_profile() -> Self {
+        let mut t = Self::worker();
+        t.caps.extend([
+            (
+                ResourceRef::KernelDomain {
+                    domain: "memory".into(),
+                },
+                Rights::EXECUTE,
+            ),
+            (
+                ResourceRef::KernelDomain {
+                    domain: "knowledge".into(),
+                },
+                Rights::EXECUTE,
+            ),
+        ]);
+        t
+    }
+
+    /// **Base** — every tool including Oxios control.
+    ///
+    /// Superset of [`code_profile`](Self::code_profile) plus the full
+    /// control plane: project, agent lifecycle, A2A, persona,
+    /// security, budget, and resource domains.
+    pub fn base_profile() -> Self {
+        let mut t = Self::code_profile();
+        let control: [&str; 7] = [
+            "project", "agent", "a2a", "persona", "security", "budget", "resource",
+        ];
+        t.caps.extend(control.map(|domain| {
+            (
+                ResourceRef::KernelDomain {
+                    domain: domain.into(),
+                },
+                Rights::READ | Rights::WRITE | Rights::EXECUTE,
+            )
+        }));
+        t
+    }
+
+    /// **Minimal** — always-on tier only (file ops + web search).
+    ///
+    /// Grants nothing: the always-on tools are registered unconditionally
+    /// and the gate skips its CSpace check for them. No exec, browser,
+    /// memory, knowledge, or control tools.
+    pub fn minimal_profile() -> Self {
+        Self { caps: Vec::new() }
+    }
+
+    /// **Control** — Oxios self-management only. No exec/browser/file tools,
+    /// no user-content tools (email send, calendar events).
+    ///
+    /// Grants exactly the domains needed to inspect and mutate Oxios's own
+    /// configuration: projects, personas, tasks, security, budget,
+    /// resource limits, running agents, marketplace skills, MCP server
+    /// management, and model/engine settings.
+    pub fn control_profile() -> Self {
+        let mut t = Self { caps: Vec::new() };
+        let domains = [
+            "project",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
+        ];
+        t.caps.extend(domains.map(|d| {
+            (
+                ResourceRef::KernelDomain { domain: d.into() },
+                Rights::READ | Rights::WRITE | Rights::EXECUTE,
+            )
+        }));
         t
     }
 
@@ -442,5 +526,45 @@ mod tests {
         let id = AgentId::new_v4();
         let cs = CapabilityTemplate::worker().build_for(id);
         assert_eq!(cs.agent_id, id);
+    }
+
+    #[test]
+    fn control_profile_grants_only_control_domains() {
+        let t = CapabilityTemplate::control_profile();
+        let cs = t.build_for(AgentId::new_v4());
+        let kd: Vec<String> = cs
+            .iter()
+            .filter_map(|c| match &c.resource {
+                ResourceRef::KernelDomain { domain } => Some(domain.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut expected = vec![
+            "project",
+            "persona",
+            "task",
+            "security",
+            "budget",
+            "resource",
+            "agent",
+            "marketplace",
+            "mcp_manage",
+            "engine",
+        ];
+        expected.sort();
+        let mut got = kd.clone();
+        got.sort();
+        assert_eq!(got, expected);
+        // No exec, browser, memory, knowledge, a2a, or skill resources.
+        for cap in cs.iter() {
+            assert!(
+                !matches!(
+                    &cap.resource,
+                    ResourceRef::Exec { .. } | ResourceRef::Browser | ResourceRef::Skill { .. }
+                ),
+                "control profile must not grant {:?}",
+                cap.resource
+            );
+        }
     }
 }

@@ -2,10 +2,10 @@
 //
 // While an assistant turn is still streaming (`message.generating`), the
 // message must not offer turn-scoped actions: the hover action bar
-// (copy/regenerate/delete — meaningless or hazardous mid-stream), the
-// reactions/rating row, and the save-to-knowledge button. FollowUpChips
-// already suppresses itself the same way (`enabled: !generating`).
-// All three must appear once the turn completes.
+// (copy/regenerate/delete — meaningless or hazardous mid-stream) and the
+// save-to-knowledge button. FollowUpChips already suppresses itself the
+// same way (`enabled: !generating`). Both must appear once the turn
+// completes.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
@@ -27,10 +27,6 @@ vi.mock('@/components/chat/messages/components/BlockStream', () => ({
 
 vi.mock('@/components/chat/follow-up-chips', () => ({
   FollowUpChips: () => null,
-}))
-
-vi.mock('@/components/chat/messages/components/reaction-picker', () => ({
-  ReactionPicker: () => <div data-testid="reaction-picker" />,
 }))
 
 function makeMessage(generating: boolean): ChatMessage {
@@ -62,17 +58,15 @@ function renderAssistant(generating: boolean) {
 }
 
 describe('AssistantMessage completion gating', () => {
-  it('hides action bar, reactions and save button while generating', () => {
+  it('hides action bar and save button while generating', () => {
     renderAssistant(true)
     expect(screen.queryByLabelText('common.copy')).toBeNull()
-    expect(screen.queryByLabelText('chat.rateUp')).toBeNull()
     expect(screen.queryByText('chat.knowledgeSave')).toBeNull()
   })
 
-  it('shows action bar, reactions and save button once complete', () => {
+  it('shows action bar and save button once complete', () => {
     renderAssistant(false)
     expect(screen.getByLabelText('common.copy')).toBeTruthy()
-    expect(screen.getByLabelText('chat.rateUp')).toBeTruthy()
     expect(screen.getByText('chat.knowledgeSave')).toBeTruthy()
   })
 })

@@ -192,7 +192,7 @@ That's it. The OS handles the rest.
     └─────────┘
 ```
 
-**No containers. No subprocess browser.** Everything runs in-process, sandboxed by workspace rules and RBAC. The kernel exposes all functionality through `KernelHandle` — a facade of 22 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in [ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-kernelhandle-facade)).
+**No containers. No subprocess browser.** Everything runs in-process, sandboxed by workspace rules and RBAC. The kernel exposes all functionality through `KernelHandle` — a facade of 21 typed APIs (Agent, Security, Exec, Browser, MCP, A2A, State, Memory, Engine, …; full list in [ARCHITECTURE.md §4](docs/ARCHITECTURE.md#4-kernelhandle-facade)).
 
 ---
 
@@ -480,13 +480,22 @@ Full REST API on **port 4200** with 150+ endpoints. Auth middleware on all `/api
 | `PUT` | `/api/config` | Update configuration |
 | `GET` | `/api/metrics` | Prometheus metrics |
 
-### Workspace
+### Workspace & Projects
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/workspace/tree` | File tree |
-| `GET` | `/api/workspace/file/{path}` | Read file |
-| `PUT` | `/api/workspace/file/{path}` | Write file |
+| `GET` | `/api/workspace/tree` | State-workspace file tree |
+| `GET` | `/api/workspace/file/{path}` | Read state-workspace file |
+| `PUT` | `/api/workspace/file/{path}` | Write state-workspace file |
+| `GET` | `/api/project/workspace/tree` | Session project workspace tree |
+| `GET` | `/api/project/workspace/file` | Read project workspace file |
+| `PUT` | `/api/project/workspace/file` | Write project workspace file |
+| `GET` | `/api/project/workspace/status` | Git status for a project root |
+| `GET` | `/api/projects` | List projects |
+| `POST` | `/api/projects` | Create a project (native picker in UI) |
+| `GET/PUT/DELETE` | `/api/projects/{id}` | Manage a project |
+| `GET` | `/api/projects/{id}/roots/status` | Per-root exists/is_dir status |
+| `POST` | `/api/system/pick-folders` | Native folder picker (local host) |
 
 ### Memory
 
@@ -638,11 +647,13 @@ not separate crates.
 
 | Path | Purpose |
 |------|---------|
-| `~/.oxios/` | Oxios home directory |
-| `~/.oxios/config.toml` | Main configuration |
-| `~/.oxios/workspace/` | Agent working directory |
-| `~/.oxios/workspace/sessions/` | Session data |
-| `~/.oxios/workspace/skills/` | Unified skill definitions |
+| `~/.oxi/oxios/` | Oxios home directory (canonical; `$OXIOS_HOME` or `$OXI_HOME/oxios` override; legacy `~/.oxios/` is read-only until `oxios migrate` runs) |
+| `~/.oxi/oxios/config.toml` | Main configuration |
+| `~/.oxi/oxios/workspace/` | Agent working directory |
+| `~/.oxi/oxios/workspace/sessions/` | Session data |
+| `~/.oxi/oxios/workspace/skills/` | Unified skill definitions |
+| `~/.oxi/spaces/<space>/vault/` | Shared user knowledge vault (oxi ecosystem) |
+| `~/.oxi/oxios/backups/` | Backup tarballs (denied to agents) |
 
 ---
 

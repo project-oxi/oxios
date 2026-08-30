@@ -59,18 +59,6 @@ export interface UpdateTaskParams {
   assigneeAgentId?: string
 }
 
-// ── Migration report ──
-
-export interface CronMigrationSkipped {
-  name: string
-  reason: string
-}
-
-export interface CronMigrationReport {
-  created: Task[]
-  skipped: CronMigrationSkipped[]
-}
-
 // ── Comment author + mutations ──
 
 export interface AddCommentParams {
@@ -80,10 +68,6 @@ export interface AddCommentParams {
 
 export interface AddDependencyParams {
   dependsOnTaskId: string
-}
-
-export interface MigrateCronParams {
-  dryRun?: boolean
 }
 
 export interface TaskComment {

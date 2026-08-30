@@ -318,10 +318,11 @@ async fn test_orchestrator_happy_path() {
             "Do something useful",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await
@@ -356,10 +357,11 @@ async fn test_orchestrator_events_published() {
                 "Check events",
                 None,
                 None,
-                None,
                 None, // RFC-032: role
                 None, // model_override
                 None, // model_params
+                None, // persona_id
+                None, // brain_space
                 "test-req",
             )
             .await
@@ -536,10 +538,11 @@ async fn test_orchestrator_routes_to_supervisor() {
             "Build a simple thing",
             None,
             None,
-            None,
             None, // RFC-032: role
             None, // model_override
             None, // model_params
+            None, // persona_id
+            None, // brain_space
             "test-req",
         )
         .await

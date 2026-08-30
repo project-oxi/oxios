@@ -13,12 +13,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
-
-/** Capability tags currently backed by a UI consumer (RFC-044 §8.4).
- * Surfaced as toggle chips in the editor. */
-const KNOWN_CAPABILITIES = ['terminal', 'diff-viewer', 'worktree-fanout'] as const
 
 export interface PersonaItem {
   id: string
@@ -27,15 +24,24 @@ export interface PersonaItem {
   description: string
   enabled: boolean
   personality_traits?: string[]
-  /// RFC-044 Phase 3: capability tags surfaced by the list endpoint.
+  system_prompt?: string
   capabilities?: string[]
+  category?: string
+  genre?: string | null
+  /// Tool access profile: 'base' | 'code' | 'minimal' | 'control'.
+  /// (Task 6: UI affordances are derived server-side from profile × roots.)
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  /// Whether this persona is the global active one (list endpoint).
+  active?: boolean
 }
 
 export interface PersonaPatch {
   name: string
   description: string
   system_prompt: string
-  capabilities?: string[]
+  category?: string
+  genre?: string | null
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
 }
 
 interface EditPersonaDialogProps {
@@ -54,6 +60,9 @@ interface PersonaDetail {
   enabled: boolean
   personality_traits: string[]
   capabilities?: string[]
+  category?: string
+  genre?: string | null
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
 }
 
 /**
@@ -75,7 +84,9 @@ export function EditPersonaDialog({
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [capabilities, setCapabilities] = useState<string[]>([])
+  const [category, setCategory] = useState('general')
+  const [genre, setGenre] = useState<string>('')
+  const [toolProfile, setToolProfile] = useState<'base' | 'code' | 'control' | 'minimal'>('code')
 
   const detail = useQuery({
     queryKey: ['persona', persona?.id],
@@ -90,7 +101,9 @@ export function EditPersonaDialog({
       setName(detail.data.name)
       setDescription(detail.data.description)
       setSystemPrompt(detail.data.system_prompt)
-      setCapabilities(detail.data.capabilities ?? [])
+      setCategory(detail.data.category ?? 'general')
+      setGenre(detail.data.genre ?? '')
+      setToolProfile(detail.data.tool_profile ?? 'code')
     } else {
       setName(persona.name)
       setDescription(persona.description)
@@ -108,7 +121,9 @@ export function EditPersonaDialog({
       name: n,
       description: description.trim(),
       system_prompt: systemPrompt,
-      capabilities,
+      category,
+      genre: category === 'writing' && genre ? genre : null,
+      tool_profile: toolProfile,
     })
   }
 
@@ -164,30 +179,44 @@ export function EditPersonaDialog({
                 rows={6}
               />
             </div>
-            <div className="space-y-2">
-              <Label>{t('personas.capabilities')}</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {KNOWN_CAPABILITIES.map((cap) => {
-                  const active = capabilities.includes(cap)
-                  return (
-                    <Button
-                      key={cap}
-                      type="button"
-                      variant={active ? 'default' : 'outline'}
-                      size="sm"
-                      className="h-7 gap-1 px-2 text-2xs font-normal"
-                      aria-pressed={active}
-                      onClick={() =>
-                        setCapabilities((prev) =>
-                          active ? prev.filter((c) => c !== cap) : [...prev, cap],
-                        )
-                      }
-                    >
-                      {cap}
-                    </Button>
-                  )
-                })}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>{t('personas.category')}</Label>
+                <Select
+                  value={category}
+                  onValueChange={setCategory}
+                  options={['normal', 'coding', 'writing', 'research', 'operations', 'general'].map(
+                    (c) => ({ label: t(`chat.persona.categories.${c}`), value: c }),
+                  )}
+                />
               </div>
+              <div className="space-y-2">
+                <Label>{t('personas.genre')}</Label>
+                <Select
+                  value={genre || 'none'}
+                  onValueChange={(v) => setGenre(v === 'none' ? '' : v)}
+                  disabled={category !== 'writing'}
+                  options={[
+                    { label: t('personas.genreNone'), value: 'none' },
+                    ...['novel', 'scenario', 'essay', 'blog'].map((g) => ({
+                      label: t(`chat.persona.genres.${g}`),
+                      value: g,
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t('personas.toolProfile')}</Label>
+              <p className="text-xs text-muted-foreground">{t('personas.toolProfileHint')}</p>
+              <Select
+                value={toolProfile}
+                onValueChange={(v) => setToolProfile(v as 'base' | 'code' | 'control' | 'minimal')}
+                options={(['base', 'code', 'minimal'] as const).map((p) => ({
+                  label: t(`personas.toolProfiles.${p}`),
+                  value: p,
+                }))}
+              />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={close}>

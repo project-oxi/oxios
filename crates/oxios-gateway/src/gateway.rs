@@ -425,6 +425,11 @@ impl Gateway {
                     self.dispatch_switch_persona(channel_name, msg);
                     return;
                 }
+                "get_persona" => {
+                    drop(permit);
+                    self.dispatch_get_persona(channel_name, msg);
+                    return;
+                }
                 _ => {
                     tracing::warn!(action = %action, "Unknown action metadata, forwarding to orchestrator");
                     // Fall through to normal routing
@@ -458,8 +463,8 @@ impl Gateway {
             let start = std::time::Instant::now();
 
             let session_id = msg.metadata.get(meta::SESSION_ID).cloned();
-            let project_ids = msg.metadata.get(meta::PROJECT_IDS).cloned();
-            let mount_ids = msg.metadata.get(meta::MOUNT_IDS).cloned();
+            // Single workspace binding: the request's project_id (design §4.3).
+            let project_id = msg.metadata.get(meta::PROJECT_ID).cloned();
             let conn_id = msg.metadata.get("conn_id").cloned();
             let request_id = msg.id.to_string();
 
@@ -708,6 +713,12 @@ impl Gateway {
 
             let role = msg.metadata.get("role").map(String::as_str);
             let model_override = msg.metadata.get("model_override").map(String::as_str);
+            // Session-scoped persona override (chat picker): validated at
+            // the WS/HTTP ingress; carried through to ExecEnv::persona_id.
+            let persona_id = msg.metadata.get("persona_id").map(String::as_str);
+            // Chat-scoped brain binding (chat brain picker): validated at
+            // the WS/HTTP ingress; carried through to ExecEnv::brain_space.
+            let brain_space = msg.metadata.get("brain_space").map(String::as_str);
             // Parse optional per-message model params from metadata. Strings
             // are used so the WS layer doesn't need a structured payload
             // change — the gateway translates them to typed ModelParams here.
@@ -734,11 +745,12 @@ impl Gateway {
                     &msg.user_id,
                     &msg.content,
                     session_id.as_deref(),
-                    project_ids.as_deref(),
-                    mount_ids.as_deref(),
+                    project_id.as_deref(),
                     role,
                     model_override,
                     model_params,
+                    persona_id,
+                    brain_space,
                     &request_id,
                 ) => Some(res),
             };
@@ -818,18 +830,15 @@ impl Gateway {
                     if let Some(ref sid) = orchestration.session_id {
                         channel_meta.insert(meta::SESSION_ID.to_owned(), sid.clone());
                     }
-                    if let Some(ref pid) = orchestration.primary_project_id {
-                        channel_meta.insert(meta::PROJECT_IDS.to_owned(), pid.to_string());
+                    // Mirror the resolved project binding as singular
+                    // `project_id` metadata (design §4.3).
+                    if let Some(ref pid) = orchestration.project_id {
+                        channel_meta.insert(meta::PROJECT_ID.to_owned(), pid.clone());
                     }
-                    // RFC-025: surface active Mount IDs so the frontend can show
-                    // a detection badge and bind them on follow-up turns.
-                    if !orchestration.active_mount_ids.is_empty()
-                        && let Ok(json) = serde_json::to_string(&orchestration.active_mount_ids)
-                    {
-                        channel_meta.insert(meta::MOUNT_IDS.to_owned(), json);
-                    }
-                    if let Some(ref mtag) = orchestration.mount_tag {
-                        channel_meta.insert("mount_tag".to_owned(), mtag.clone());
+                    // Session persona override echo: persist_session keys the
+                    // session's active_persona_id off the terminal metadata.
+                    if let Some(pid) = persona_id {
+                        channel_meta.insert("persona_id".to_owned(), pid.to_string());
                     }
                     // Serialize tool_calls into metadata so web routes can read them.
                     if !orchestration.tool_calls.is_empty()
@@ -1112,6 +1121,59 @@ impl Gateway {
                 },
                 (None, _) => {
                     tracing::warn!("switch_persona action received but no PersonaApi configured");
+                }
+                (_, None) => {
+                    tracing::warn!(channel = %channel_name, "Channel no longer registered");
+                }
+            }
+        });
+    }
+
+    /// Handle a `get_persona` action by reporting the active persona.
+    fn dispatch_get_persona(&self, channel_name: String, msg: IncomingMessage) {
+        let persona_api = self.persona_api.clone();
+        let channels = self.channels.clone();
+        let reliability = self.reliability.clone();
+        let conn_id = msg.metadata.get("conn_id").cloned();
+
+        tokio::spawn(async move {
+            // F22: clone the channel Arc out of the lock so the read guard
+            // is released before the (potentially slow) send.
+            let channel: Option<Arc<dyn Channel>> = {
+                let guard = channels.read().await;
+                guard.get(&channel_name).map(|e| e.channel.clone())
+            };
+
+            match (persona_api, channel) {
+                (Some(api), Some(channel)) => {
+                    let response = match api.active() {
+                        Some(p) => format!("Current persona: {} ({})", p.name, p.id),
+                        None => "Current persona: (none)".to_string(),
+                    };
+                    let mut outgoing = OutgoingMessage::success(
+                        msg.id,
+                        &msg.channel,
+                        &msg.user_id,
+                        &response,
+                        HashMap::new(),
+                        ResponseMeta {
+                            session_id: None,
+                            project_id: None,
+                            project_tag: None,
+                            phase: "action".to_string(),
+                            evaluation_passed: Some(true),
+                            duration_ms: None,
+                            error: None,
+                            interview_questions: None,
+                            interview_round: None,
+                        },
+                    );
+                    outgoing.target_conn_id = conn_id;
+                    let outgoing = reliability.assign_seq(outgoing);
+                    let _ = send_with_retry(&channel, outgoing).await;
+                }
+                (None, _) => {
+                    tracing::warn!("get_persona action received but no PersonaApi configured");
                 }
                 (_, None) => {
                     tracing::warn!(channel = %channel_name, "Channel no longer registered");

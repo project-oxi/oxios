@@ -13,7 +13,7 @@
 2. [Chat](#2-chat)
 3. [System](#3-system)
 4. [Agents](#4-agents)
-5. [Workspace](#5-workspace)
+5. [Workspace & Projects](#5-workspace)
 6. [Seeds](#6-seeds)
 7. [Skills](#7-skills)
 8. [Memory](#8-memory)
@@ -358,6 +358,11 @@ curl -X POST http://127.0.0.1:4200/api/agents/agent-550e8400/kill \
 
 ## 5. Workspace
 
+Two workspace surfaces exist. `/api/workspace/*` browses the daemon's own
+state workspace (`~/.oxios/workspace`). `/api/project/workspace/*` is the
+session-scoped **project** filesystem API — a session bound to a project
+reaches exactly its project's `root_paths` (there are no mounts).
+
 ### GET /api/workspace/tree
 
 List the file tree of the workspace directory.
@@ -452,6 +457,115 @@ curl -X PUT http://127.0.0.1:4200/api/workspace/file/src/main.rs \
   -H "Content-Type: text/plain" \
   -d 'fn main() { println!("Hello, Oxios!"); }'
 ```
+
+### GET /api/project/workspace/tree
+
+List the session's project workspace tree. The session's project roots are
+the only reachable paths; a session without project binding returns
+`409 Conflict`.
+
+**Authentication:** Required
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `session_id` | `string` | No | Defaults to the most recent session. |
+| `path` | `string` | No | Absolute directory to list (within roots). Defaults to `root_paths[0]`. |
+
+**Response:** `200 OK` — `{ "roots": [...], "path": "...", "entries": [{ "name", "path", "is_dir", "size" }] }`
+(`node_modules/`, `.git/`, `target/` and similar ignored entries are skipped).
+
+**Error Response:** `409 Conflict` (no project roots), `403 Forbidden` (outside roots).
+
+### GET /api/project/workspace/file
+
+Read one file from the session's project workspace.
+
+**Query Parameters:** `session_id` (optional), `path` (absolute file path within roots).
+
+**Response:** `200 OK` — `{ "path", "content", "truncated", "size" }`.
+
+### PUT /api/project/workspace/file
+
+Write one file inside the session's project workspace (boundary-checked).
+
+**Request Body:** JSON `{ "session_id"?, "path", "content" }`.
+
+**Response:** `200 OK` — `{ "path", "bytes_written" }`.
+
+**Error Response:** `409 Conflict` (no project roots), `403 Forbidden` (outside roots).
+
+### GET /api/project/workspace/status
+
+Git status for one project root of the session's project.
+
+**Query Parameters:** `session_id` (optional), `root` (0-based root index, defaults to 0).
+
+**Response:** `200 OK` — `{ "branch", "dirty_count" }`.
+
+### GET /api/projects
+
+List registered projects (paginated, `search` filter over name/instructions).
+
+**Response:** `200 OK` — `{ "items": [Project], "total", "page", "limit" }` where
+`Project = { id, name, root_paths, instructions, created_at, updated_at, last_active_at }`.
+
+### POST /api/projects
+
+Create a project. Root paths are validated (absolute, existing directory,
+canonicalized, de-duplicated) **before** persistence; an empty list creates
+a folderless project.
+
+**Request Body:** `{ "name", "root_paths": [...], "instructions"? }`
+
+**Response:** `201 Created` — Project.
+
+**Error Response:** `422 Unprocessable Entity` (invalid root path / duplicate name).
+
+### GET /api/projects/{id}
+
+Get one project. **Response:** `200 OK` — Project, or `404 Not Found`.
+
+### PUT /api/projects/{id}
+
+Update name/root_paths/instructions (partial). Re-validates provided roots.
+**Response:** `200 OK` — Project.
+
+### DELETE /api/projects/{id}
+
+Remove a project. Bound sessions are detached; their later turns run
+without project filesystem context (never an ambient fallback).
+**Response:** `204 No Content`.
+
+### GET /api/projects/{id}/roots/status
+
+Per-root liveness for a project — powers the stale-root badge in project
+editing. Does not require a session.
+
+**Response:** `200 OK`
+
+```json
+[
+  { "path": "/home/me/src/oxios", "exists": true, "is_dir": true },
+  { "path": "/home/me/old-notes", "exists": false, "is_dir": false }
+]
+```
+
+`exists=false` (or `is_dir=false`) marks a stale root for the UI. Errors:
+`404 Not Found` (unknown project id).
+
+### POST /api/system/pick-folders
+
+Open the native folder picker (local desktop host only, macOS). Cancelled
+pickers return an empty list and change nothing; unavailable platforms get
+`501 Not Implemented` with a local-only explanation.
+
+**Request Body:** `{ "title"? }` (optional picker prompt).
+
+**Response:** `200 OK` — `{ "paths": ["/absolute/dir", ...] }`.
+
+**Error Response:** `501 Not Implemented` (non-macOS / remote host).
 
 ---
 
@@ -1842,6 +1956,7 @@ Get a session with full message history.
 {
   "id": "session-abc-123",
   "user_id": "alice",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "user_messages": ["Build a TODO app", "Add tests"],
   "agent_responses": [
     {
@@ -1855,11 +1970,22 @@ Get a session with full message history.
   ],
   "active_seed_id": "seed-550e8400",
   "active_persona_id": "persona-dev",
+  "effective_profile": {
+    "persona_id": "persona-dev",
+    "tool_profile": "code",
+    "affordances": ["diff", "files", "terminal", "worktree-fanout"]
+  },
   "created_at": "2026-05-17T10:00:00+00:00",
   "updated_at": "2026-05-17T10:30:00+00:00",
   "metadata": {}
 }
 ```
+
+`project_id` is the top-level field with legacy `metadata.project_id(s)`
+fallbacks. `effective_profile` is the server-derived snapshot of the bound
+persona's affordances for this session's project (design §6.1); `null`
+when no persona binds. Web UI affordances render from it — never from
+persona capability strings.
 
 **Error Response:** `404 Not Found`
 
@@ -3024,5 +3150,16 @@ Many list endpoints support pagination with these query parameters:
 | 74 | `GET` | `/api/events` | Yes | SSE event stream |
 | 75 | `GET` | `/api/host-tools` | Yes | Check host tools |
 | 76 | `GET` | `/api/metrics` | Yes | Prometheus metrics |
+| 77 | `GET` | `/api/project/workspace/tree` | Yes | List session project workspace tree |
+| 78 | `GET` | `/api/project/workspace/file` | Yes | Read project workspace file |
+| 79 | `PUT` | `/api/project/workspace/file` | Yes | Write project workspace file |
+| 80 | `GET` | `/api/project/workspace/status` | Yes | Git status for a project root |
+| 81 | `GET` | `/api/projects` | Yes | List projects (paginated) |
+| 82 | `POST` | `/api/projects` | Yes | Create a project |
+| 83 | `GET` | `/api/projects/{id}` | Yes | Get a project |
+| 84 | `PUT` | `/api/projects/{id}` | Yes | Update a project |
+| 85 | `DELETE` | `/api/projects/{id}` | Yes | Delete a project |
+| 86 | `GET` | `/api/projects/{id}/roots/status` | Yes | Per-root exists/is_dir status |
+| 87 | `POST` | `/api/system/pick-folders` | Yes | Native folder picker (local host) |
 
 *\* WebSocket auth uses `?token=` query parameter instead of `Authorization` header.*

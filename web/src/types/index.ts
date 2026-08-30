@@ -58,6 +58,23 @@ export interface Session {
   metadata?: Record<string, unknown>
 }
 
+// ── Effective profile (design §6.1, project-roots persona workbench) ──
+
+/** Server-derived affordance tags. The ONLY legal gate for conditional chat
+ *  controls: no persona name/category/capability-string inference. */
+export type Affordance = 'files' | 'terminal' | 'diff' | 'worktree-fanout'
+
+export type ToolProfileName = 'base' | 'code' | 'minimal' | 'control'
+
+/** Server-derived execution snapshot emitted by the kernel on the
+ *  POST /api/chat response, WS done chunks, GET /api/sessions/:id, and
+ *  session events. Null when no persona binds. */
+export interface EffectiveProfile {
+  persona_id: string
+  tool_profile: ToolProfileName
+  affordances: Affordance[]
+}
+
 // Session detail (from GET /api/sessions/:id)
 export interface SessionDetail {
   id: string
@@ -74,6 +91,9 @@ export interface SessionDetail {
     timestamp: string
   }[]
   active_persona_id?: string
+  /// Server-derived execution snapshot for the session's bound persona +
+  /// project (design §6.1). Null when no persona binds.
+  effective_profile?: EffectiveProfile | null
   /// P4 (§7 persistence): reasoning text per turn. One record per turn
   /// (when reasoning was emitted), same indexing as `agent_responses`.
   /// Restored by `loadSession` and rendered in the ThinkingPanel above
@@ -84,46 +104,20 @@ export interface SessionDetail {
   metadata?: Record<string, unknown>
 }
 
-// Project (replaces Space)
+// Project
 export interface Project {
   id: string
   name: string
-  description?: string
-  paths?: string[]
-  tags?: string[]
-  emoji?: string
-  source?: string
-  memory_visible?: boolean
-  /** RFC-025: referenced Mount IDs */
-  mount_ids?: string[]
-  /** RFC-025: custom instructions injected into the system prompt */
-  instructions?: string
+  /** Absolute directories this project spans; the first root is the cwd. */
+  root_paths: string[]
+  /** Custom instructions injected into the system prompt. */
+  instructions: string
+  /** Default brain space inherited by NEW chats in this Project
+   *  (absent/null = none). */
+  default_brain_space?: string | null
   created_at: string
-  updated_at?: string
-  last_active_at?: string
-  metadata?: Record<string, unknown>
-}
-
-// Mount (RFC-025) — path alias
-export interface MountMeta {
-  languages: string[]
-  stack: string[]
-  markers: string[]
-  summary: string
-}
-
-export interface Mount {
-  id: string
-  name: string
-  paths: string[]
-  auto_description: string
-  auto_meta: MountMeta
-  source: string
-  enrichment_pending: boolean
-  last_enriched_at?: string
-  created_at: string
-  updated_at?: string
-  last_active_at?: string
+  updated_at: string
+  last_active_at: string
 }
 
 // Skill (RFC-009 unified model)
@@ -241,8 +235,6 @@ export interface ChatMessage {
     /// Socket dropped mid-stream on this turn; the partial answer is kept
     /// and rendered with the InterruptedNotice `reason="interrupted"` copy.
     interrupted?: boolean
-    /// User's rating of the answer: 1 (good) / -1 (bad) (Task 22).
-    rating?: 1 | -1
   }
   totalInputTokens?: number
   totalOutputTokens?: number
@@ -426,6 +418,9 @@ export interface StreamChunk {
   evaluation_passed?: boolean | string
   duration_ms?: number
   tool_calls?: ToolCallSummary[]
+  /// Server-derived execution snapshot for the turn (design §6.1). Emitted
+  /// on done chunks; null when no persona binds.
+  effective_profile?: EffectiveProfile | null
   // RFC-015 chunk fields
   tool_call_id?: string
   /// Partial tool-call args fragment (oxi 0.58+ ToolCallDelta). Raw JSON
@@ -434,6 +429,8 @@ export interface StreamChunk {
   status?: 'started' | 'completed'
   summary?: string
   output_summary?: string
+  /** Structured web-search results (RFC-015 Phase E): [{title,url,snippet,source}]. */
+  results?: unknown
   is_error?: boolean
   /// Human-readable progress text (RFC-015 v0.12).
   progress?: string
@@ -541,21 +538,6 @@ export interface Approval {
   status: string
 }
 
-// Cron Job
-export interface CronJob {
-  id: string
-  name: string
-  schedule: string
-  goal: string
-  enabled: boolean
-  last_run?: string
-  next_run?: string
-  run_count: number
-  last_result?: string
-  last_success?: boolean
-  source: 'config' | 'api'
-}
-
 // Budget — moved to types/budget.ts
 
 // Resource
@@ -596,11 +578,20 @@ export interface Persona {
   description?: string
   enabled: boolean
   personality_traits?: string[]
-  /// RFC-044 Phase 3: capability tags that enable UI affordances.
-  /// Examples: 'terminal', 'diff-viewer', 'approval-cards',
-  /// 'worktree-fanout', 'exec', 'web-search', 'longform-editor', 'outline'.
-  /// Empty / undefined = no capabilities (all affordances disabled).
+  /// RFC-044 Phase 3 legacy tags (backward-compatible mirror of the kernel
+  /// Persona record). NOT a UI gate: conditional chat controls read the
+  /// server-derived `EffectiveProfile` (design §6.1) instead.
   capabilities?: string[]
+  /// UI taxonomy bucket: 'normal' | 'coding' | 'writing' | 'research' |
+  /// 'operations' | 'general' (free string; unknown → 'other' grouping).
+  category?: string
+  /// Writing sub-category: 'novel' | 'scenario' | 'essay' | 'blog'.
+  genre?: string | null
+  /// Tool access profile: 'base' (all tools incl. Oxios control) |
+  /// 'code' (coding tools, no control) | 'minimal' (file + web search).
+  tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  /// Whether this persona is the global active persona (list endpoint only).
+  active?: boolean
 }
 
 // Workspace — matches backend TreeEntry from /api/workspace/tree
@@ -639,7 +630,6 @@ export interface SystemStatus {
       total_completed: number
       total_failed: number
     }
-    spaces_active?: number
     projects_active?: number
   }
 }

@@ -110,7 +110,7 @@ pub struct GatedTool<T: AgentTool> {
     pending_approvals: Option<Arc<PendingToolApprovals>>,
     /// Registry of pending path-access requests. When an agent tries to
     /// read/write outside its `allowed_paths`, the denial is surfaced as
-    /// an interactive card (create Mount / temp-allow / deny) instead of
+    /// an interactive card (temp-allow / deny) instead of
     /// a hard error. `None` ⇒ headless, returns the error immediately.
     pending_path_access: Option<Arc<PendingPathAccess>>,
 }
@@ -214,8 +214,8 @@ impl<T: AgentTool + 'static> AgentTool for GatedTool<T> {
         }
 
         // Step 2: For file tools, check path access permission. On denial,
-        // surface an interactive path-access card (create Mount / temp-allow /
-        // deny) when the event bus and path-access registry are wired;
+        // surface an interactive path-access card (temp-allow / deny) when
+        // the event bus and path-access registry are wired;
         // otherwise return the hard error (headless / test path).
         if let Some(path) = extract_path_from_params(tool_name, &params) {
             let mode = path_mode_for_tool(tool_name);

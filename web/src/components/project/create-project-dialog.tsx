@@ -1,24 +1,8 @@
-import { Link } from '@tanstack/react-router'
-import {
-  BarChart3,
-  BookOpen,
-  FileText,
-  FolderOpen,
-  Gamepad2,
-  Globe,
-  Lightbulb,
-  Lock,
-  Package,
-  Palette,
-  Rocket,
-  Target,
-  Tent,
-  Wrench,
-  Zap,
-} from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { ProjectBrainSelect } from '@/components/brain/space-select'
+import { RootPathsEditor } from '@/components/project/root-paths-editor'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -29,8 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { useMounts } from '@/hooks/use-mounts'
 import { useCreateProject, useUpdateProject } from '@/hooks/use-projects'
 
 interface CreateProjectDialogProps {
@@ -38,100 +22,57 @@ interface CreateProjectDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-/** Icon name → component mapping for project icons. */
-const ICON_OPTIONS: Array<{ name: string; icon: React.ReactNode }> = [
-  { name: 'package', icon: <Package className="h-4 w-4" /> },
-  { name: 'wrench', icon: <Wrench className="h-4 w-4" /> },
-  { name: 'file-text', icon: <FileText className="h-4 w-4" /> },
-  { name: 'gamepad', icon: <Gamepad2 className="h-4 w-4" /> },
-  { name: 'globe', icon: <Globe className="h-4 w-4" /> },
-  { name: 'book-open', icon: <BookOpen className="h-4 w-4" /> },
-  { name: 'palette', icon: <Palette className="h-4 w-4" /> },
-  { name: 'zap', icon: <Zap className="h-4 w-4" /> },
-  { name: 'target', icon: <Target className="h-4 w-4" /> },
-  { name: 'rocket', icon: <Rocket className="h-4 w-4" /> },
-  { name: 'lightbulb', icon: <Lightbulb className="h-4 w-4" /> },
-  { name: 'lock', icon: <Lock className="h-4 w-4" /> },
-  { name: 'bar-chart', icon: <BarChart3 className="h-4 w-4" /> },
-  { name: 'tent', icon: <Tent className="h-4 w-4" /> },
-]
-
-export { ICON_OPTIONS }
-
-/** Map a project name to a sensible default icon. */
-function suggestIcon(name: string): string {
-  const n = name.trim().toLowerCase()
-  if (!n) return 'package'
-  // Common code/project keywords → matching icons.
-  if (/api|server|backend|rust|kernel/.test(n)) return 'wrench'
-  if (/doc|note|readme|book|knowledge/.test(n)) return 'book-open'
-  if (/web|site|front|ui|app|client/.test(n)) return 'globe'
-  if (/game|gaming|play/.test(n)) return 'gamepad'
-  if (/design|art|style|theme|palette/.test(n)) return 'palette'
-  if (/data|metric|chart|analytics|stat/.test(n)) return 'bar-chart'
-  if (/launch|deploy|ship|rocket|release/.test(n)) return 'rocket'
-  if (/goal|target|plan|objective/.test(n)) return 'target'
-  if (/idea|think|brain|innovation/.test(n)) return 'lightbulb'
-  if (/secret|secure|lock|auth|password/.test(n)) return 'lock'
-  if (/camp|project|temp|scratch/.test(n)) return 'tent'
-  if (/power|fast|quick|spark|energy/.test(n)) return 'zap'
-  if (/file|text|doc/.test(n)) return 'file-text'
-  return 'package'
-}
-
+/**
+ * Create dialog (design §4.2): name + repeatable folder rows via the native
+ * picker + optional instructions. Nothing else — no icon or tag metadata.
+ */
 export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogProps) {
   const { t } = useTranslation()
   const create = useCreateProject()
   const update = useUpdateProject()
-  const { data: mountsData } = useMounts()
-  const availableMounts = useMemo(() => mountsData?.items ?? [], [mountsData?.items])
-
   const [name, setName] = useState('')
-  const [icon, setIcon] = useState('package')
+  const [rootPaths, setRootPaths] = useState<string[]>([])
   const [instructions, setInstructions] = useState('')
-  const [mountIds, setMountIds] = useState<string[]>([])
+  const [defaultBrainSpace, setDefaultBrainSpace] = useState<string | null>(null)
 
   const reset = () => {
     setName('')
-    setIcon('package')
+    setRootPaths([])
     setInstructions('')
-    setMountIds([])
+    setDefaultBrainSpace(null)
   }
 
-  const handleNameChange = (value: string) => {
-    setName(value)
-    // Auto-suggest only while the user hasn't manually picked a non-default icon.
-    if (icon === 'package' || icon === suggestIcon(name)) {
-      setIcon(suggestIcon(value))
-    }
-  }
+  useEffect(() => {
+    if (open) reset()
+  }, [open])
 
-  const handleSubmit = () => {
-    if (!name.trim()) return
-
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const n = name.trim()
+    if (!n) return
     create.mutate(
       {
-        name: name.trim(),
-        emoji: icon,
+        name: n,
+        root_paths: rootPaths,
         instructions: instructions.trim() || undefined,
       },
       {
         onSuccess: (created) => {
-          // Attach any dropped mounts via a follow-up update — backend splits
-          // Mount references from the create payload (RFC-025).
-          const toAttach = mountIds
-          if (toAttach.length > 0) {
+          // The create endpoint carries no default brain space; apply it via
+          // a follow-up update when the user picked one (tri-state PUT).
+          if (defaultBrainSpace !== null) {
             update.mutate(
-              { id: created.id, mount_ids: toAttach },
+              { id: created.id, default_brain_space: defaultBrainSpace },
               {
                 onSuccess: () => {
-                  toast(t('projects.createSuccess'))
+                  toast.success(t('projects.createSuccess'))
                   reset()
                   onOpenChange(false)
                 },
                 onError: () => {
-                  // Project was created; surface the attach failure but still close.
-                  toast.error(t('projects.attachMountsError'))
+                  // Project was created; surface the follow-up failure but
+                  // still close — the default brain can be set later.
+                  toast.error(t('projects.updateError'))
                   reset()
                   onOpenChange(false)
                 },
@@ -139,12 +80,12 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
             )
             return
           }
-          toast(t('projects.createSuccess'))
+          toast.success(t('projects.createSuccess'))
           reset()
           onOpenChange(false)
         },
-        onError: () => {
-          toast.error(t('projects.createError'))
+        onError: (err) => {
+          toast.error(t('projects.createError', { error: err.message }))
         },
       },
     )
@@ -152,109 +93,61 @@ export function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogP
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('projects.createTitle')}</DialogTitle>
           <DialogDescription>{t('projects.createDesc')}</DialogDescription>
         </DialogHeader>
-
-        <div className="space-y-4 py-2">
-          {/* Name */}
-          <div className="space-y-1">
-            <label className="text-sm font-medium">{t('projects.name')}</label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="project-name">{t('projects.name')}</Label>
             <Input
+              id="project-name"
               value={name}
-              onChange={(e) => handleNameChange(e.target.value)}
-              placeholder="oxios"
+              onChange={(e) => setName(e.target.value)}
               autoFocus
             />
           </div>
-
-          {/* Emoji (icon picker) */}
-          <div className="space-y-1">
-            <label className="text-sm font-medium">{t('projects.icon')}</label>
-            <div className="flex flex-wrap gap-1">
-              {ICON_OPTIONS.map((opt) => (
-                <button
-                  key={opt.name}
-                  type="button"
-                  onClick={() => setIcon(opt.name)}
-                  className={`w-8 h-8 rounded flex items-center justify-center border transition-colors ${
-                    icon === opt.name
-                      ? 'border-primary bg-primary/10'
-                      : 'border-transparent hover:bg-muted'
-                  }`}
-                >
-                  {opt.icon}
-                </button>
-              ))}
-            </div>
+          <div className="space-y-2">
+            <Label>{t('projects.folders')}</Label>
+            <p className="text-xs text-muted-foreground">{t('projects.foldersHint')}</p>
+            <RootPathsEditor value={rootPaths} onChange={setRootPaths} />
           </div>
-
-          {/* Instructions */}
-          <div className="space-y-1">
-            <label className="text-sm font-medium">{t('projects.instructions')}</label>
+          <div className="space-y-2">
+            <Label htmlFor="project-instructions">{t('projects.instructions')}</Label>
             <Textarea
+              id="project-instructions"
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
-              rows={3}
               placeholder={t('projects.instructionsPlaceholder')}
+              rows={4}
             />
           </div>
 
-          {/* RFC-025: Mount references — click-toggle chips */}
-          <div className="space-y-1">
-            <label className="text-sm font-medium">{t('projects.mounts')}</label>
-            {availableMounts.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
-                {availableMounts.map((m) => {
-                  const selected = mountIds.includes(m.id)
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() =>
-                        setMountIds((prev) =>
-                          selected ? prev.filter((id) => id !== m.id) : [...prev, m.id],
-                        )
-                      }
-                      className={`rounded px-2 py-1 text-xs border transition-colors ${
-                        selected
-                          ? 'border-primary bg-primary/10 text-primary'
-                          : 'border-transparent hover:bg-muted'
-                      }`}
-                    >
-                      <span className="inline-flex items-center gap-1">
-                        <FolderOpen className="h-3 w-3" /> {m.name}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed p-3 text-center">
-                <p className="text-xs text-muted-foreground mb-2">{t('projects.noMountsYet')}</p>
-                <Link
-                  to="/mounts"
-                  onClick={() => onOpenChange(false)}
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  <FolderOpen className="h-3 w-3" />
-                  {t('mounts.create')}
-                </Link>
-              </div>
-            )}
+          {/* Default brain — inherited by new chats in this project */}
+          <div className="space-y-2">
+            <Label>{t('projects.defaultBrain')}</Label>
+            <ProjectBrainSelect
+              value={defaultBrainSpace}
+              onValueChange={setDefaultBrainSpace}
+              className="w-full"
+            />
           </div>
-        </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
-          </Button>
-          <Button onClick={handleSubmit} disabled={!name.trim() || create.isPending}>
-            {create.isPending ? '...' : t('projects.create')}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={create.isPending}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={!name.trim() || create.isPending}>
+              {create.isPending ? t('common.creating') : t('projects.create')}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )

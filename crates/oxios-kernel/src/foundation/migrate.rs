@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::foundation::profile::{Profile, ProfileRegistry};
-use crate::foundation::{default_brain_socket, foundation_root};
+use crate::foundation::{default_brain_dir, foundation_root};
 
 /// One legacy credential discovered during the scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,10 +275,10 @@ pub fn redact(secret: &str) -> String {
     format!("****{visible}")
 }
 
-/// Compute the Brain socket path the bootstrap step would use. Re-exported
-/// so the CLI can render it in `foundation status`.
-pub fn brain_socket_path(home: &Path) -> PathBuf {
-    default_brain_socket(home)
+/// Compute the Brain data directory the bootstrap step would use.
+/// Re-exported so the CLI can render it in `foundation status`.
+pub fn brain_dir_path(home: &Path) -> PathBuf {
+    default_brain_dir(home)
 }
 
 /// Compute the Foundation root for the CLI. Re-exported so the CLI can
@@ -512,11 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn brain_socket_path_uses_default() {
+    fn brain_dir_path_uses_default() {
         let home = Path::new("/tmp/example");
         assert_eq!(
-            brain_socket_path(home),
-            PathBuf::from("/tmp/example/.oxi/brain/oxibrain.sock")
+            brain_dir_path(home),
+            PathBuf::from("/tmp/example/.oxi/brain")
         );
         // touch Result import to keep it in the public surface
         let _: Result<()> = Ok(());

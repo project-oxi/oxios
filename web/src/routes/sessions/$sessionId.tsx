@@ -31,7 +31,7 @@ function ProjectSelector({
       <FolderKanban className="h-4 w-4 text-muted-foreground shrink-0" />
       {currentProjectId && currentProject ? (
         <span className="text-sm">
-          {currentProject.emoji ?? '📦'} <span className="font-medium">{currentProject.name}</span>
+          <span className="font-medium">{currentProject.name}</span>
         </span>
       ) : (
         <span className="text-xs text-muted-foreground">{t('sessions.noProject')}</span>

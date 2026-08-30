@@ -59,6 +59,15 @@ pub struct DaemonManager {
     /// `status`/`stop` can detect `--foreground` orphans that bypassed the
     /// pidfile. `None` disables the orphan-detection path.
     probe_port: Option<u16>,
+    /// Optional override for the binary path used when spawning/restarting
+    /// the daemon. When `Some`, both `start` and `install_service` use this
+    /// path instead of `std::env::current_exe()`. The launcher
+    /// (`~/.oxios/bin/oxios`) is a symlink into `versions/<v>/oxios`; the
+    /// resolved path flips on every version update, so the daemon must
+    /// respawn itself via the launcher — not the resolved target — or it
+    /// resurrects the previous binary on restart. `None` preserves the
+    /// historical `current_exe()` behavior for every existing caller.
+    exe_override: Option<PathBuf>,
 }
 
 impl DaemonManager {
@@ -68,6 +77,7 @@ impl DaemonManager {
             pid_file: crate::config::expand_home(pid_file),
             log_dir: crate::config::expand_home(log_dir),
             probe_port: None,
+            exe_override: None,
         }
     }
 
@@ -83,6 +93,19 @@ impl DaemonManager {
     /// `mut`, which is awkward in expression position.
     pub fn with_probe_port(mut self, port: u16) -> Self {
         self.probe_port = Some(port);
+        self
+    }
+
+    /// Consuming builder for the daemon binary path. When set, `start` and
+    /// `install_service` spawn this path instead of `std::env::current_exe()`.
+    /// Used by managed installs so the launcher symlink
+    /// (`~/.oxios/bin/oxios`) — not the resolved `versions/<v>/oxios` —
+    /// is what restarts the daemon. A version flip that rewrites the
+    /// symlink target would otherwise respawn the previous binary
+    /// (`current_exe()` resolves symlinks), which was the root cause of the
+    /// 2026-08-26 stale-binary incident.
+    pub fn with_exe(mut self, exe: PathBuf) -> Self {
+        self.exe_override = Some(exe);
         self
     }
 
@@ -157,7 +180,10 @@ impl DaemonManager {
         std::fs::create_dir_all(&self.log_dir).context("failed to create log directory")?;
 
         let log_file = self.log_dir.join("oxios.log");
-        let exe = std::env::current_exe().context("failed to locate oxios binary")?;
+        let exe = self.exe_override.clone().map_or_else(
+            || std::env::current_exe().context("failed to locate oxios binary"),
+            Ok,
+        )?;
 
         // Append-mode shared handle for stdout+stderr: O_APPEND writes land
         // atomically at EOF and never truncate previous runs, so a panic
@@ -391,8 +417,10 @@ impl DaemonManager {
     /// `KeepAlive` (macOS) / `Restart=on-failure` (Linux) within
     /// milliseconds.
     pub fn install_service(&self) -> Result<()> {
-        let exe = std::env::current_exe().context("failed to locate oxios binary")?;
-
+        let exe = self.exe_override.clone().map_or_else(
+            || std::env::current_exe().context("failed to locate oxios binary"),
+            Ok,
+        )?;
         #[cfg(target_os = "macos")]
         {
             let plist_dir = dirs::home_dir()
@@ -851,6 +879,17 @@ mod tests {
             DaemonStatus::Orphaned { port: p } => assert_eq!(p, port),
             other => panic!("expected Orphaned, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn with_exe_overrides_spawn_target() {
+        let dm = DaemonManager::new("/tmp/oxios-with-exe-test.pid", "/tmp")
+            .with_exe(std::path::PathBuf::from("/nonexistent/launcher"));
+        assert_eq!(
+            dm.exe_override.as_deref(),
+            Some(std::path::Path::new("/nonexistent/launcher"))
+        );
+        // spawn would fail on nonexistent path; the unit pins the plumbing only
     }
 
     #[test]

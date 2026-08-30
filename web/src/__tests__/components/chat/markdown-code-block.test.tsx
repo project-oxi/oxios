@@ -40,6 +40,18 @@ describe('MarkdownMessage code blocks', () => {
     expect(container.querySelector('p > code')?.textContent).toBe('cargo test')
   })
 
+  it('renders inline code inline during streaming (heal + sanitize keep it)', () => {
+    // §8.3: markdown stays readable DURING streaming and inline code renders
+    // as inline content. The streaming path additionally runs
+    // healStreamingMarkdown — neither heal nor rehype-sanitize may swallow
+    // the backtick span.
+    const { container } = render(
+      <MarkdownMessage isStreaming>{'use `cargo test` now'}</MarkdownMessage>,
+    )
+    expect(container.querySelector('pre')).toBeNull()
+    expect(container.querySelector('p > code')?.textContent).toBe('cargo test')
+  })
+
   it('emits highlight classes that the theme layer can style', () => {
     const { container } = render(<MarkdownMessage>{'```rust\nfn main() {}\n```'}</MarkdownMessage>)
     expect(container.querySelector('.hljs-keyword')).toBeTruthy()

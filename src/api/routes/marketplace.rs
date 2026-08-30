@@ -148,6 +148,7 @@ pub(crate) async fn handle_skills_sh_search(
     state: State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    skills_sh_guard(&state)?;
     let resp = state
         .kernel
         .marketplace_api()
@@ -171,6 +172,7 @@ pub(crate) async fn handle_skills_sh_list(
     state: State<Arc<AppState>>,
     Query(query): Query<SkillsShListQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    skills_sh_guard(&state)?;
     let resp = state
         .kernel
         .marketplace_api()
@@ -196,6 +198,7 @@ pub(crate) async fn handle_skills_sh_skill_detail(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    skills_sh_guard(&state)?;
     let detail = state
         .kernel
         .marketplace_api()
@@ -211,6 +214,7 @@ pub(crate) async fn handle_skills_sh_skill_audit(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    skills_sh_guard(&state)?;
     let audit = state
         .kernel
         .marketplace_api()
@@ -226,6 +230,7 @@ pub(crate) async fn handle_skills_sh_install(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    skills_sh_guard(&state)?;
     let result = state
         .kernel
         .marketplace_api()
@@ -243,4 +248,20 @@ pub(crate) async fn handle_skills_sh_install(
         "installs": result.installs,
         "hash": result.hash,
     })))
+}
+
+/// Fail fast with a descriptive 503 when skills.sh has no API key.
+///
+/// The upstream requires a Bearer token on every endpoint; without one each
+/// request is a guaranteed 401 that previously surfaced as an opaque 500.
+fn skills_sh_guard(state: &State<Arc<AppState>>) -> Result<(), AppError> {
+    if state.kernel.marketplace_api().skills_sh_configured() {
+        Ok(())
+    } else {
+        Err(AppError::ServiceUnavailable(
+            "skills.sh requires an API key. Set `api_key` under `[skills_sh]` in config.toml \
+             or export SKILLS_SH_TOKEN. Request a key from skills-api@vercel.com."
+                .into(),
+        ))
+    }
 }

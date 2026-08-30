@@ -1,6 +1,6 @@
 [package]
 name = "oxios-kernel"
-version = "1.43.0"
+version = "1.44.0"
 edition = "2024"
 description = "Oxios kernel: supervisor, event bus, state store"
 license = "MIT"
@@ -30,20 +30,20 @@ foundation-keychain = ["dep:keyring"]
 timeline = ["dep:oxiline-core"]
 
 [dependencies]
-oxios-ouroboros = { version = "1.43.0", path = "../oxios-ouroboros" }
-oxios-markdown = { version = "1.43.0", path = "../oxios-markdown" }
-oxios-calendar = { version = "1.43.0", path = "../oxios-calendar" }
-oxios-mcp = { version = "1.43.0", path = "../oxios-mcp" }
+oxios-ouroboros = { version = "1.44.0", path = "../oxios-ouroboros" }
+oxios-markdown = { version = "1.44.0", path = "../oxios-markdown" }
+oxios-calendar = { version = "1.44.0", path = "../oxios-calendar" }
+oxios-mcp = { version = "1.44.0", path = "../oxios-mcp" }
 oxicode-sdk = { workspace = true }
-# oxibrain daemon client (RFC-047).
+# oxibrain client (RFC-047): per-call `serve --stdio` child for console RPCs.
 oxibrain-client = { workspace = true }
 # 0.73.0: BrowseProgress::PdfExported, etc. oxicode-sdk 0.72 dropped the
 # BrowseTool/BrowseSessionTool factory re-exports + the browser/native-browser
 # features — products own browsing themselves (RFC-046).
-oxicode-agent = "0.73.0"
+oxicode-agent = "0.77.0"
 # oxicode-ai — needed for ContentBlock/ImageContent in browse tool screenshots.
 # The SDK re-exports ContentBlock but not ImageContent, so we depend directly.
-oxicode-ai = "0.73.0"
+oxicode-ai = "0.77.0"
 # First-party app module cores (optional, opt-in via the `memo`/`timeline`
 # features). Published to crates.io; resolved from the registry.
 oximemo-core = { version = "0.7", optional = true }
@@ -67,8 +67,7 @@ chrono = { workspace = true }
 cron = "0.16"
 
 regex = { workspace = true }
-gix = { version = "0.83", features = ["tree-editor", "blob-diff"] }
-similar = "2"
+oxi-vault-git = { workspace = true }
 toml = { workspace = true }
 glob = "0.3"
 tempfile = { workspace = true }
@@ -103,7 +102,7 @@ console = { workspace = true }
 indicatif = "0.17"
 keyring = { workspace = true, optional = true }
 
-# SQLite — kernel mount/project tables + agent history log (RFC-012, RFC-025).
+# SQLite — kernel-managed tables + agent history log (RFC-012).
 # Non-optional since the sqlite-memory feature was removed (RFC-047).
 rusqlite = { version = "0.40", features = ["bundled"] }
 

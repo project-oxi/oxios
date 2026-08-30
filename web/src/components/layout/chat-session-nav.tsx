@@ -4,7 +4,6 @@ import {
   ChevronRight,
   FolderKanban,
   FolderPlus,
-  HardDrive,
   Inbox,
   List,
   MoreHorizontal,
@@ -290,12 +289,6 @@ function ExpandedChatNav() {
             <Link to="/projects">
               <FolderKanban className="h-4 w-4" />
               {t('chat.manageProjects')}
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/mounts">
-              <HardDrive className="h-4 w-4" />
-              {t('chat.manageMounts')}
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>

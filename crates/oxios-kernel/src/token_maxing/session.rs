@@ -34,7 +34,7 @@ pub enum MaxingStart {
 pub enum TaskSource {
     /// An autonomous-eligible skill (frontmatter `autonomous: true`).
     Skill,
-    /// A registered project / mount (read-mostly review task).
+    /// A registered project (read-mostly review task).
     Project,
     /// A recurring pattern derived from session history (Source C).
     Recurring,

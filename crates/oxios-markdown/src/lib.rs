@@ -29,6 +29,7 @@
 pub mod backlinks;
 pub mod chat;
 pub mod checklist;
+pub mod frontformat;
 pub mod fs;
 #[allow(dead_code)]
 pub mod fslog;
@@ -47,6 +48,7 @@ pub mod sync;
 pub mod tgtxt;
 pub mod tokens;
 pub mod types;
+pub mod watch;
 pub mod worker;
 
 // Re-export core types for convenience

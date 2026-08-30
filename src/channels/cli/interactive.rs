@@ -143,7 +143,7 @@ impl InteractiveLoop {
                 Ok(false)
             }
             MetaCommand::Persona(None) => {
-                println!("Current persona: (default)");
+                self.handle.send_get_persona().await?;
                 Ok(false)
             }
             MetaCommand::Space(None) => {

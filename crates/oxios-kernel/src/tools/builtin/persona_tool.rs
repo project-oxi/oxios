@@ -249,7 +249,11 @@ impl AgentTool for PersonaTool {
                         .map(|s| s.to_string()),
                     personality_traits: str_array(&params, "personality_traits"),
                     capabilities: str_array(&params, "capabilities"),
-                    tool_profile: None,
+                    category: str_or(&params, "category").unwrap_or_else(|| "general".to_string()),
+                    genre: str_or(&params, "genre"),
+                    tool_profile: str_or(&params, "tool_profile")
+                        .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
+                        .unwrap_or_default(),
                 };
 
                 // Security review (fail-open on engine/parse error): an
@@ -312,6 +316,7 @@ impl AgentTool for PersonaTool {
                     .get("system_prompt")
                     .and_then(|v| v.as_str())
                     .is_some();
+
                 let updated = Persona {
                     id: existing.id,
                     name: str_or(&params, "name").unwrap_or(existing.name),
@@ -334,7 +339,11 @@ impl AgentTool for PersonaTool {
                     } else {
                         existing.capabilities
                     },
-                    tool_profile: existing.tool_profile,
+                    category: str_or(&params, "category").unwrap_or(existing.category),
+                    genre: str_or(&params, "genre").or(existing.genre),
+                    tool_profile: str_or(&params, "tool_profile")
+                        .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
+                        .unwrap_or(existing.tool_profile),
                 };
 
                 if prompt_changed && !updated.system_prompt.trim().is_empty() {

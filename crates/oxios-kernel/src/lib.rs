@@ -28,7 +28,7 @@ pub mod agent_log_db;
 // ─── Orchestration ──────────────────────────────────────────────────
 // 작업 조율, 스케줄링, 예산 관리.
 pub mod budget;
-pub mod cron;
+
 pub mod orchestrator;
 // ─── Resilience (RFC-029) ──────────────────────────────────────────────
 // Failure classification + (P2) recovery coordination.
@@ -77,6 +77,7 @@ pub mod embedding;
 pub mod foundation;
 pub mod memory_agent;
 pub mod onboarding;
+pub mod oxi_home;
 pub mod persona;
 
 // ─── Tools & Skills ───────────────────────────────────────────────
@@ -94,9 +95,9 @@ pub mod workers;
 pub mod backup;
 pub mod compression;
 pub mod config;
-pub mod git_layer;
+pub use oxi_vault_git as git_layer;
+pub mod home_migrate;
 pub mod kernel_db;
-pub mod mount;
 pub mod project;
 pub mod resource_monitor;
 pub mod session_context;
@@ -135,8 +136,8 @@ pub use budget::{
     BudgetExceeded, BudgetInfo, BudgetKind, BudgetLimit, BudgetManager, FullBudgetInfo,
 };
 // Circuit breaker — delegates to oxicode-sdk
-pub use cron::{CronJob, CronJobResult, CronJobUpdate, CronScheduler, JobSource};
 pub use orchestrator::{AgentRole, OrchestrationResult, Orchestrator, SubTask};
+pub use task::{CronJob, JobSource};
 // CircuitBreaker removed — use oxicode_sdk::ProviderCircuitBreaker directly (#11).
 pub use types::Priority;
 
@@ -168,11 +169,9 @@ pub use mcp::{
     McpBridge, McpCapabilities, McpServer, McpTool, McpToolCallResult as CallToolResult,
 };
 
-// ─── Intelligence ───────────────────────────────────────────────────
-pub use brain::{
-    BrainConfig, BrainConnection, BrainSupervisor, SupervisorConfig, SupervisorStatus,
-};
+pub use brain::{BrainConfig, BrainInstaller, BrainSession, Spawn, StdioChild};
 pub use embedding::{EmbeddingProvider, EmbeddingVector, TfIdfEmbeddingProvider};
+pub use kernel_handle::brain_api::BrainStatusSnapshot;
 pub use memory_agent::sona::{
     LearnedPattern, SonaEngine, SonaMode, Trajectory, TrajectoryStep, Verdict,
 };
@@ -181,7 +180,7 @@ pub use memory_agent::sona::{
 #[cfg(feature = "embedding-gguf")]
 pub use embedding::gguf::{EmbeddingDimension, GgufEmbeddingProvider, GgufModelLoader};
 
-pub use persona::{Persona, PersonaManager, PersonaStore, default_personas};
+pub use persona::{Persona, PersonaManager, PersonaStore, ToolProfile, default_personas};
 
 // ─── Tools & Skills ────────────────────────────────────────────────
 pub use hook_runner::CommandHookRunner;
@@ -225,23 +224,15 @@ pub use backup::{BackupManifest, BackupSection};
 pub use config::{
     BrowserConfig, ChannelsConfig, CronConfig, DaemonConfig, EmailConfig, EmbeddingConfig,
     EngineConfig, ExecConfig, ExecMode, GitConfig, InlineCronJob, LoggingConfig, MarketplaceConfig,
-    McpConfig, McpServerDef, MemoryConfig, MountsConfig, OrchestratorConfig, OxiosConfig,
-    PersonaConfig, SkillsShConfig, SqliteMemoryConfig,
+    McpConfig, McpServerDef, MemoryConfig, OrchestratorConfig, OxiosConfig, PersonaConfig,
+    SkillsShConfig, SqliteMemoryConfig,
 };
 pub use git_layer::{
     CommitContext, CommitDiff, CommitInfo, DiffKind, DiffStats, FileDiff, GitLayer, LogEntry,
 };
 pub use kernel_db::KernelDatabase;
-pub use mount::{
-    DetectionResult as MountDetectionResult, Mount, MountId, MountMeta, MountSource,
-    PromotionConfig, detect_mounts,
-};
-pub use mount::{MountManager, MountManagerError};
-pub use project::{
-    ConversationBuffer, ConversationTurn, DetectionResult, Project, ProjectId, ProjectSource,
-    detect_project, extract_path, find_by_id, find_by_name,
-};
-pub use project::{ProjectManager, ProjectManagerError};
+pub use project::{ConversationBuffer, ConversationTurn, Project, ProjectId};
+pub use project::{ProjectManager, ProjectManagerError, validate_root_paths};
 pub use resource_monitor::{OverloadThreshold, ResourceMonitor, ResourceSnapshot};
 pub use state_store::{
     AgentResponse, PruneConfig, PruneThrottle, Session, SessionId, SessionSummary, StateStore,
@@ -265,10 +256,11 @@ pub use kernel_handle::MarketplaceApi;
 pub use kernel_handle::{
     A2aApi, AgentApi, BrainApi, BrowserApi, CalendarApi, CopilotResponse, EmailApi, EngineApi,
     EngineConfigResponse, ExecApi, ExtensionApi, FallbackEvent, HostToolsApi, InfraApi,
-    InputModality as EngineInputModality, KnowledgeContext, KnowledgeLens, KnowledgeNote, McpApi,
-    MemoApi, MemoryNote, ModelInfo, MountApi, MountInfo, PersonaApi, ProjectApi, ProjectInfo,
-    ProviderCategory, ProviderInfo, RoutingConfigSnapshot, RoutingStats, RoutingStatsSnapshot,
-    RoutingUpdate, SecurityApi, SharedExecConfig, StateApi, TimelineApi, ValidateKeyResult,
+    InputModality as EngineInputModality, IssueApi, IssueQuery, IssueView, KnowledgeContext,
+    KnowledgeLens, KnowledgeNote, McpApi, MemoApi, MemoryNote, MilestoneView, ModelInfo, NewIssue,
+    PersonaApi, ProjectApi, ProjectInfo, ProviderCategory, ProviderInfo, RoutingConfigSnapshot,
+    RoutingStats, RoutingStatsSnapshot, RoutingUpdate, SecurityApi, SharedExecConfig, StateApi,
+    TimelineApi, ValidateKeyResult,
 };
 #[cfg(feature = "browser")]
 pub use kernel_handle::{ScreenshotEngine, ScreenshotViewport};

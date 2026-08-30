@@ -96,7 +96,7 @@ Oxios is built on two foundational metaphors:
 │                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │                  KernelHandle (Facade / Syscall Table)           │   │
-│  │  22 typed APIs (State · Agent · Security · Exec · Browser ·      │   │
+│  │  21 typed APIs (State · Agent · Security · Exec · Browser ·      │   │
 │  │  MCP · A2A · Memory · Engine · …  — full list in §4)             │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────┘
@@ -127,7 +127,7 @@ Oxios is built on two foundational metaphors:
         ▼
   Kernel ─── Orchestrator + Supervisor + all subsystems
         │
-        ├── KernelHandle ─── typed facade (22 APIs)
+        ├── KernelHandle ─── typed facade (21 APIs)
         │       │
         │       └── AgentRuntime ─── wraps oxicode-sdk AgentLoop
         │
@@ -397,7 +397,7 @@ JSON file storage for all kernel state.
   │  Base path: ~/.oxios/workspace/              │
   │  ├── seeds/{id}.json          Seed specs     │
   │  ├── evals/{id}-eval.json     Evaluations    │
-  │  ├── kernel.db                # Mount/project tables (KernelDatabase, SQLite WAL)
+  │  ├── kernel.db                # Project/session tables (KernelDatabase, SQLite WAL)
   │  ├── audit/trail.json         Audit entries  │
   │  ├── agent_groups/{id}.json   Group state    │
   │  └── {category}/{name}.json   Arbitrary data │
@@ -646,69 +646,124 @@ Per-agent budget tracking for LLM API calls.
 
 ---
 
-### 3.14 Brain Connector — External `oxibrain` Daemon (RFC-047)
+### 3.14 Brain — One-Process-Per-Operation `oxibrain` Integration (oxibrain 0.10)
 
-Agent memory lives in a **standalone daemon** (`oxibrain`, separate repo) reached over a Unix-domain socket. The kernel holds a thin `BrainConnection` client; it owns no index, no embeddings store, and no SQLite memory tables.
-
-```
-  ┌──────────────────────────────────────────────────────────┐
-  │                  BrainConnection                          │
-  │  (crates/oxios-kernel/src/brain/mod.rs)                  │
-  │                                                          │
-  │  Transport:  Unix-domain socket (JSON-RPC over length-    │
-  │              framed lines), lazy reconnect on call fail.  │
-  │  Liveness:   AtomicBool `is_available` — set on connect/  │
-  │              reconnect, cleared on a failed call.         │
-  │                                                          │
-  │  Surface (KernelHandle::brain: BrainApi):                 │
-  │    recall(space, text?, budget) → context string          │
-  │    ingest(space, text)            → episode id            │
-  │    search(space, query, limit)    → Vec<SearchHit>        │
-  │    get_entity(id)                 → entity detail         │
-  │    stats(space)                   → SpaceStats            │
-  │                                                          │
-  │  Degradation contract:                                   │
-  │    daemon unreachable → every op returns empty/None,      │
-  │    the kernel logs a warning, agent turns complete; the   │
-  │    next call retries the connection. Fail-open, never     │
-  │    blocks a turn.                                        │
-  └──────────────────────────────────────────────────────────┘
-```
-
-**In-kernel survivors:** SONA (trajectory pattern engine, `memory_agent::sona`) and the embedding traits (`embedding` — `TextVector`, `cosine_similarity_f32`) were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite WAL) now owns the mount/project tables in `~/.oxios/workspace/kernel.db`.
-
-**Config:** `[brain]` section — `enabled` / `socket_path` (default `~/.oxi/brain/oxibrain.sock`) / `space` (default `personal`) / `auto_manage` (default `true`) / `binary_path` (override install root).
-
-**Metrics:** `oxibrain_available` (gauge, set at boot + on reconnect + on every supervisor state transition), `oxibrain_recall_total` (counter, incremented on successful recall).
-
-#### First-party supervision (2026-08-19)
-
-oxibrain is a **first-party managed dependency** (not just an external daemon). The kernel's `BrainSupervisor` (`crates/oxios-kernel/src/brain/supervisor.rs`) installs, starts, watches, and stops the daemon.
+Agent memory lives in the standalone `oxibrain` store (separate repo). Nothing
+is resident: every brain interaction spawns a short-lived process. The kernel
+consumes the binary through **three lanes** —
 
 ```
-  BrainSupervisor (kernel) ── install │ ensure │ respawn_if_needed
-        │                                                    
-        ├─ GithubInstaller  → GitHub Releases (a7garden/oxibrain):
-        │    `oxibrain-aarch64-apple-darwin.tar.gz` + `.sha256`,
-        │    sha256-verified, atomic tmp+rename 0o755 to
-        │    ~/.oxi/bin/oxibrain.
-        │
-        ├─ launchd keeper (macOS) → plist ~/Library/LaunchAgents/
-        │    com.oxi.oxibrain.plist, RunAtLoad + KeepAlive; fallback
-        │    detached spawn (setsid) when launchctl is unavailable
-        │    (OXIOS_BRAIN_NO_LAUNCHD=1 test escape). Respawn
-        │    rate-limited 30 s; readiness timeout 30 s.
-        │
-        └─ Status: SupervisorState { Disabled, NotInstalled, Installing,
-             Starting, Online, Failed } + ManagedBy { None, Launchd,
-             Spawn, External }.
+  oxios process
+  ┌────────────────────────────────────────────────────────────┐
+  │  ┌────────────┐ agent ops: one-shot CLI op dispatch        │
+  │  │BrainSession│──▶ oxibrain --dir ~/.oxi/brain <op> --json -
+  │  │ (0 clients)│   stdin payload · response envelope on stdout
+  │  └─────┬──────┘   recall · ingest · search (two-plane) ·
+  │        │          brief · traverse · why · contradictions
+  │        │
+  │        │ console reads (native RPC / resources):
+  │        │   per-call `serve --stdio` child, spawned and
+  │        │   reaped within the call (oxibrain-client 0.10)
+  │        └──▶ stats · pending_stats · document_history ·
+  │             spaces/list · entity:// · timeline:// · space://
+  │
+  │  ┌──────────────┐  one-shot tokio::process::Command        │
+  │  │BrainInstaller│──▶ oxibrain admin index --documents [--embed]
+  │  │ (GitHub DL)  │──▶ oxibrain admin extract --pending      │
+  │  │              │──▶ oxibrain describe  (probe)            │
+  │  └──────────────┘──▶ oxibrain --version  (probes)          │
+  └────────────────────────────────────────────────────────────┘
+     agents: `brain` skill + pre-allowed `oxibrain` CLI (exec structured)
 ```
 
-- **Boot** (`src/kernel.rs`): when `brain.enabled && brain.auto_manage`, `ensure()` installs/launches the daemon before the connection is made. A disabled surface never starts a daemon.
-- **Respawn hook:** `BrainConnection::with_on_unavailable` fires once per failed lazy-reconnect, asking the supervisor to `respawn_if_needed()` (rate-limited); the hook is attached only when the surface is enabled.
-- **`managed_by = external` no-op:** a supervisor that finds a live socket at entry does not touch that daemon (`stop()`/`uninstall()` only act on daemons it started).
-- **Degradation contract holds:** every supervisor failure logs, records state (`SupervisorStatus.last_error`), and returns — agent turns always complete.
-- **CLI:** `oxios brain install|start|stop|uninstall|status`; `/api/brain/status` returns `supervisor: SupervisorStatus`.
+1. **CLI op dispatch** (`crates/oxios-kernel/src/brain/session.rs`) — the
+   agent-facing ops run as one-shot `oxibrain --dir <dir> <op> --json -`
+   subprocesses per the upstream agent-first CLI contract (spec
+   `agent-first-cli-v1`): payload on stdin, stable envelope
+   `{api, ok, op, space?, data, meta}` on stdout, machine-meaningful exit
+   codes. A well-formed envelope proves the transport alive even when the
+   op failed, so availability tracks the transport, not op success. Every
+   op is bounded by a 90 s timeout (`kill_on_drop`). Console-only reads the
+   14-op CLI surface does not expose (`stats`, `pending_stats`,
+   `document_history`, `spaces/list`, `entity://` / `timeline://` /
+   `space://` resources) speak JSON-RPC over a `serve --stdio` child
+   spawned per call and reaped within the call (`StdioChild`,
+   `oxibrain-client` 0.10, crates.io). No respawn bookkeeping: a failed
+   call degrades; the next call starts fresh.
+2. **One-shot CLI** (`crates/oxios-kernel/src/brain/{installer,oneshot}.rs`) —
+   the `admin` namespace runs as short-lived `oxibrain` invocations that
+   exit: `admin index --documents [--embed]`, `admin extract --pending`,
+   `describe` probes, `--version` probes. The installer resolves the binary
+   as `[brain].binary_path` → managed `~/.oxi/bin/oxibrain` →
+   `which("oxibrain")`, and downloads the GitHub Releases tarball
+   (sha256-verified, atomic rename) when `auto_install` (one attempt per
+   30 s). Foundation bootstrap probes via one-shot `describe` (exit 0 +
+   envelope → `Compatible`); there is no handshake child.
+3. **Skill + CLI for agents** — the `memory_{write,read,search}` kernel tools
+   are gone. Agents get the first-party `brain` skill
+   (`share/default-skills/brain/SKILL.md`) and call the `oxibrain <op>`
+   contract through the exec tool (structured mode, binary pre-allowed at
+   boot): scratch-file JSON payloads (`--json @file`), required `space`,
+   `--dir` before the op name.
+
+**Space binding is per-chat.** The chat request's `brain_space` becomes
+`ExecEnv.brain_space`: the system prompt carries a `## Connected Brain`
+section and every exec exports `$OXIOS_BRAIN_SPACE`. A chat with no binding
+has the brain surface fully off — `oxibrain` exec is denied and the `brain`
+skill is filtered from capabilities. `[brain].default_space` (global) and
+`Project.default_brain_space` (project) seed new chats; empty = unconnected.
+
+**Document plane:** vault ingestion is a declaration, not an RPC. oxios no
+longer writes `~/.oxi/brain/documents.toml` — the vault root is declared by
+the user (or oxibrain's typed document-root registration), and the boot warm
+index / `oxios brain reindex` reconcile whatever roots are declared.
+`search`/`recall` auto-materialize unmaterialized roots, so a failed
+boot-time warm index never blocks.
+
+**Extraction drain:** `remember` (op `ingest`) parks episodes in the
+extraction backlog — a CLI one-shot has no sampling client, so
+`extraction: pending` is success, not completion (spec §8). A kernel timer
+(every 10 min) checks `pending_stats()` and, when non-empty, spawns a
+one-shot `oxibrain admin extract --pending`. A backlog waiting while oxios
+is not running is the daemonless contract, not a bug.
+
+**Boot gating:** brain boot work (daemon-era legacy cleanup — launchd plist
+bootout, stale socket/pid — warm document index, drain timer)
+runs only on the long-lived daemon surface (`KernelBuilder.daemon`), exactly
+like the RFC-050 vault watcher. One-shot CLI commands never spawn overlapping
+index children.
+
+**Degradation contract:** missing binary, failed spawn, timeout, or op error
+→ every method returns `None`/empty, logged once at `warn`; turns always
+complete; boot never blocks (brain is additive, never load-bearing).
+`review_merges` degrades unconditionally until upstream ships `admin review`
+(spec §10; the tool was removed in v2.13).
+
+**In-kernel survivors:** SONA (trajectory pattern engine, `memory_agent::sona`)
+and the embedding traits (`embedding` — `TextVector`, `cosine_similarity_f32`)
+were rehomed from the retired `oxios-memory` crate. `KernelDatabase` (SQLite
+WAL) owns the project/session tables in `~/.oxios/workspace/kernel.db`.
+
+**Config:** `[brain]` section — `enabled` / `dir` (default `~/.oxi/brain`) /
+`default_space` (default empty = unconnected; seeds new chats without a
+project binding) / `binary_path` / `auto_install` (renamed from
+`auto_manage`). `socket_path` and `auto_manage` are removed; old configs
+warn-and-ignore them.
+
+**Metrics:** `oxibrain_available` (gauge — last transport interaction
+succeeded), `oxibrain_recall_total` (counter, incremented on successful
+recall).
+
+**CLI:** `oxios brain status|install|uninstall|reindex|extract`;
+`/api/brain/status` reports transport/binary state + pending backlog;
+`/api/brain/spaces` and `/api/brain/space?space=` browse the space roster
+and one space's overview.
+
+**Source:** `crates/oxios-kernel/src/brain/{session,installer,oneshot,config}.rs`
+
+Design: `docs/designs/2026-08-29-brain-cli-op-cutover-design.md` (supersedes
+the transport half of `2026-08-27-daemonless-brain-design.md`, which
+superseded the transport/lifecycle half of RFC-047 and all of RFC-049).
 
 
 ### 3.14.1 Oxi Foundation — Versioned Profile/Package Contract (RFC-048)
@@ -737,45 +792,97 @@ log line and receipt.
 
 ---
 
-### 3.15 ProjectManager — Context Partitioning
+### 3.15 ProjectManager — Explicit Workspace Context
 
-Projects partition conversations and resources into isolated contexts, auto-detected from messages. (Renamed from "Spaces": `SpaceManager` → `ProjectManager`, `SpaceId` → `ProjectId`. The old JSON-file persistence and merge/archive operations were removed.)
+A Project is the persisted unit of workspace context: a unique name, an
+ordered list of canonical filesystem roots, and project instructions.
+Sessions reference a project by id (top-level field, with legacy
+`metadata.project_id(s)` fallbacks); a session with no binding simply runs
+without project filesystem scope. Auto-detection from message content was
+removed — binding is always explicit. (Renamed from "Spaces":
+`SpaceManager` → `ProjectManager`, `SpaceId` → `ProjectId`; the mount
+subsystem of RFC-025 was deleted in favor of project roots — see
+`docs/designs/2026-08-29-project-roots-persona-workbench-design.md`.)
 
 ```
   ┌──────────────────────────────────────────────────────────┐
   │                    ProjectManager                         │
   │                                                          │
-  │  ┌────────────────────────────────────────────────────┐  │
-  │  │       3-Layer Detection Strategy                   │  │
-  │  │                                                    │  │
-  │  │  Layer 1: Filesystem Path (fast, free)             │  │
-  │  │    "/projects/oxios/src/main.rs" → oxios Project   │  │
-  │  │    → PathMatcher: glob-based path → ProjectId map  │  │
-  │  │                                                    │  │
-  │  │  Layer 2: Keyword/Tag (fast, free)                 │  │
-  │  │    Message contains Project tags → match           │  │
-  │  │                                                    │  │
-  │  │  Layer 3: Topic Classification (LLM, slow)         │  │
-  │  │    Topic shift detection via ConversationBuffer    │  │
-  │  └────────────────────────────────────────────────────┘  │
+  │  Root validation (before any persistence):               │
+  │    validate_root_paths(paths)                            │
+  │    absolute + existing dir + canonicalized + deduped,    │
+  │    order-stable; empty list = folderless project         │
   │                                                          │
   │  Operations (ProjectManager):                            │
-  │  detect(message) → DetectionResult                       │
-  │  create_project / update_project / remove_project        │
+  │  create / update / remove_project                        │
   │  list_projects / get_project / get_project_by_name       │
-  │  link_memory / unlink_memory (project ↔ memory)          │
   │  touch(id) — bump last-active                            │
   │                                                          │
+  │  Execution scope: root_paths[0] is the working           │
+  │  directory; all roots bound into agent permissions.      │
+  │  Removing/deleting a project detaches its sessions —     │
+  │  they never fall back to an ambient workspace.           │
+  │                                                          │
   │  Persistence:                                            │
-  │  SQLite `projects` table (via ProjectDb)                 │
-  │  Project { id, name, description, tags, emoji, source,   │
-  │            mount_ids (RFC-025), instructions (RFC-025) }  │
+  │  SQLite `projects` table (KernelDatabase, project_db)    │
+  │  Project { id, name, root_paths, instructions,           │
+  │            created_at, updated_at, last_active_at }      │
   └──────────────────────────────────────────────────────────┘
 ```
 
-**Source:** `crates/oxios-kernel/src/project/manager.rs` (detection in `project/detection.rs`)
+**Source:** `crates/oxios-kernel/src/project/manager.rs` (record in
+`project/mod.rs`, SQLite in `project/project_db.rs`)
 
 ---
+
+### 3.15.1 IssueApi — Project Issues, Milestones, and Session Todo
+
+Two related surfaces added with `oxicode-sdk` 0.77.
+
+**Issues and milestones** are scoped to a Project and stored as markdown
+documents under `~/.oxi/oxios/projects/<project-id>/`:
+
+```
+~/.oxi/oxios/projects/<uuid>/
+  issues/0001-fix-login.md     YAML frontmatter + markdown body
+  issues/.alive/<identity>     flock files (SDK-managed)
+  milestones.yaml              milestone definitions
+```
+
+One directory per project means one id space, so issue numbers (`#12`) are
+project-scoped and stable. `IssueApi` wraps `oxicode_sdk::FileIssueStore`,
+which supplies atomic writes, content-hash CAS, and process-liveness
+assignment; Oxios adds the project scoping, the ownership identity, and the
+milestone layer.
+
+**Oxios issues are deliberately separate from `oxicode`'s per-folder
+`.oxicode/issues/` store.** The two products track different scopes: a
+terminal agent tracks the folder it was launched in, Oxios tracks a Project
+that may span zero or many folders. We reuse the SDK implementation without
+sharing its data.
+
+The address is also the security boundary. `gate::OXI_HOME_DENY_ROOTS`
+already denies `~/.oxi` wholesale to the file tools, so issue files are
+unreachable through `read`/`write`/`edit`/`grep`/`find`/`ls`, while
+`IssueApi` reaches them via `std::fs` without passing `AccessGate`. The agent
+can therefore only mutate issues through the `issue` tool — which maintains
+the CAS check and the assignment lock that a raw `edit` would bypass.
+
+**Ownership** is `oxios-<pid>-<session>`, carried into
+`ToolContext.session_id` via `AgentConfig.session_id`, and backed by an
+`AliveGuard` (`flock`) held for the session's lifetime. Daemon exit releases
+every guard, so claims become reclaimable without a timeout or heartbeat.
+
+**Milestones** carry membership as a reserved `milestone:<slug>` issue label
+— `IssueMeta` is SDK-owned and drops unknown frontmatter keys on write, so a
+field would not survive. Progress is derived by listing labelled issues, never
+stored.
+
+**Session todo** is separate and lives only in memory: `TodoRegistry` keys one
+`OxiosTodoState` per chat session and is wired to `AgentConfig.todo`, so a
+plan created on one turn is still there on the next. The kernel's `todo` tool
+wraps the SDK contract to publish a phase snapshot for the Web UI's live
+checklist.
 
 ### 3.16 McpBridge — Model Context Protocol
 
@@ -1065,7 +1172,7 @@ Google's A2A protocol for horizontal agent↔agent communication. Unlike MCP (ve
 
 ## 4. KernelHandle Facade
 
-The KernelHandle is the **syscall table** of the Agent OS. It is a facade composed of **22 typed APIs** that provide the single path for all kernel operations — all tools go through it, never reaching subsystems directly (full list below).
+The KernelHandle is the **syscall table** of the Agent OS. It is a facade composed of **21 typed APIs** that provide the single path for all kernel operations — all tools go through it, never reaching subsystems directly (full list below).
 
 | Domain | Typed APIs |
 |--------|-----------|
@@ -1075,13 +1182,13 @@ The KernelHandle is the **syscall table** of the Agent OS. It is a facade compos
 | Security | `SecurityApi` |
 | Identity & persona | `PersonaApi` |
 | Communication | `A2aApi` · `McpApi` |
-| Infrastructure | `InfraApi` · `EngineApi` · `BrowserApi` · `MountApi` |
+| Infrastructure | `InfraApi` · `EngineApi` · `BrowserApi` |
 | Integrations | `CalendarApi` · `EmailApi` |
 | Scheduling & quota | `TokenMaxingApi` |
 | Marketplace | `MarketplaceApi` |
-| Projects (was Spaces) | `ProjectApi` |
+| Projects (was Spaces; was mount-bound) | `ProjectApi` |
 
-> `ProjectApi` replaces the former `SpaceApi` (conversation spaces → projects). `KnowledgeLens` is the knowledge surface — there is no separate `KnowledgeBaseApi`.
+> `ProjectApi` replaces the former `SpaceApi` (conversation spaces → projects) and absorbs the deleted `MountApi`: a project's `root_paths` are the sole filesystem scope, and the session/execution workspace HTTP surface lives at `/api/project/workspace/*`. `KnowledgeLens` is the knowledge surface — there is no separate `KnowledgeBaseApi`.
 
 **Cross-facade convenience methods** compose across APIs: `save_and_commit()`, `delete_and_commit()`, `commit_all()` (State + Git); `flush_audit()` (Security + Git); `schedule()` (Cron). The handle is cached via `OnceLock`.
 
@@ -1307,12 +1414,12 @@ Complete path of a user message through the system:
   │   │       ├── agent_runtime.rs     engine.rs              event_bus.rs
   │   │       ├── state_store.rs       config.rs              types.rs
   │   │       ├── access_manager/      # RBAC + path sandbox + audit trail
-  │   │       ├── brain/              # oxibrain daemon client (BrainConnection) + SONA + embeddings (RFC-047)
-  │   │       ├── kernel_handle/       # Facade — 22 typed APIs (see §4)
+  │   │       ├── brain/              # one-process-per-op BrainSession + BrainInstaller (§3.14)
+  │   │       ├── kernel_handle/       # Facade — 21 typed APIs (see §4)
   │   │       ├── tools/               # builtin/, kernel_bridge.rs, exec_tool.rs
   │   │       ├── skill/               # Unified skill system (RFC-009): clawhub, skills_sh
   │   │       ├── persona/             a2a/                   resilience/
-  │   │       ├── token_maxing/        host_tools/            mount/
+  │   │       ├── token_maxing/        host_tools/            foundation/
   │   │       ├── project/             image_gen/             capability/
   │   │       ├── cron.rs              git_layer.rs           budget.rs
   │   │       ├── resource_monitor.rs  auth.rs                credential.rs
@@ -1401,7 +1508,6 @@ Complete path of a user message through the system:
   All three must pass for access to be granted
 ```
 
-### 7.4 ExecTool Security
 
 ```
   ┌──────────────────────────────────────────────────┐
@@ -1540,7 +1646,7 @@ The kernel uses directory-level modules with `pub(crate)` encapsulation:
 
 | Directory | Lines | External deps from kernel | Self-contained? |
 |-----------|-------|---------------------------|----------------|
-| `brain/` | ~340 | `oxibrain-client` (daemon socket) | ✅ Thin client — store is external (RFC-047) |
+| `brain/` | ~1,560 | `oxibrain-client` 0.10 (per-op CLI + per-call child) | ✅ Thin client — store is external (§3.14) |
 | `tools/` | 7,047 | `KernelHandle` (facade pattern) | ✅ Goes through facade |
 | `access_manager/` | 3,681 | `types`, `capability`, `config` (3) | ✅ Nearly isolated |
 | `kernel_handle/` | 3,063 | All subsystems (by design) | — This IS the facade |
@@ -1593,7 +1699,7 @@ Instead of crate splitting, the kernel manages complexity through:
 - **`pub(crate)` encapsulation**: Module internals stay internal
 - **Directory-level mod.rs**: Each subsystem controls its own visibility
 - **lib.rs section organization**: Clear logical grouping with labeled sections
-- **KernelHandle facade**: Single entry point for all 22 APIs, preventing direct subsystem coupling in consumers
+- **KernelHandle facade**: Single entry point for all 21 APIs, preventing direct subsystem coupling in consumers
 
 ---
 

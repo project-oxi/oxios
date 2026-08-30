@@ -135,10 +135,11 @@ async fn main() -> Result<()> {
     // server static is learned ON THE WIRE in msg2 and verified against the
     // offer's pin below. Do NOT pre-feed `remote_public_key` — that would
     // defeat the whole point of pinning.
-    let client_kp = snow::Builder::new(NOISE_XX.parse().unwrap())
+    let pattern: snow::params::NoiseParams = NOISE_XX.parse().context("parse noise pattern")?;
+    let client_kp = snow::Builder::new(pattern.clone())
         .generate_keypair()
         .context("generate client keypair")?;
-    let mut initiator = snow::Builder::new(NOISE_XX.parse().unwrap())
+    let mut initiator = snow::Builder::new(pattern)
         .local_private_key(&client_kp.private)
         .context("set client static")?
         .build_initiator()

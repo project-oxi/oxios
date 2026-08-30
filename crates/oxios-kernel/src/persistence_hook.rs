@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::brain::BrainConnection;
+use crate::brain::BrainSession;
 use crate::engine::EngineHandle;
 use crate::event_bus::{EventBus, KernelEvent};
 use crate::memory_agent::sona::TrajectoryStep;
@@ -85,7 +85,7 @@ pub struct KnowledgeSaveRecord {
 /// to memory and/or knowledge, using heuristic rules first and an
 /// optional LLM reflection pass for ambiguous cases.
 pub struct PersistenceHook {
-    brain: Option<Arc<BrainConnection>>,
+    brain: Option<Arc<BrainSession>>,
     knowledge_base: Arc<KnowledgeBase>,
     engine_handle: Arc<EngineHandle>,
     state_store: Arc<StateStore>,
@@ -100,7 +100,7 @@ impl PersistenceHook {
     /// and execute. `brain` is the daemon connection (RFC-047); `None` when
     /// the daemon is unavailable (memory writes degrade silently).
     pub fn new(
-        brain: Option<Arc<BrainConnection>>,
+        brain: Option<Arc<BrainSession>>,
         knowledge_base: Arc<KnowledgeBase>,
         engine_handle: Arc<EngineHandle>,
         state_store: Arc<StateStore>,
@@ -187,19 +187,27 @@ impl PersistenceHook {
         mut plan: PersistencePlan,
         session_id: &str,
         message_index: usize,
+        brain_space: Option<&str>,
     ) {
-        // Memory writes — persisted to the brain daemon (RFC-047). The
+        // Memory writes — persisted to the brain (RFC-047) in the
+        // chat-scoped space. Skip-unless-bound: without a space there is
+        // nothing to write to (the boot-time space is gone). The
         // memory_type field is kept for the plan's serialized shape but the
         // brain owns classification; content is stored as-is with the session
         // id embedded in the source label.
-        for mw in &plan.memory {
-            let source = format!("persistence-hook:{session_id}");
-            match &self.brain {
-                Some(brain) => match brain.remember(&mw.content, &source).await {
+        if let (Some(space), Some(brain)) = (brain_space, &self.brain) {
+            for mw in &plan.memory {
+                let source = format!("persistence-hook:{session_id}");
+                match brain.remember(space, &mw.content, &source).await {
                     Some(_id) => tracing::debug!(session = session_id, "Hook saved memory"),
                     None => tracing::debug!("brain unavailable — memory write skipped"),
-                },
-                None => tracing::debug!("brain unavailable — memory write skipped"),
+                }
+            }
+        } else if !plan.memory.is_empty() {
+            if brain_space.is_some() {
+                tracing::debug!("brain unavailable — memory write skipped (space bound)");
+            } else {
+                tracing::debug!("brain unbound — memory write skipped");
             }
         }
 

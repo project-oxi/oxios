@@ -1,23 +1,23 @@
-//! ProjectManager: CRUD operations for Projects using SQLite.
+//! ProjectManager: CRUD operations for Projects backed by SQLite.
 //!
-//! Replaces SpaceManager with a simpler, project-centric design:
 //! - No default project (project-less sessions are natural)
-//! - No active/inactive state (activity is per-session)
-//! - SQLite persistence alongside memories
-//! - Lookup by name, path, or tag
+//! - SQLite persistence in the shared kernel database
+//! - Root paths are validated (absolute, existing directory, canonicalized,
+//!   de-duplicated, order-stable) before anything is persisted
+//! - Project names are unique (in-memory pre-check + DB unique index backstop)
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
 use parking_lot::RwLock;
 
-use crate::kernel_db::KernelDatabase;
-
 use super::project_db;
-use super::{DetectionResult, Project, ProjectId, ProjectSource, detect_project};
+use super::{Project, ProjectId};
 use crate::event_bus::{EventBus, KernelEvent};
+use crate::kernel_db::KernelDatabase;
 
 /// Errors from ProjectManager operations.
 #[derive(thiserror::Error, Debug)]
@@ -25,18 +25,74 @@ pub enum ProjectManagerError {
     /// Project not found.
     #[error("Project not found: {0}")]
     NotFound(ProjectId),
+    /// A project root path failed validation.
+    #[error("invalid root path {path:?}: {reason}")]
+    InvalidRoot {
+        /// The offending path.
+        path: PathBuf,
+        /// English explanation of why the path was rejected.
+        reason: String,
+    },
     /// Project name already taken.
-    #[error("Project name already exists: {0}")]
-    DuplicateName(String),
+    #[error("project name already exists: {0}")]
+    NameExists(String),
     /// Invalid operation.
     #[error("Invalid operation: {0}")]
     Invalid(String),
+    /// Database failure.
+    #[error("database error: {0}")]
+    Database(#[from] rusqlite::Error),
 }
 
-/// Manages Projects: CRUD, lookup, and detection.
+/// Validate and canonicalize project root paths (design §4.1).
 ///
-/// Projects are persisted in the `projects` SQLite table
-/// (same `memory.db` as memories).
+/// Every path must be absolute and an existing directory; accepted paths are
+/// canonicalized (symlinks resolved) and de-duplicated while preserving
+/// first-occurrence order. An empty list is valid — it means the project has
+/// no filesystem scope.
+pub fn validate_root_paths(paths: Vec<PathBuf>) -> Result<Vec<PathBuf>, ProjectManagerError> {
+    let mut canonical: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !path.is_absolute() {
+            return Err(ProjectManagerError::InvalidRoot {
+                path,
+                reason: "path must be absolute".to_string(),
+            });
+        }
+        let metadata = std::fs::metadata(&path).map_err(|_| ProjectManagerError::InvalidRoot {
+            path: path.clone(),
+            reason: "path does not exist".to_string(),
+        })?;
+        if !metadata.is_dir() {
+            return Err(ProjectManagerError::InvalidRoot {
+                path: path.clone(),
+                reason: "path is not a directory".to_string(),
+            });
+        }
+        let canon = std::fs::canonicalize(&path).map_err(|_| ProjectManagerError::InvalidRoot {
+            path: path.clone(),
+            reason: "path does not exist".to_string(),
+        })?;
+        if !canonical.contains(&canon) {
+            canonical.push(canon);
+        }
+    }
+    Ok(canonical)
+}
+
+/// True when the SQLite error is a constraint violation (the `name` unique
+/// index backstop catching a create/update race).
+fn is_unique_violation(err: &rusqlite::Error) -> bool {
+    matches!(
+        err.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::ConstraintViolation)
+    )
+}
+
+/// Manages Projects: CRUD, validation, and lookup.
+///
+/// Projects are persisted in the `projects` SQLite table (the shared
+/// `kernel.db`) and mirrored in an in-memory index for fast lookup.
 pub struct ProjectManager {
     /// In-memory index of all Projects (loaded at startup).
     projects: RwLock<HashMap<ProjectId, Project>>,
@@ -51,17 +107,15 @@ pub struct ProjectManager {
 impl ProjectManager {
     /// Create a new ProjectManager, loading existing projects from SQLite.
     pub fn new(db: Arc<KernelDatabase>, event_bus: Option<EventBus>) -> Result<Self> {
-        // Ensure the schema exists (idempotent).
-        // Mirrors MountManager::new — KernelDatabase only bootstraps
-        // the connection, so project tables must be created here.
+        // Ensure the schema exists (idempotent). KernelDatabase only
+        // bootstraps the connection, so the project table is created here.
         project_db::ensure_project_schema(&db.conn())?;
 
         let mut projects = HashMap::new();
         let mut name_index = HashMap::new();
 
         // Load existing projects from SQLite
-        let rows = project_db::list_projects(&db.conn())?;
-        for project in rows {
+        for project in project_db::list_projects(&db.conn())? {
             name_index.insert(project.name.clone(), project.id);
             projects.insert(project.id, project);
         }
@@ -93,48 +147,51 @@ impl ProjectManager {
     }
 
     /// Create a new project.
-    pub fn create_project(
+    ///
+    /// Validates the name (non-empty, unique) and the root paths before any
+    /// state is written; the DB unique index on `name` is the concurrency
+    /// backstop for the in-memory pre-check.
+    pub fn create(
         &self,
-        name: String,
-        tags: Vec<String>,
-        emoji: Option<String>,
-        description: Option<String>,
-        source: ProjectSource,
-    ) -> Result<Project> {
-        // Check for duplicate name
-        {
-            let name_index = self.name_index.read();
-            if name_index.contains_key(&name) {
-                return Err(ProjectManagerError::DuplicateName(name).into());
+        name: &str,
+        root_paths: Vec<PathBuf>,
+        instructions: &str,
+    ) -> std::result::Result<Project, ProjectManagerError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ProjectManagerError::Invalid(
+                "project name must not be empty".to_string(),
+            ));
+        }
+        if self.name_index.read().contains_key(name) {
+            return Err(ProjectManagerError::NameExists(name.to_string()));
+        }
+
+        let roots = validate_root_paths(root_paths)?;
+        let project = Project::new(name, roots, instructions);
+
+        if let Err(e) = project_db::save_project(&self.db.conn(), &project) {
+            if is_unique_violation(&e) {
+                return Err(ProjectManagerError::NameExists(project.name.clone()));
             }
+            return Err(e.into());
         }
-
-        let mut project = Project::new(&name, source);
-        project.tags = tags;
-        if let Some(emoji) = emoji {
-            project.emoji = emoji;
-        }
-        if let Some(description) = description {
-            project.description = description;
-        }
-
-        // Persist to SQLite
-        project_db::save_project(&self.db.conn(), &project)?;
 
         // Update in-memory indices
         {
             let mut projects = self.projects.write();
-            let mut name_index = self.name_index.write();
-            name_index.insert(project.name.clone(), project.id);
+            self.name_index
+                .write()
+                .insert(project.name.clone(), project.id);
             projects.insert(project.id, project.clone());
         }
 
         // Publish event
-        if let Some(ref event_bus) = self.event_bus {
+        if let Some(event_bus) = &self.event_bus {
             let _ = event_bus.publish(KernelEvent::ProjectCreated {
                 project_id: project.id,
                 name: project.name.clone(),
-                source: source.to_string(),
+                source: "manual".to_string(),
             });
         }
 
@@ -142,71 +199,87 @@ impl ProjectManager {
         Ok(project)
     }
 
-    /// Update an existing project.
-    pub fn update_project(
+    /// Update an existing project. Only the provided fields change; root
+    /// paths are re-validated before any state is mutated.
+    pub fn update(
         &self,
         id: ProjectId,
         name: Option<String>,
-        tags: Option<Vec<String>>,
-        emoji: Option<String>,
-        description: Option<String>,
-    ) -> Result<Project> {
-        let mut projects = self.projects.write();
-        let mut name_index = self.name_index.write();
-
-        let project = projects
-            .get_mut(&id)
-            .ok_or(ProjectManagerError::NotFound(id))?;
-
-        // If renaming, check for duplicate
-        if let Some(ref new_name) = name
-            && *new_name != project.name
+        root_paths: Option<Vec<PathBuf>>,
+        instructions: Option<String>,
+    ) -> std::result::Result<Project, ProjectManagerError> {
+        if let Some(new_name) = &name
+            && new_name.trim().is_empty()
         {
-            if name_index.contains_key(new_name) {
-                return Err(ProjectManagerError::DuplicateName(new_name.clone()).into());
+            return Err(ProjectManagerError::Invalid(
+                "project name must not be empty".to_string(),
+            ));
+        }
+        // Validate roots up-front so a rejected path leaves the record
+        // untouched (design §9: invalid roots never reach persistence).
+        let roots = match root_paths {
+            Some(paths) => Some(validate_root_paths(paths)?),
+            None => None,
+        };
+
+        let project_clone = {
+            let mut name_index = self.name_index.write();
+            let mut projects = self.projects.write();
+            let project = projects
+                .get_mut(&id)
+                .ok_or(ProjectManagerError::NotFound(id))?;
+
+            // If renaming, check for duplicates and reindex.
+            if let Some(new_name) = name.map(|n| n.trim().to_string())
+                && new_name != project.name
+            {
+                if name_index.contains_key(&new_name) {
+                    return Err(ProjectManagerError::NameExists(new_name));
+                }
+                name_index.remove(&project.name);
+                name_index.insert(new_name.clone(), id);
+                project.name = new_name;
             }
-            // Remove old name from index
-            name_index.remove(&project.name);
-            name_index.insert(new_name.clone(), id);
-            project.name = new_name.clone();
-        }
 
-        if let Some(tags) = tags {
-            project.tags = tags;
-        }
-        if let Some(emoji) = emoji {
-            project.emoji = emoji;
-        }
-        if let Some(description) = description {
-            project.description = description;
-        }
+            if let Some(roots) = roots {
+                project.root_paths = roots;
+            }
+            if let Some(instructions) = instructions {
+                project.instructions = instructions;
+            }
+            project.updated_at = Utc::now();
+            project.clone()
+        };
 
-        project.updated_at = Utc::now();
-
-        // Persist
-        let project_clone = project.clone();
-        drop(projects);
-        drop(name_index);
-        project_db::save_project(&self.db.conn(), &project_clone)?;
+        if let Err(e) = project_db::save_project(&self.db.conn(), &project_clone) {
+            if is_unique_violation(&e) {
+                return Err(ProjectManagerError::NameExists(project_clone.name.clone()));
+            }
+            return Err(e.into());
+        }
 
         tracing::info!(name = %project_clone.name, id = %id, "Project updated");
         Ok(project_clone)
     }
 
     /// Remove a project.
-    pub fn remove_project(&self, id: ProjectId) -> Result<()> {
+    pub fn remove_project(&self, id: ProjectId) -> Result<(), ProjectManagerError> {
         {
             let mut projects = self.projects.write();
-            let mut name_index = self.name_index.write();
-
             let project = projects
                 .remove(&id)
                 .ok_or(ProjectManagerError::NotFound(id))?;
-            name_index.remove(&project.name);
+            self.name_index.write().remove(&project.name);
         }
 
-        // Remove from SQLite (cascades to project_memory via FK)
         project_db::delete_project(&self.db.conn(), &id.to_string())?;
+
+        // Remove the project's on-disk data (issues, milestones). A missing
+        // directory is success; any other failure degrades to a warning — the
+        // SQLite row is already gone, and the orphaned files are inert.
+        if let Err(e) = crate::project::paths::remove_project_dir(id) {
+            tracing::warn!(id = %id, error = %e, "failed to remove project data directory");
+        }
 
         tracing::info!(id = %id, "Project removed");
         Ok(())
@@ -214,78 +287,38 @@ impl ProjectManager {
 
     /// Record that a project was used in a session.
     pub fn touch(&self, id: ProjectId) {
-        if let Some(project) = self.projects.write().get_mut(&id) {
+        let project_clone = {
+            let mut projects = self.projects.write();
+            let Some(project) = projects.get_mut(&id) else {
+                return;
+            };
             project.touch();
-            let project_clone = project.clone();
-            drop(self.projects.write());
-            let _ = project_db::save_project(&self.db.conn(), &project_clone);
-        }
+            project.clone()
+        };
+        let _ = project_db::save_project(&self.db.conn(), &project_clone);
     }
 
-    /// Try to detect a project from a user message.
+    /// Update a Project's bundle fields (instructions, default brain space).
     ///
-    /// Returns the matched ProjectId, or None.
-    pub fn detect(&self, message: &str) -> DetectionResult {
-        let projects = self.list_projects();
-        detect_project(message, &projects)
-    }
-
-    /// Link a memory to a project.
-    pub fn link_memory(&self, project_id: ProjectId, memory_id: &str) -> Result<()> {
-        {
-            let projects = self.projects.read();
-            if !projects.contains_key(&project_id) {
-                return Err(ProjectManagerError::NotFound(project_id).into());
-            }
-        }
-        project_db::link_project_memory(&self.db.conn(), &project_id.to_string(), memory_id)?;
-        Ok(())
-    }
-
-    /// Unlink a memory from a project.
-    pub fn unlink_memory(&self, project_id: ProjectId, memory_id: &str) -> Result<()> {
-        project_db::unlink_project_memory(&self.db.conn(), &project_id.to_string(), memory_id)?;
-        Ok(())
-    }
-
-    /// Get all memory IDs associated with a project.
-    pub fn get_project_memory_ids(&self, project_id: ProjectId) -> Result<Vec<String>> {
-        project_db::get_project_memory_ids(&self.db.conn(), &project_id.to_string())
-    }
-
-    /// Save (upsert) a project to SQLite directly.
-    ///
-    /// Used when fields like `memory_visible` need updating
-    /// outside the standard `update_project()` flow.
-    pub fn save_project(&self, project: &Project) -> Result<()> {
-        project_db::save_project(&self.db.conn(), project)?;
-
-        // Refresh in-memory indices
-        let mut projects = self.projects.write();
-        let mut name_index = self.name_index.write();
-        name_index.insert(project.name.clone(), project.id);
-        projects.insert(project.id, project.clone());
-
-        Ok(())
-    }
-
-    /// Update a Project's RFC-025 fields (mount_ids, instructions).
+    /// For `default_brain_space`, the outer `Option` selects change (`Some`)
+    /// vs leave-untouched (`None`); the inner `None` clears the value. The
+    /// reduced model carries no `mount_ids`; presentation is UI-derived.
     pub fn update_project_bundle(
         &self,
         id: ProjectId,
-        mount_ids: Option<Vec<crate::mount::MountId>>,
         instructions: Option<String>,
+        default_brain_space: Option<Option<String>>,
     ) -> Result<Project> {
         let mut projects = self.projects.write();
         let project = projects
             .get_mut(&id)
             .ok_or(ProjectManagerError::NotFound(id))?;
 
-        if let Some(mids) = mount_ids {
-            project.mount_ids = mids;
-        }
         if let Some(instr) = instructions {
             project.instructions = instr;
+        }
+        if let Some(space) = default_brain_space {
+            project.default_brain_space = space;
         }
         project.updated_at = Utc::now();
 
@@ -294,30 +327,11 @@ impl ProjectManager {
         project_db::save_project(&self.db.conn(), &project_clone)?;
         Ok(project_clone)
     }
-    /// Clear the legacy `paths` field after the RFC-025 migration has linked
-    /// Mounts via `mount_ids`. The field is retained on the struct only as the
-    /// migration read-source; once Mounts are linked it is dead weight that
-    /// the runtime legacy fallbacks would otherwise keep reading.
-    pub fn clear_legacy_paths(&self, id: ProjectId) -> Result<()> {
-        let mut projects = self.projects.write();
-        let project = projects
-            .get_mut(&id)
-            .ok_or(ProjectManagerError::NotFound(id))?;
-        project.paths.clear();
-        project.updated_at = Utc::now();
-        let project_clone = project.clone();
-        drop(projects);
-        project_db::save_project(&self.db.conn(), &project_clone)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // NOTE: Full integration tests require a SQLite connection.
-    // These are unit tests for in-memory operations.
 
     #[test]
     fn test_project_manager_error_display() {
@@ -325,7 +339,49 @@ mod tests {
         let err = ProjectManagerError::NotFound(id);
         assert!(err.to_string().contains("Project not found"));
 
-        let err = ProjectManagerError::DuplicateName("test".to_string());
+        let err = ProjectManagerError::NameExists("test".to_string());
         assert!(err.to_string().contains("already exists"));
+
+        let err = ProjectManagerError::InvalidRoot {
+            path: PathBuf::from("/x"),
+            reason: "path does not exist".to_string(),
+        };
+        assert!(err.to_string().contains("invalid root path"));
+    }
+
+    #[test]
+    fn remove_project_deletes_the_project_data_directory() {
+        use crate::kernel_handle::issue_api::{IssueApi, NewIssue};
+        use crate::project::paths::{self, test_support::temp_data_home};
+
+        let _home = temp_data_home();
+        let db = Arc::new(KernelDatabase::open_in_memory().expect("open db"));
+        let manager = ProjectManager::new(db, None).expect("manager");
+        let project = manager
+            .create("cleanup", vec![], "")
+            .expect("create project");
+
+        let issues = IssueApi::new();
+        issues
+            .create_milestone(project.id, "v1".into(), None, None, None)
+            .expect("create milestone");
+        issues
+            .create(project.id, NewIssue::new("fix it").session("s"))
+            .expect("create issue");
+
+        let dir = paths::project_dir(project.id);
+        assert!(
+            dir.is_dir(),
+            "data dir should exist before removal: {}",
+            dir.display()
+        );
+
+        manager.remove_project(project.id).expect("remove project");
+
+        assert!(
+            !dir.exists(),
+            "data dir should be gone after removal: {}",
+            dir.display()
+        );
     }
 }

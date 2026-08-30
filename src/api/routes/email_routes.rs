@@ -437,7 +437,7 @@ pub(crate) async fn handle_email_setup(
         .map_err(|e| AppError::Internal(format!("Failed to save credentials: {e}")))?;
 
     // Persist to config.toml (upsert — replaces existing [email] section)
-    let config_path = oxios_kernel::config::expand_home("~/.oxios/config.toml");
+    let config_path = state.config_path.clone();
     if config_path.exists() {
         let _ = upsert_email_section_in_config(&config_path, &config);
     }

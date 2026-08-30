@@ -1,104 +1,91 @@
 //! CSpace resolution — determines an agent's initial capability space from
-//! Directive + Config inputs.
+//! Directive + Persona inputs.
 //!
 //! The resolution follows a priority chain:
 //!
-//! 1. **Explicit cspace hint** on the directive → parse and use it.
-//! 2. **Persona role** → map known roles to built-in templates.
-//! 3. **Default** → fall back to the `worker` template.
-//!
+//! 1. **Explicit cspace hint** on the directive → template/profile by name.
+//! 2. **Persona tool profile** (`base` | `code` | `minimal` | `control`) → the
+//!    matching persona profile template.
+//! 3. **Default** → fall back to the `code` profile.
+
 //! # Example
 //!
 //! ```no_run
 //! use oxios_kernel::capability::resolve::resolve_cspace;
+//! use oxios_kernel::persona::ToolProfile;
 //! use oxios_kernel::types::AgentId;
 //!
-//! let cspace = resolve_cspace(None, Some("operator"), None, AgentId::new_v4());
+//! let cspace = resolve_cspace(None, ToolProfile::Base, AgentId::new_v4());
 //! assert!(cspace.len() > 2);
 //! ```
 
+use crate::persona::ToolProfile;
 use crate::types::AgentId;
 
 use super::template::CapabilityTemplate;
 use super::types::CSpace;
 
-/// Known role names that map to built-in capability templates.
-const ROLE_WORKER: &str = "worker";
-const ROLE_STANDARD: &str = "standard";
-const ROLE_OPERATOR: &str = "operator";
-const ROLE_SUPERVISOR: &str = "supervisor";
+/// Known template names selectable via [`ExecEnv::cspace_hint`].
+const PROFILE_BASE: &str = "base";
+const PROFILE_CODE: &str = "code";
+const PROFILE_MINIMAL: &str = "minimal";
+/// Legacy token-maxing hint — behaves like `code` (the old `standard`
+/// template only differed by a memory-READ grant that never produced a
+/// registered tool on this path).
+const LEGACY_STANDARD: &str = "standard";
 
 /// Resolve an agent's initial CSpace from the available context.
 ///
 /// # Arguments
 ///
-/// * `cspace_hint` — Optional hint string from the Directive. Can be a known
-///   template name ("worker", "standard", "operator", "supervisor") or a
-///   JSON object describing custom capabilities.
-/// * `persona_role` — The role field of the assigned persona, if any.
-/// * `default_template` — Optional override for the fallback template name.
-///   Defaults to "worker" if not specified.
+/// * `cspace_hint` — Optional hint string from the directive. Accepts a
+///   profile name ("base", "code", "minimal") or the legacy "standard"
+///   name (token-maxing; equivalent to `code`).
+/// * `tool_profile` — The assigned persona's tool profile.
 /// * `agent_id` — The agent that will own the resolved CSpace.
 ///
 /// # Priority
 ///
 /// 1. `cspace_hint` (if present and non-empty)
-/// 2. `persona_role` (if present and matches a known role)
-/// 3. `default_template` or `"worker"` as fallback
+/// 2. `tool_profile`
+/// 3. `code` fallback
 pub fn resolve_cspace(
     cspace_hint: Option<&str>,
-    persona_role: Option<&str>,
-    default_template: Option<&str>,
+    tool_profile: ToolProfile,
     agent_id: AgentId,
 ) -> CSpace {
     // 1. Explicit hint from directive takes highest priority.
     if let Some(hint) = cspace_hint {
-        let trimmed = hint.trim();
+        let trimmed = hint.trim().to_lowercase();
         if !trimmed.is_empty() {
-            return resolve_from_template_name(trimmed, agent_id);
+            return match trimmed.as_str() {
+                PROFILE_BASE => CapabilityTemplate::base_profile().build_for(agent_id),
+                PROFILE_CODE | LEGACY_STANDARD => {
+                    CapabilityTemplate::code_profile().build_for(agent_id)
+                }
+                PROFILE_MINIMAL => CapabilityTemplate::minimal_profile().build_for(agent_id),
+                other => {
+                    tracing::warn!(
+                        "Unknown cspace hint '{}', falling back to the persona tool profile",
+                        other
+                    );
+                    profile_template(tool_profile).build_for(agent_id)
+                }
+            };
         }
     }
 
-    // 2. Persona role maps to a template.
-    if let Some(role) = persona_role {
-        let trimmed = role.trim().to_lowercase();
-        if !trimmed.is_empty() {
-            return resolve_from_template_name(&trimmed, agent_id);
-        }
-    }
-
-    // 3. Default fallback.
-    let fallback = default_template.unwrap_or(ROLE_WORKER);
-    resolve_from_template_name(fallback, agent_id)
+    // 2. Persona tool profile.
+    profile_template(tool_profile).build_for(agent_id)
 }
 
-/// Map a template name to a built-in CapabilityTemplate.
-///
-/// If the name is a JSON object, we try to parse it as a custom template
-/// (future: parse JSON capabilities). For now, unknown names fall back to
-/// worker.
-fn resolve_from_template_name(name: &str, agent_id: AgentId) -> CSpace {
-    match name {
-        ROLE_WORKER => CapabilityTemplate::worker().build_for(agent_id),
-        ROLE_STANDARD => CapabilityTemplate::standard().build_for(agent_id),
-        ROLE_OPERATOR => CapabilityTemplate::operator().build_for(agent_id),
-        ROLE_SUPERVISOR => CapabilityTemplate::supervisor().build_for(agent_id),
-        _ => {
-            // If it looks like JSON, log a warning and fall back.
-            // Full JSON capability parsing is a future enhancement.
-            if name.starts_with('{') {
-                tracing::warn!(
-                    "JSON cspace_hint not yet supported, falling back to worker: {}",
-                    name
-                );
-            } else {
-                tracing::warn!(
-                    "Unknown capability template '{}', falling back to worker",
-                    name
-                );
-            }
-            CapabilityTemplate::worker().build_for(agent_id)
-        }
+/// Map a [`ToolProfile`] to its capability template.
+fn profile_template(profile: ToolProfile) -> CapabilityTemplate {
+    match profile {
+        ToolProfile::Base => CapabilityTemplate::base_profile(),
+        ToolProfile::Code => CapabilityTemplate::code_profile(),
+        ToolProfile::Minimal => CapabilityTemplate::minimal_profile(),
+        ToolProfile::Control => CapabilityTemplate::control_profile(),
     }
 }
 
@@ -106,85 +93,133 @@ fn resolve_from_template_name(name: &str, agent_id: AgentId) -> CSpace {
 mod tests {
     use super::*;
 
+    use super::super::types::{ResourceRef, Rights};
+
+    fn exec_shell() -> ResourceRef {
+        ResourceRef::Exec {
+            mode: "shell".into(),
+        }
+    }
+
     #[test]
-    fn hint_takes_priority_over_role() {
+    fn hint_takes_priority_over_profile() {
         let id = AgentId::new_v4();
-        let cs = resolve_cspace(Some("supervisor"), Some("worker"), None, id);
-        // supervisor has security domain, worker does not
-        use super::super::types::{ResourceRef, Rights};
+        let cs = resolve_cspace(Some("minimal"), ToolProfile::Base, id);
+        // minimal grants nothing, even though the profile is base
+        assert!(!cs.can(&exec_shell(), Rights::EXECUTE));
+        assert_eq!(cs.len(), 0);
+    }
+
+    #[test]
+    fn base_profile_grants_control_domains() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(None, ToolProfile::Base, id);
+        for domain in [
+            "persona", "security", "budget", "resource", "agent", "project",
+        ] {
+            assert!(
+                cs.can(
+                    &ResourceRef::KernelDomain {
+                        domain: domain.into()
+                    },
+                    Rights::EXECUTE
+                ),
+                "base profile missing {domain}"
+            );
+        }
         assert!(cs.can(
             &ResourceRef::KernelDomain {
-                domain: "security".into()
-            },
-            Rights::ALL,
-        ));
-    }
-
-    #[test]
-    fn role_used_when_no_hint() {
-        let id = AgentId::new_v4();
-        let cs = resolve_cspace(None, Some("operator"), None, id);
-        use super::super::types::{ResourceRef, Rights};
-        assert!(cs.can(&ResourceRef::A2a, Rights::EXECUTE));
-    }
-
-    #[test]
-    fn default_is_worker() {
-        let id = AgentId::new_v4();
-        let cs = resolve_cspace(None, None, None, id);
-        use super::super::types::{ResourceRef, Rights};
-        assert!(cs.can(
-            &ResourceRef::Exec {
-                mode: "shell".into()
+                domain: "a2a".into()
             },
             Rights::EXECUTE
         ));
-        // Worker should NOT have A2A
+        assert!(cs.can(&exec_shell(), Rights::EXECUTE));
+    }
+
+    #[test]
+    fn code_profile_has_no_control_tools() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(None, ToolProfile::Code, id);
+        assert!(cs.can(&exec_shell(), Rights::EXECUTE));
+        assert!(cs.can(
+            &ResourceRef::KernelDomain {
+                domain: "memory".into()
+            },
+            Rights::EXECUTE
+        ));
+        for domain in [
+            "persona", "security", "budget", "resource", "agent", "project",
+        ] {
+            assert!(
+                !cs.can(
+                    &ResourceRef::KernelDomain {
+                        domain: domain.into()
+                    },
+                    Rights::READ
+                ),
+                "code profile must not grant {domain}"
+            );
+        }
+        assert!(!cs.can(
+            &ResourceRef::KernelDomain {
+                domain: "a2a".into()
+            },
+            Rights::READ
+        ));
+    }
+
+    #[test]
+    fn minimal_profile_is_empty() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(None, ToolProfile::Minimal, id);
+        assert_eq!(cs.len(), 0);
+    }
+
+    #[test]
+    fn legacy_standard_hint_maps_to_code() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(Some("standard"), ToolProfile::Minimal, id);
+        assert!(cs.can(&exec_shell(), Rights::EXECUTE));
+    }
+
+    #[test]
+    fn empty_hint_falls_through_to_profile() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(Some(""), ToolProfile::Base, id);
+        assert!(cs.can(
+            &ResourceRef::KernelDomain {
+                domain: "a2a".into()
+            },
+            Rights::EXECUTE
+        ));
+    }
+
+    #[test]
+    fn unknown_hint_falls_back_to_profile() {
+        let id = AgentId::new_v4();
+        let cs = resolve_cspace(Some("nonexistent"), ToolProfile::Code, id);
+        assert!(cs.can(&exec_shell(), Rights::EXECUTE));
         assert!(!cs.can(&ResourceRef::A2a, Rights::READ));
     }
 
     #[test]
-    fn custom_default_template() {
+    fn control_profile_resolves_control_domains_only() {
         let id = AgentId::new_v4();
-        let cs = resolve_cspace(None, None, Some("standard"), id);
-        use super::super::types::{ResourceRef, Rights};
-        // Standard template now grants typed `ResourceRef::Memory`
-        // (READ) — not the legacy `KernelDomain{"memory"}` string.
-        assert!(cs.can(&ResourceRef::Memory, Rights::READ));
-    }
-
-    #[test]
-    fn empty_hint_falls_through() {
-        let id = AgentId::new_v4();
-        let cs = resolve_cspace(Some(""), Some("operator"), None, id);
-        use super::super::types::{ResourceRef, Rights};
-        assert!(cs.can(&ResourceRef::A2a, Rights::EXECUTE));
-    }
-
-    #[test]
-    fn unknown_name_falls_back_to_worker() {
-        let id = AgentId::new_v4();
-        let cs = resolve_cspace(Some("nonexistent"), None, None, id);
-        use super::super::types::{ResourceRef, Rights};
+        let cs = resolve_cspace(None, ToolProfile::Control, id);
         assert!(cs.can(
-            &ResourceRef::Exec {
-                mode: "shell".into()
+            &ResourceRef::KernelDomain {
+                domain: "mcp_manage".into()
             },
             Rights::EXECUTE
         ));
-    }
-
-    #[test]
-    fn json_hint_falls_back_gracefully() {
-        let id = AgentId::new_v4();
-        let cs = resolve_cspace(Some(r#"{"custom": true}"#), None, None, id);
-        use super::super::types::ResourceRef;
-        // Falls back to worker
         assert!(cs.can(
-            &ResourceRef::Exec {
-                mode: "shell".into()
+            &ResourceRef::KernelDomain {
+                domain: "engine".into()
             },
-            super::super::types::Rights::EXECUTE
+            Rights::WRITE
         ));
+        // No exec shell, no browser.
+        assert!(!cs.can(&exec_shell(), Rights::EXECUTE));
+        assert!(!cs.can(&ResourceRef::Browser, Rights::EXECUTE));
     }
 }

@@ -36,9 +36,6 @@ pub(crate) struct ChatRequest {
     /// Optional space ID for context partitioning.
     #[serde(default)]
     project_id: String,
-    /// RFC-025: comma-separated Mount IDs to bind (primary first).
-    #[serde(default)]
-    mount_ids: String,
     /// Optional model override. Populates the gateway `model_override`
     /// metadata so the orchestrator forwards it as `ExecEnv::model_override`.
     #[serde(default)]
@@ -52,10 +49,47 @@ pub(crate) struct ChatRequest {
     /// when `None`, the agent runtime falls back to its 8192 default.
     #[serde(default)]
     max_tokens: Option<u32>,
+    /// Session-scoped persona override. Validated against the persona
+    /// registry, then inserted into gateway metadata so the orchestrator
+    /// forwards it as `ExecEnv::persona_id`. Empty → inherit the global
+    /// active persona.
+    #[serde(default)]
+    persona_id: String,
+    /// Chat-scoped brain binding. Validated against the live oxibrain
+    /// spaces list, then inserted into gateway metadata so the orchestrator
+    /// forwards it as `ExecEnv::brain_space`. Empty → unconnected.
+    #[serde(default)]
+    brain_space: String,
 }
 
 pub(crate) fn default_user() -> String {
     "default".into()
+}
+
+/// Match a chat brain binding against a spaces payload by NAME. The
+/// kernel forwards the binding verbatim as the ops' `space`, and oxibrain
+/// ops address spaces by name (`Brain::lookup_space(name)`, ADR-013) —
+/// ids never validate. A malformed roster fails open: the turn degrades
+/// per the design.
+fn space_listed(spaces: &serde_json::Value, space: &str) -> bool {
+    spaces
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .any(|s| s.get("name").and_then(|n| n.as_str()) == Some(space))
+        })
+        .unwrap_or(true)
+}
+
+/// Validate a chat brain binding against the live spaces list.
+/// Skipped when the brain is unavailable — the turn degrades per the design.
+async fn validate_brain_space(
+    brain: &Option<oxios_kernel::kernel_handle::BrainApi>,
+    space: &str,
+) -> Option<String> {
+    let brain = brain.as_ref()?;
+    let spaces = brain.spaces().await?;
+    (!space_listed(&spaces, space)).then(|| format!("Brain space '{space}' not found"))
 }
 
 /// Response body for the chat endpoint.
@@ -79,18 +113,15 @@ pub(crate) struct ChatResponse {
     /// RFC-014: Space tag decoration.
     #[serde(skip_serializing_if = "Option::is_none")]
     project_tag: Option<String>,
-    /// RFC-025: active Mount IDs (comma-separated), primary first.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mount_ids: Option<String>,
-    /// RFC-025: Mount decoration tag (e.g. "[🔧 oxios + oxicode-sdk]").
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mount_tag: Option<String>,
     /// RFC-014: Evaluation passed.
     #[serde(skip_serializing_if = "Option::is_none")]
     evaluation_passed: Option<bool>,
     /// RFC-014: Duration in milliseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     duration_ms: Option<u64>,
+    /// Server-derived persona snapshot (design §6.1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_profile: Option<oxios_kernel::persona::EffectiveProfile>,
 }
 
 /// POST /api/chat — Send a message to the kernel via gateway and get response.
@@ -130,12 +161,7 @@ pub(crate) async fn handle_chat(
         None
     };
     if let Some(ref pid) = request_project_id {
-        msg.metadata.insert("project_ids".to_owned(), pid.clone());
-    }
-    // RFC-025: include mount_ids from request (multi-path injection).
-    if !body.mount_ids.is_empty() {
-        msg.metadata
-            .insert("mount_ids".to_owned(), body.mount_ids.clone());
+        msg.metadata.insert("project_id".to_owned(), pid.clone());
     }
 
     // Per-message model override. Carried via gateway metadata to the
@@ -149,6 +175,42 @@ pub(crate) async fn handle_chat(
             .validate_model(m)
             .map_err(AppError::BadRequest)?;
         msg.metadata.insert("model_override".to_owned(), m.clone());
+    }
+
+    // Session-scoped persona override: validate against the registry the
+    // same way the WS ingress does — unknown/disabled personas are a
+    // 400 rather than a silent global fallback.
+    let request_persona_id = if !body.persona_id.is_empty() {
+        Some(body.persona_id.clone())
+    } else {
+        None
+    };
+    if let Some(pid) = &request_persona_id {
+        match state.kernel.persona.get(pid) {
+            Some(p) if p.enabled => {}
+            Some(_) => {
+                return Err(AppError::BadRequest(format!("Persona '{pid}' is disabled")));
+            }
+            None => {
+                return Err(AppError::BadRequest(format!("Persona '{pid}' not found")));
+            }
+        }
+        msg.metadata.insert("persona_id".to_owned(), pid.clone());
+    }
+
+    // Chat-scoped brain binding: validate against the live spaces list the
+    // same way the WS ingress does — an unknown space is a 400 rather than
+    // a silently unconnected turn. Unavailable brain degrades per design.
+    let request_brain_space = if !body.brain_space.is_empty() {
+        Some(body.brain_space.clone())
+    } else {
+        None
+    };
+    if let Some(space) = &request_brain_space {
+        if let Some(reason) = validate_brain_space(&state.kernel.brain, space).await {
+            return Err(AppError::BadRequest(reason));
+        }
+        msg.metadata.insert("brain_space".to_owned(), space.clone());
     }
     if let Some(t) = body.temperature {
         msg.metadata.insert("temperature".to_owned(), t.to_string());
@@ -173,14 +235,11 @@ pub(crate) async fn handle_chat(
                 .or_else(|| response.metadata.get("session_id").cloned());
             let project_id = meta
                 .and_then(|m| m.project_id.clone())
-                .or_else(|| response.metadata.get("project_ids").cloned());
+                .or_else(|| response.metadata.get("project_id").cloned());
             let phase = meta
                 .map(|m| m.phase.clone())
                 .or_else(|| response.metadata.get("phase").cloned());
             let project_tag = meta.and_then(|m| m.project_tag.clone());
-            // RFC-025: active Mount IDs + tag (from channel metadata set by the gateway).
-            let mount_ids = response.metadata.get("mount_ids").cloned();
-            let mount_tag = response.metadata.get("mount_tag").cloned();
             let evaluation_passed = meta.and_then(|m| m.evaluation_passed);
             let duration_ms = meta.and_then(|m| m.duration_ms);
 
@@ -265,6 +324,15 @@ pub(crate) async fn handle_chat(
                     if let Some(ref pid) = request_project_id {
                         session.project_id = Some(pid.clone());
                     }
+                    // Session persona override outlives the turn: persist it
+                    // so GET /api/sessions/:id and the persona-affordance
+                    // hook see the session's persona on reopen.
+                    if let Some(ref pid) = request_persona_id {
+                        session.active_persona_id = Some(pid.clone());
+                    }
+                    if let Some(bs) = &request_brain_space {
+                        session.brain_space = Some(bs.clone());
+                    }
                     if let Err(e) = state.kernel.state.save_session(&session).await {
                         tracing::warn!(error = %e, "Failed to persist session");
                     }
@@ -318,8 +386,11 @@ pub(crate) async fn handle_chat(
                     if let Some(ref pid) = request_project_id {
                         session.project_id = Some(pid.clone());
                     }
-                    if let Err(e) = state.kernel.state.save_session(&session).await {
-                        tracing::warn!(error = %e, "Failed to create session");
+                    if let Some(ref pid) = request_persona_id {
+                        session.active_persona_id = Some(pid.clone());
+                    }
+                    if let Some(bs) = &request_brain_space {
+                        session.brain_space = Some(bs.clone());
                     }
                 }
                 Err(e) => tracing::warn!(error = %e, "Failed to load/create session"),
@@ -341,6 +412,15 @@ pub(crate) async fn handle_chat(
                 });
             }
 
+            // Server-derived effective profile for this turn (request
+            // persona + request project binding).
+            let effective_profile = oxios_kernel::persona::resolve_effective_profile(
+                Some(state.kernel.persona.manager().as_ref()),
+                state.kernel.projects.as_ref().map(|p| p.manager()),
+                request_persona_id.as_deref(),
+                request_project_id.as_deref(),
+            );
+
             Ok(Json(ChatResponse {
                 id: msg_id,
                 echo: content_echo,
@@ -349,10 +429,9 @@ pub(crate) async fn handle_chat(
                 project_id: project_id.clone(),
                 phase,
                 project_tag,
-                mount_ids,
-                mount_tag,
                 evaluation_passed,
                 duration_ms,
+                effective_profile,
             }))
         }
         Err(e) => {
@@ -377,7 +456,8 @@ pub(crate) async fn handle_chat(
 
 /// Request body for `POST /api/chat/seed` — persist a captured one-shot
 /// exchange (user message + agent response) as a new session, with no
-/// gateway/orchestrator call. Used by the QuickAsk "promote to chat" flow.
+/// gateway/orchestrator call. Used by the Oxios Copilot dialog
+/// "promote to chat" flow.
 #[derive(Debug, Deserialize)]
 pub(crate) struct SeedRequest {
     pub user_message: String,
@@ -388,6 +468,10 @@ pub(crate) struct SeedRequest {
     pub trajectory_steps: Option<Vec<serde_json::Value>>,
     #[serde(default)]
     pub reasoning_text: Option<String>,
+    /// Persona the seeded session is bound to. Validated like normal chat
+    /// creation: unknown/disabled → 400. Empty/absent → no binding.
+    #[serde(default)]
+    pub persona_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -399,8 +483,9 @@ pub(crate) struct SeedResponse {
 ///
 /// Writes the user message + agent response verbatim (plus any captured
 /// trajectory/reasoning) directly to the StateStore with no gateway call. This
-/// is what makes QuickAsk "promote to chat" instant and drift-free: the user
-/// sees the exact answer they read in the dialog, now in a real session.
+/// is what makes the Oxios Copilot dialog "promote to chat" instant and
+/// drift-free: the user sees the exact answer they read in the dialog, now
+/// in a real session.
 pub(crate) async fn handle_chat_seed(
     state: State<Arc<AppState>>,
     Json(body): Json<SeedRequest>,
@@ -467,6 +552,22 @@ pub(crate) async fn handle_chat_seed(
         && !pid.is_empty()
     {
         session.project_id = Some(pid.clone());
+    }
+
+    // Session-scoped persona override: validate against the registry the
+    // same way normal chat creation does — unknown/disabled personas are
+    // a 400 rather than a silent global fallback, so a promoted copilot
+    // exchange stays bound to the copilot persona.
+    if let Some(pid) = body.persona_id.as_deref().filter(|s| !s.is_empty()) {
+        match state.kernel.persona.get(pid) {
+            Some(p) if p.enabled => session.active_persona_id = Some(pid.to_string()),
+            Some(_) => {
+                return Err(AppError::BadRequest("persona is disabled".into()));
+            }
+            None => {
+                return Err(AppError::BadRequest(format!("persona '{pid}' not found")));
+            }
+        }
     }
 
     let session_id = session.id.0.clone();
@@ -734,7 +835,7 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             .meta
                             .as_ref()
                             .and_then(|m| m.project_id.clone())
-                            .or_else(|| msg.metadata.get("project_ids").cloned());
+                            .or_else(|| msg.metadata.get("project_id").cloned());
                         let phase = msg
                             .meta
                             .as_ref()
@@ -1030,6 +1131,15 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             }
                         }
                         if !is_partial && !has_error {
+                            // Server-derived effective profile for the turn
+                            // (session persona override + project binding).
+                            let effective_profile = oxios_kernel::persona::resolve_effective_profile(
+                                Some(state.kernel.persona.manager().as_ref()),
+                                state.kernel.projects.as_ref().map(|p| p.manager()),
+                                msg.metadata.get("persona_id").map(String::as_str),
+                                msg.meta.as_ref().and_then(|m| m.project_id.clone()).as_deref()
+                                    .or_else(|| msg.metadata.get("project_id").map(String::as_str)),
+                            );
                             let done_chunk = serde_json::json!({
                                 "type": "done",
                                 "seq": msg.seq,
@@ -1038,11 +1148,9 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 "project_id": project_id,
                                 "phase": phase,
                                 "evaluation_passed": evaluation_passed,
+                                "effective_profile": effective_profile,
                                 "project_tag": project_tag,
                                 "duration_ms": duration_ms,
-                                // RFC-025: surface detected mount info to the frontend.
-                                "mount_tag": msg.metadata.get("mount_tag"),
-                                "mount_ids": msg.metadata.get("mount_ids"),
                                 // Source: gateway.rs serializes the terminal
                                 // orchestration's tool_calls into channel
                                 // metadata (same key the non-streaming path
@@ -1157,12 +1265,6 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                             .and_then(|v| v.as_str())
                             .filter(|s| !s.is_empty())
                             .map(String::from);
-                        // RFC-025: mount_ids (comma-separated, primary first).
-                        let incoming_mount_ids = parsed
-                            .get("mount_ids")
-                            .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                            .map(String::from);
                         // RFC-032: role hint from the WS client. When set, the
                         // orchestrator resolves the model via engine.role_routing[role].
                         let incoming_role = parsed
@@ -1194,8 +1296,63 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                 .await;
                             continue;
                         }
-                        // One-shot (QuickAsk) requests set `ephemeral: true`.
-                        // The recv task skips the pending-message insert so
+                        // Session-scoped persona override (chat persona
+                        // picker). Validated early like the model override:
+                        // unknown or disabled personas are rejected before
+                        // the turn starts. Absent → inherit the global
+                        // active persona.
+                        let incoming_persona_id = parsed
+                            .get("persona_id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+                        if let Some(pid) = &incoming_persona_id {
+                            let invalid = match state.kernel.persona.get(pid) {
+                                Some(p) if p.enabled => None,
+                                Some(_) => Some("disabled".to_string()),
+                                None => Some("unknown".to_string()),
+                            };
+                            if let Some(reason) = invalid {
+                                let err_json = serde_json::json!({
+                                    "type": "error",
+                                    "message": format!("Persona '{pid}' is {reason}")
+                                });
+                                let _ = ws_tx
+                                    .lock()
+                                    .await
+                                    .send(Message::Text(err_json.to_string().into()))
+                                    .await;
+                                continue;
+                            }
+                        }
+
+                        // Chat-scoped brain binding (chat brain picker).
+                        // Validated early like the persona override: an
+                        // unknown space is rejected before the turn starts.
+                        // Absent → the turn runs unconnected.
+                        let incoming_brain_space = parsed
+                            .get("brain_space")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from);
+                        if let Some(bs) = &incoming_brain_space
+                            && let Some(reason) =
+                                validate_brain_space(&state.kernel.brain, bs).await
+                        {
+                            let err_json = serde_json::json!({
+                                "type": "error",
+                                "message": reason
+                            });
+                            let _ = ws_tx
+                                .lock()
+                                .await
+                                .send(Message::Text(err_json.to_string().into()))
+                                .await;
+                            continue;
+                        }
+                        // One-shot requests from the Oxios Copilot dialog set
+                        // `ephemeral: true`. The recv task skips the
+                        // pending-message insert so
                         // the send task's persist guard finds no
                         // PendingMessage and never writes a session.
                         let incoming_ephemeral = parsed
@@ -1275,16 +1432,16 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     incoming.metadata.insert("session_id".into(), sid.clone());
                                 }
                                 if let Some(ref vid) = incoming_project_id {
-                                    incoming.metadata.insert("project_ids".into(), vid.clone());
-                                }
-                                if let Some(ref mids) = incoming_mount_ids {
-                                    incoming.metadata.insert("mount_ids".into(), mids.clone());
+                                    incoming.metadata.insert("project_id".into(), vid.clone());
                                 }
                                 if let Some(ref role) = incoming_role {
                                     incoming.metadata.insert("role".into(), role.clone());
                                 }
                                 if let Some(m) = &incoming_model {
                                     incoming.metadata.insert("model_override".into(), m.clone());
+                                }
+                                if let Some(pid) = &incoming_persona_id {
+                                    incoming.metadata.insert("persona_id".into(), pid.clone());
                                 }
                                 if let Some(t) = incoming_temperature {
                                     incoming
@@ -1372,16 +1529,19 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     incoming.metadata.insert("session_id".into(), sid.clone());
                                 }
                                 if let Some(ref vid) = incoming_project_id {
-                                    incoming.metadata.insert("project_ids".into(), vid.clone());
-                                }
-                                if let Some(ref mids) = incoming_mount_ids {
-                                    incoming.metadata.insert("mount_ids".into(), mids.clone());
+                                    incoming.metadata.insert("project_id".into(), vid.clone());
                                 }
                                 if let Some(ref role) = incoming_role {
                                     incoming.metadata.insert("role".into(), role.clone());
                                 }
                                 if let Some(m) = &incoming_model {
                                     incoming.metadata.insert("model_override".into(), m.clone());
+                                }
+                                if let Some(pid) = &incoming_persona_id {
+                                    incoming.metadata.insert("persona_id".into(), pid.clone());
+                                }
+                                if let Some(bs) = &incoming_brain_space {
+                                    incoming.metadata.insert("brain_space".into(), bs.clone());
                                 }
                                 if let Some(t) = incoming_temperature {
                                     incoming
@@ -1644,6 +1804,14 @@ async fn persist_session(
             if let Some(vid) = project_id {
                 session.project_id = Some(vid.to_string());
             }
+            // Session persona override outlives the turn (chat picker).
+            if let Some(pid) = metadata.get("persona_id") {
+                session.active_persona_id = Some(pid.clone());
+            }
+            // Chat brain binding outlives the turn (chat picker).
+            if let Some(bs) = metadata.get("brain_space") {
+                session.brain_space = Some(bs.clone());
+            }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to persist session");
             }
@@ -1693,6 +1861,14 @@ async fn persist_session(
             // RFC-025: set top-level project_id field.
             if let Some(vid) = project_id {
                 session.project_id = Some(vid.to_string());
+            }
+            // Session persona override outlives the turn (chat picker).
+            if let Some(pid) = metadata.get("persona_id") {
+                session.active_persona_id = Some(pid.clone());
+            }
+            // Chat brain binding outlives the turn (chat picker).
+            if let Some(bs) = metadata.get("brain_space") {
+                session.brain_space = Some(bs.clone());
             }
             if let Err(e) = state_store.save_session(&session).await {
                 tracing::warn!(error = %e, "WS: failed to create session");
@@ -1818,15 +1994,24 @@ fn kernel_event_to_ws_chunk(
             duration_ms,
             is_error,
             output_summary,
+            results,
             ..
-        } => Some(serde_json::json!({
-            "type": "tool_end",
-            "tool_name": tool_name,
-            "tool_call_id": tool_call_id,
-            "duration_ms": duration_ms,
-            "is_error": is_error,
-            "output_summary": output_summary,
-        })),
+        } => {
+            let mut chunk = serde_json::json!({
+                "type": "tool_end",
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "duration_ms": duration_ms,
+                "is_error": is_error,
+                "output_summary": output_summary,
+            });
+            // Structured web-search results (title/url/snippet array) — the
+            // Web UI renders these as search cards. Absent for other tools.
+            if let Some(r) = results.clone() {
+                chunk["results"] = r;
+            }
+            Some(chunk)
+        }
         KernelEvent::ToolExecutionProgress {
             tool_call_id,
             tool_name,
@@ -1968,6 +2153,7 @@ fn grounding_from_event(
     let KernelEvent::ToolExecutionFinished {
         tool_name,
         output_summary,
+        results,
         ..
     } = event
     else {
@@ -1983,18 +2169,49 @@ fn grounding_from_event(
         return None;
     }
 
-    let citations = extract_citations(summary);
+    // Structured-first: the kernel search tools deliver title/url/snippet
+    // arrays via the `results` field (tool_end sibling). Fall back to
+    // scanning the text summary for URLs (older tools / web_fetch).
+    let citations = if let Some(results) = results
+        .as_ref()
+        .and_then(|r| r.get("results"))
+        .and_then(|v| v.as_array())
+    {
+        results_to_citations(results)
+    } else {
+        extract_citations(summary)
+    };
 
     if citations.is_empty() {
         return None;
     }
-
     Some(serde_json::json!({
         "type": "grounding",
         "message_id": active_message_id,
         "citations": citations,
         "tool_name": tool_name,
     }))
+}
+
+/// Map structured result items (title/url/snippet objects) to citations.
+fn results_to_citations(items: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let url = item.get("url")?.as_str()?.to_string();
+            if !url.starts_with("http") {
+                return None;
+            }
+            let mut c = serde_json::json!({ "url": &url, "favicon": favicon_url(&url) });
+            if let Some(t) = item.get("title").and_then(|v| v.as_str()) {
+                c["title"] = t.into();
+            }
+            if let Some(s) = item.get("snippet").and_then(|v| v.as_str()) {
+                c["snippet"] = s.into();
+            }
+            Some(c)
+        })
+        .collect()
 }
 
 /// Extract citations from search output. JSON-first, URL-scan fallback.
@@ -2007,23 +2224,7 @@ fn extract_citations(text: &str) -> Vec<serde_json::Value> {
             parsed.get("results").and_then(|v| v.as_array()).cloned()
         };
         if let Some(items) = arr {
-            let citations: Vec<serde_json::Value> = items
-                .iter()
-                .filter_map(|item| {
-                    let url = item.get("url")?.as_str()?.to_string();
-                    if !url.starts_with("http") {
-                        return None;
-                    }
-                    let mut c = serde_json::json!({ "url": &url, "favicon": favicon_url(&url) });
-                    if let Some(t) = item.get("title").and_then(|v| v.as_str()) {
-                        c["title"] = t.into();
-                    }
-                    if let Some(s) = item.get("snippet").and_then(|v| v.as_str()) {
-                        c["snippet"] = s.into();
-                    }
-                    Some(c)
-                })
-                .collect();
+            let citations = results_to_citations(&items);
             if !citations.is_empty() {
                 return citations;
             }
@@ -2141,12 +2342,12 @@ pub(crate) struct ToolApprovalResponseBody {
 }
 
 // ---------------------------------------------------------------------------
-// path-access (interactive Mount / temp-allow / deny)
+// path-access (interactive temp-allow / deny)
 // ---------------------------------------------------------------------------
 
 /// POST /api/chat/path-access/{id}/respond — Resolve a pending path-access
-/// request. The user chooses: create a Mount ("mount"), temporarily allow
-/// the path for this session ("temp"), or deny ("deny").
+/// request. The user chooses: temporarily allow the path for this session
+/// ("temp"), or deny ("deny").
 pub(crate) async fn handle_path_access_respond(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -2167,7 +2368,7 @@ pub(crate) async fn handle_path_access_respond(
         })?;
 
     let result = match body.action.as_str() {
-        "temp" | "mount" => {
+        "temp" => {
             let dir = std::path::Path::new(&path);
             let parent = dir.parent().unwrap_or(dir);
             let pattern = format!("{}/**", parent.to_string_lossy().trim_end_matches('/'));
@@ -2183,24 +2384,6 @@ pub(crate) async fn handle_path_access_respond(
                 }
             }
 
-            if body.action == "mount"
-                && let Some(mounts) = &state.kernel.mounts
-            {
-                let name = parent
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "mounted-path".to_string());
-                if let Err(e) =
-                    mounts.create_mount(name, vec![parent.to_string_lossy().to_string()])
-                {
-                    tracing::warn!(
-                        error = %e,
-                        path = %path,
-                        "mount creation failed; temp-allow still active"
-                    );
-                }
-            }
-
             tracing::info!(
                 agent = %agent_name,
                 path = %path,
@@ -2209,6 +2392,11 @@ pub(crate) async fn handle_path_access_respond(
                 "path-access granted"
             );
             oxios_kernel::tools::PathAccessResult::Allowed
+        }
+        "mount" => {
+            return Err(AppError::BadRequest(
+                "the 'mount' action was removed; choose 'temp' or 'deny'".into(),
+            ));
         }
         _ => {
             tracing::info!(agent = %agent_name, path = %path, "path-access denied");
@@ -2232,7 +2420,7 @@ pub(crate) async fn handle_path_access_respond(
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct PathAccessResponseBody {
-    /// "temp" | "mount" | "deny"
+    /// "temp" | "deny"
     pub action: String,
 }
 
@@ -2306,11 +2494,58 @@ mod rfc015_tests {
             duration_ms: 123,
             is_error: false,
             output_summary: "ok".into(),
+            results: None,
         };
         let chunk = kernel_event_to_ws_chunk(&event, &Some("s1".into()), &None).unwrap();
         assert_eq!(chunk["type"], "tool_end");
         assert_eq!(chunk["duration_ms"], 123);
         assert_eq!(chunk["is_error"], false);
+    }
+
+    #[test]
+    fn tool_finished_carries_structured_results() {
+        let event = KernelEvent::ToolExecutionFinished {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            tool_name: "web_search".into(),
+            duration_ms: 100,
+            is_error: false,
+            output_summary: "1. **Title**".into(),
+            results: Some(serde_json::json!({
+                "query": "q",
+                "resultCount": 1,
+                "results": [
+                    {"title": "Title", "url": "https://example.com", "snippet": "s", "source": "Tavily"}
+                ]
+            })),
+        };
+        let chunk = kernel_event_to_ws_chunk(&event, &Some("s1".into()), &None).unwrap();
+        assert_eq!(chunk["results"]["resultCount"], 1);
+        assert_eq!(chunk["results"]["results"][0]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn grounding_prefers_structured_results_over_summary() {
+        // The output summary (first 200 chars) has no URL; the structured
+        // results do. Grounding must use the structured payload.
+        let event = KernelEvent::ToolExecutionFinished {
+            session_id: "s1".into(),
+            tool_call_id: "c1".into(),
+            tool_name: "web_search".into(),
+            duration_ms: 100,
+            is_error: false,
+            output_summary: "1. **A title without any url**".into(),
+            results: Some(serde_json::json!({
+                "query": "q",
+                "resultCount": 1,
+                "results": [
+                    {"title": "Title", "url": "https://example.com", "snippet": "s", "source": "Brave"}
+                ]
+            })),
+        };
+        let grounding = grounding_from_event(&event, &Some(uuid::Uuid::nil())).unwrap();
+        assert_eq!(grounding["citations"][0]["url"], "https://example.com");
+        assert_eq!(grounding["citations"][0]["title"], "Title");
     }
 
     /// Real-time tool progress (RFC-015 v0.12) must be forwarded as a
@@ -2697,7 +2932,11 @@ pub(crate) async fn handle_save_to_knowledge(
     {
         Ok(true) => {}
         Ok(false) => {
-            // Path is a user-authored file — force write via plain note_write
+            // Redefined refusal (RFC-022 §5): the path is a user-authored
+            // note (frontmatter WITHOUT an oxios: table) or a system path.
+            // This save is user-initiated, so force it via plain note_write —
+            // format-aware since T12: existing user frontmatter keys survive
+            // as the merge base and only the body is replaced.
             state.kernel.knowledge.note_write(&path, content)?;
         }
         Err(e) => return Err(AppError::from(e)),
@@ -2856,5 +3095,35 @@ mod cancel_tests {
     fn resolve_cancel_key_none_when_all_absent() {
         assert_eq!(resolve_cancel_key(None, None, None), None);
         assert_eq!(resolve_cancel_key(Some(""), None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod brain_space_tests {
+    use super::*;
+
+    /// The chat binding is the space NAME — oxibrain ops take `space` by
+    /// name (ADR-013), so an id must NOT validate even though it appears
+    /// in the roster payload.
+    #[test]
+    fn brain_space_matches_by_name_not_id() {
+        let spaces = serde_json::json!([
+            { "id": "11111111-1111-1111-1111-111111111111", "name": "dev" },
+            { "id": "22222222-2222-2222-2222-222222222222", "name": "work" },
+        ]);
+        assert!(space_listed(&spaces, "dev"));
+        assert!(!space_listed(
+            &spaces,
+            "11111111-1111-1111-1111-111111111111"
+        ));
+        assert!(!space_listed(&spaces, "missing"));
+    }
+
+    /// Malformed roster payloads fail open — validation is skipped and the
+    /// turn degrades per the availability contract.
+    #[test]
+    fn brain_space_fails_open_on_malformed_roster() {
+        assert!(space_listed(&serde_json::json!("not-an-array"), "dev"));
+        assert!(space_listed(&serde_json::json!(null), "dev"));
     }
 }

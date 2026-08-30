@@ -81,6 +81,24 @@ mod tests {
     }
 
     #[test]
+    fn embedded_brain_skill_parses() {
+        // The brain skill replaces the removed memory tools (oxibrain 0.8
+        // daemonless cutover) — it must ship and parse under its name.
+        let file = EMBEDDED_DEFAULT_SKILLS
+            .get_file("brain/SKILL.md")
+            .expect("embedded default-skills must contain brain/SKILL.md");
+        let content = std::str::from_utf8(file.contents()).expect("utf-8 SKILL.md");
+        let (parsed, body) = oxios_kernel::skill::frontmatter::parse_skill(content, file.path())
+            .expect("brain SKILL.md must parse");
+        assert_eq!(parsed.name, "brain");
+        assert!(
+            !parsed.description.is_empty(),
+            "brain skill must carry a description"
+        );
+        assert!(body.contains("oxibrain"), "body must teach the CLI lane");
+    }
+
+    #[test]
     fn extract_dir_round_trips() {
         let tmp = tempfile::tempdir().unwrap();
         let out = tmp.path().join("extracted");

@@ -74,27 +74,54 @@ pub(crate) async fn handle_session_get(
     use oxios_kernel::state_store::SessionId;
     let session_id = SessionId(id);
     match state.kernel.state.load_session(&session_id).await {
-        Ok(Some(session)) => Ok(Json(serde_json::json!({
-           "id": session.id.0,
-           "user_id": session.user_id,
-           // RFC-025: top-level field first, legacy metadata fallbacks.
-           "project_id": session.project_id.clone()
-               .or_else(|| session.metadata.get("project_id").and_then(|v| v.as_str()).map(String::from))
-               .or_else(|| session.metadata.get("project_ids").and_then(|v| v.as_str()).map(String::from)),
-           "parent_session_id": session.parent_session_id,
-           "user_messages": session.user_messages,
-           "agent_responses": session.agent_responses,
-           "active_persona_id": session.active_persona_id,
-           "created_at": session.created_at.to_rfc3339(),
-           "updated_at": session.updated_at.to_rfc3339(),
-           "metadata": session.metadata,
-           // RFC-015: trajectory for chat transparency replay.
-           "trajectory_steps": session.trajectory_steps,
-           // P4 (§7 persistence): reasoning text for the ThinkingPanel.
-           "reasoning_records": session.reasoning_records,
-           // Context compression: LLM-generated summary of older messages.
-           "compression": session.metadata.get("compression"),
-        }))),
+        Ok(Some(session)) => {
+            // RFC-025: top-level field first, legacy metadata fallbacks.
+            // Resolved once so effective_profile sees the same project the
+            // client renders (legacy sessions carry the id only in metadata).
+            let resolved_project_id = session
+                .project_id
+                .clone()
+                .or_else(|| {
+                    session
+                        .metadata
+                        .get("project_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .or_else(|| {
+                    session
+                        .metadata
+                        .get("project_ids")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                });
+            Ok(Json(serde_json::json!({
+            "id": session.id.0,
+            "user_id": session.user_id,
+            "project_id": resolved_project_id,
+            "parent_session_id": session.parent_session_id,
+            "user_messages": session.user_messages,
+            "agent_responses": session.agent_responses,
+            "active_persona_id": session.active_persona_id,
+            // Server-derived effective profile for the session's bound
+            // persona + project (design §6.1); null when no persona binds.
+            "effective_profile": oxios_kernel::persona::resolve_effective_profile(
+                Some(state.kernel.persona.manager().as_ref()),
+                state.kernel.projects.as_ref().map(|p| p.manager()),
+                session.active_persona_id.as_deref(),
+                resolved_project_id.as_deref(),
+            ),
+            "created_at": session.created_at.to_rfc3339(),
+            "updated_at": session.updated_at.to_rfc3339(),
+            "metadata": session.metadata,
+            // RFC-015: trajectory for chat transparency replay.
+            "trajectory_steps": session.trajectory_steps,
+            // P4 (§7 persistence): reasoning text for the ThinkingPanel.
+            "reasoning_records": session.reasoning_records,
+            // Context compression: LLM-generated summary of older messages.
+            "compression": session.metadata.get("compression"),
+            })))
+        }
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -108,10 +135,18 @@ pub(crate) async fn handle_session_delete(
     use oxios_kernel::state_store::SessionId;
     let session_id = SessionId(id);
     match state.kernel.state.delete_session(&session_id).await {
-        Ok(true) => Ok(Json(serde_json::json!({
-            "status": "deleted",
-            "id": session_id.0,
-        }))),
+        Ok(true) => {
+            // Design §5.2: the session's issue liveness locks and todo state
+            // die with the session. Both calls are infallible no-ops for a
+            // session that never claimed an issue or tracked a todo, so no
+            // error path is needed here.
+            state.kernel.issues.release_session(&session_id.0);
+            state.kernel.todos.forget(&session_id.0);
+            Ok(Json(serde_json::json!({
+                "status": "deleted",
+                "id": session_id.0,
+            })))
+        }
         Ok(false) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -452,15 +487,22 @@ pub(crate) fn sanitize_event(event: &oxios_kernel::event_bus::KernelEvent) -> se
             duration_ms,
             is_error,
             output_summary,
-        } => serde_json::json!({
-            "type": "tool_finished",
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "duration_ms": duration_ms,
-            "is_error": is_error,
-            "output_summary": output_summary,
-        }),
+            results,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "tool_finished",
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "duration_ms": duration_ms,
+                "is_error": is_error,
+                "output_summary": output_summary,
+            });
+            if let Some(r) = results.clone() {
+                obj["results"] = r;
+            }
+            obj
+        }
         KernelEvent::ToolExecutionProgress {
             session_id,
             tool_call_id,

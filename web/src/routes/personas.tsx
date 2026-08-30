@@ -4,6 +4,7 @@ import { Pencil, Plus, Star, Trash2, Users } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
 import {
   EditPersonaDialog,
   type PersonaItem,
@@ -26,6 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
 
@@ -40,6 +42,9 @@ function PersonasPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
+  const [category, setCategory] = useState('general')
+  const [genre, setGenre] = useState('')
+  const [createToolProfile, setCreateToolProfile] = useState<'base' | 'code' | 'minimal'>('code')
 
   const {
     data: personas,
@@ -50,19 +55,7 @@ function PersonasPage() {
   } = useQuery({
     queryKey: ['personas'],
     queryFn: async () => {
-      const res =
-        await api.get<
-          {
-            id: string
-            name: string
-            role: string
-            description: string
-            enabled: boolean
-            personality_traits: string[]
-            system_prompt?: string
-            capabilities?: string[]
-          }[]
-        >('/api/personas')
+      const res = await api.get<PersonaItem[]>('/api/personas')
       // Backend returns raw array
       return Array.isArray(res) ? res : []
     },
@@ -70,14 +63,23 @@ function PersonasPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: (p: { name: string; description: string; system_prompt: string }) =>
-      api.post('/api/personas', p),
+    mutationFn: (p: {
+      name: string
+      description: string
+      system_prompt: string
+      category: string
+      genre: string | null
+      tool_profile: string
+    }) => api.post('/api/personas', p),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personas'] })
       setShowCreate(false)
       setName('')
       setDescription('')
       setSystemPrompt('')
+      setCategory('general')
+      setGenre('')
+      setCreateToolProfile('code')
     },
   })
 
@@ -171,6 +173,44 @@ function PersonasPage() {
                 rows={4}
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>{t('personas.category')}</Label>
+                <Select
+                  value={category}
+                  onValueChange={setCategory}
+                  options={['normal', 'coding', 'writing', 'research', 'operations', 'general'].map(
+                    (c) => ({ label: t(`chat.persona.categories.${c}`), value: c }),
+                  )}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>{t('personas.genre')}</Label>
+                <Select
+                  value={genre || 'none'}
+                  onValueChange={(v) => setGenre(v === 'none' ? '' : v)}
+                  disabled={category !== 'writing'}
+                  options={[
+                    { label: t('personas.genreNone'), value: 'none' },
+                    ...['novel', 'scenario', 'essay', 'blog'].map((g) => ({
+                      label: t(`chat.persona.genres.${g}`),
+                      value: g,
+                    })),
+                  ]}
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('personas.toolProfile')}</Label>
+              <Select
+                value={createToolProfile}
+                onValueChange={(v) => setCreateToolProfile(v as 'base' | 'code' | 'minimal')}
+                options={(['base', 'code', 'minimal'] as const).map((p) => ({
+                  label: t(`personas.toolProfiles.${p}`),
+                  value: p,
+                }))}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -188,9 +228,11 @@ function PersonasPage() {
                   name,
                   description,
                   system_prompt: systemPrompt,
+                  category,
+                  genre: category === 'writing' && genre ? genre : null,
+                  tool_profile: createToolProfile,
                 })
               }
-              disabled={!name.trim() || createMutation.isPending}
             >
               {t('common.create')}
             </Button>
@@ -212,7 +254,11 @@ function PersonasPage() {
                 <div>
                   <CardTitle className="text-base flex items-center gap-2">
                     <Users className="h-4 w-4" /> {persona.name}
-                    {persona.enabled && <Star className="h-3 w-3 text-warning fill-warning" />}
+                    {persona.active && (
+                      <span className="rounded bg-success/15 px-1.5 py-0.5 text-2xs font-medium text-success">
+                        {t('personas.activeBadge')}
+                      </span>
+                    )}
                   </CardTitle>
                   {persona.description && (
                     <p className="text-xs text-muted-foreground mt-1">{persona.description}</p>
@@ -227,7 +273,7 @@ function PersonasPage() {
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  {!persona.enabled && (
+                  {persona.enabled && !persona.active && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -250,15 +296,29 @@ function PersonasPage() {
               <CardContent>
                 <p className="text-xs text-muted-foreground">
                   {t('personas.role')}: {persona.role}
+                  {persona.tool_profile && (
+                    <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-2xs font-medium">
+                      {t(`personas.profileBadge.${persona.tool_profile}`, {
+                        defaultValue: persona.tool_profile,
+                      })}
+                    </span>
+                  )}
                 </p>
                 {persona.system_prompt && (
                   <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
                     {persona.system_prompt}
                   </p>
                 )}
-                {persona.capabilities && persona.capabilities.length > 0 && (
+                {(persona.genre || (persona.capabilities?.length ?? 0) > 0) && (
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {persona.capabilities.map((cap) => (
+                    {persona.genre && (
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
+                        {t(`chat.persona.genres.${persona.genre}`, {
+                          defaultValue: persona.genre ?? '',
+                        })}
+                      </span>
+                    )}
+                    {(persona.capabilities ?? []).map((cap) => (
                       <span
                         key={cap}
                         className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info"

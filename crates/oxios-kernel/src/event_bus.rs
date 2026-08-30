@@ -122,9 +122,9 @@ pub enum KernelEvent {
         approved: bool,
     },
     /// An agent tried to access a file path outside its allowed_paths.
-    /// The frontend renders a path-access card offering: create a Mount,
-    /// temporarily allow, or deny. Mirrors `ApprovalRequested` but carries
-    /// path-specific context so the card and resolve endpoint know what to do.
+    /// The frontend renders a path-access card offering: temporarily allow,
+    /// or deny. Mirrors `ApprovalRequested` but carries path-specific context
+    /// so the card and resolve endpoint know what to do.
     PathAccessRequested {
         /// The request ID (matches the PendingPathApprovals entry).
         id: uuid::Uuid,
@@ -206,6 +206,12 @@ pub enum KernelEvent {
         is_error: bool,
         /// Truncated output (max ~500 chars) for streaming.
         output_summary: String,
+        /// Structured result metadata from the tool (e.g. web_search result
+        /// arrays with title/url/snippet). `None` for tools without
+        /// structured output. UI consumers that understand the payload
+        /// render it richly; older consumers ignore the field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        results: Option<serde_json::Value>,
     },
     /// A tool execution emitted a progress update (real-time, RFC-015).
     ToolExecutionProgress {
@@ -815,6 +821,7 @@ mod tests {
                 duration_ms: 234,
                 is_error: false,
                 output_summary: "fn main() {}".into(),
+                results: None,
             },
             KernelEvent::ToolExecutionProgress {
                 session_id: "s1".into(),

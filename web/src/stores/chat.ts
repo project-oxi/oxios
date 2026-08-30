@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { resolveBrainSpace } from '@/lib/brain-binding'
 import { adaptChunk } from '@/lib/stream/adapter'
 import type { ProcessorResult } from '@/lib/stream/StreamProcessor'
 import { StreamProcessor } from '@/lib/stream/StreamProcessor'
@@ -10,9 +11,9 @@ import type {
   ChatBlock,
   ChatMessage,
   CompressionInfo,
+  EffectiveProfile,
   InterviewAnswer,
   InterviewQuestion,
-  Project,
   StreamChunk,
   ToolCallContext,
 } from '@/types'
@@ -28,12 +29,16 @@ interface PersistedState {
   activeSessionId: string | null
   /** Project ID associated with the active session (grouping). */
   activeProjectId: string | null
-  /** RFC-025: Active Mount IDs (comma-separated, primary first). */
-  activeMountIds: string | null
   /** RFC-032: Active role hint (null = no role; uses default model). */
   activeRole: string | null
   /** Model override id (null = follow default / role). Persisted across reloads. */
   activeModelId: string | null
+  /** Session persona override id (null = inherit the global active persona).
+   * Rehydrated from the session record on loadSession. */
+  activePersonaId: string | null
+  /** Session brain-space binding id (null = unconnected turn). Rehydrated
+   *  from the session record on loadSession; persisted with the tab. */
+  activeBrainSpace: string | null
   /** Per-message sampling temperature. Persisted. `null` = use provider default. */
   temperature: number | null
   /** Per-message max output tokens. Persisted. `null` = use provider default. */
@@ -73,14 +78,6 @@ interface ChatRuntimeState {
   _lastDoneSessionId: string | null
   /** The project ID from the last "done" chunk. */
   _lastDoneProjectId: string | null
-  /** AI-detected project (Phase 2 stub, always null). */
-  detectedProject: Project | null
-  /** RFC-025: detected mount tag from the last orchestrator response. */
-  detectedMountTag: string | null
-  /** RFC-025: detected mount IDs from the last orchestrator response. */
-  detectedMountIds: string[]
-  /** IDs of dismissed detection badges. */
-  dismissedProjectIds: string[]
   /** Active structured interview questions (null = no interview active). */
   activeInterview: InterviewQuestion[] | null
   /** Active tool approval request awaiting user response (RFC-017). */
@@ -89,7 +86,7 @@ interface ChatRuntimeState {
     toolName: string
     reason: string
   } | null
-  /** Active path-access request awaiting user response (Mount/temp/deny). */
+  /** Active path-access request awaiting user response (temp-allow/deny). */
   activePathAccess: {
     id: string
     path: string
@@ -114,7 +111,19 @@ interface ChatRuntimeState {
    *  retryLoadSession to re-fire the same fetch without remembering the id
    *  outside the store. */
   _lastLoadedSessionId: string | null
+  /** Default-brain resolution inputs (Task 9 inheritance): the active
+   *  project's `default_brain_space` and the global config
+   *  `brain.default_space` ('' = none). Seeded by useBrainBindingSync on the
+   *  chat page; sendMessage resolves the effective binding from these. */
+  brainDefaults: { project: string | null; global: string }
 
+  /** Server-derived execution snapshot for the active session (design
+   *  §6.1). Runtime-only — never persisted: rehydrated from SessionDetail
+   *  on loadSession, refreshed on every done-chunk `effective_profile`,
+   *  cleared when the session identity resets. The single source for all
+   *  conditional chat controls (via use-effective-profile); persona
+   *  names/categories/capability strings are never consulted. */
+  effectiveProfile: EffectiveProfile | null
   // ── WebSocket lifecycle (encapsulated, not persisted) ──
   /** WebSocket instance managed by the store. */
   _ws: WebSocket | null
@@ -165,25 +174,23 @@ interface ChatActions {
   newSession: () => void
   /** Fork the conversation at `messageId` into a fresh session (Task 22). */
   branchFrom: (messageId: string) => void
-  /** Rate an assistant answer: 1 (good) / -1 (bad); null clears the rating. */
-  rateMessage: (messageId: string, rating: 1 | -1 | null) => void
   /** Set the active project explicitly. */
   setActiveProject: (projectId: string | null) => void
   /** RFC-032: Set the active role hint. */
   setActiveRole: (role: string | null) => void
+  /** Session persona override (null = inherit global active persona). */
+  setActivePersona: (personaId: string | null) => void
+  /** Session brain-space binding (null = unconnected turn; defaults may
+   *  still apply — see brainDefaults). */
+  setActiveBrainSpace: (brainSpaceId: string | null) => void
+  /** Seed the default-brain resolution inputs (used by useBrainBindingSync). */
+  setBrainDefaults: (next: { project: string | null; global: string }) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
   setTemperature: (temperature: number | null) => void
   /** Set the per-message max output tokens (null = provider default). */
   setMaxTokens: (maxTokens: number | null) => void
-  /** RFC-025: accept detected mount IDs into the active binding. */
-  setActiveMountIds: (mountIds: string[] | null) => void
-  /** RFC-025: Clear detected mount tag and IDs (e.g. on badge accept/dismiss). */
-  clearDetectedMount: () => void
-  setDetectedProject: (project: Project | null) => void
-  /** Dismiss a detection badge (don't show again for this project). */
-  dismissDetection: (projectId: string) => void
   /** Remove a single message by id. Used by the inline error retry flow (RFC-032). */
   removeMessage: (id: string) => void
   /** Clear persisted state (e.g. on logout). */
@@ -192,8 +199,8 @@ interface ChatActions {
   submitInterviewResponse: (answers: InterviewAnswer[]) => void
   /** Resolve a pending tool approval (RFC-017). */
   resolveToolApproval: (id: string, approved: boolean, remember?: boolean) => Promise<void>
-  /** Resolve a pending path-access request (mount/temp/deny). */
-  resolvePathAccess: (id: string, action: 'mount' | 'temp' | 'deny') => Promise<void>
+  /** Resolve a pending path-access request (temp-allow/deny). */
+  resolvePathAccess: (id: string, action: 'temp' | 'deny') => Promise<void>
   /** Handle an incoming WS chunk. */
   handleChunk: (chunk: StreamChunk) => void
 }
@@ -255,7 +262,7 @@ export function parseChunk(raw: unknown): StreamChunk {
 // ---------------------------------------------------------------------------
 // Pure helpers that mutate a message list by transforming the last assistant
 // message (creating a placeholder if absent). chat.ts (RAF token flush,
-// activity/done cases) and quick-ask.ts (token/activity cases) all route
+// activity/done cases) and oxios-copilot.ts (token/activity cases) all route
 // through these so the "find-or-create assistant + copy array + replace"
 // ceremony — the actual duplication that previously let the reasoning-merge
 // bug drift in — is defined exactly once. Per-store handleChunk keeps its own
@@ -322,7 +329,7 @@ export function ensureLastAssistant(
 
 /**
  * Append token text to the last assistant message, creating a placeholder if
- * none exists. Pure. Used by chat's RAF token-flush and quick-ask's immediate
+ * none exists. Pure. Used by chat's RAF token-flush and oxios-copilot's immediate
  * token append — the transformation is identical; only the batching strategy
  * differs (kept per-store).
  */
@@ -342,14 +349,14 @@ export function appendTokenToMessages(
 /**
  * Append/merge an activity onto the last assistant message (creating a
  * placeholder if absent) and accumulate token counts. Pure. Delegates
- * dedup/merge to mergeOrAppendActivity. Used by both chat and quick-ask so the
+ * dedup/merge to mergeOrAppendActivity. Used by both chat and oxios-copilot so the
 
 
 /**
  * Patch the model of the last assistant message; if no assistant message
  * exists yet, return a `pendingModel` signal so the store can stash it for the
  * next placeholder (consumed via AssistantCtx.placeholderModel). Pure. Lets
- * quick-ask patch the live message too, matching chat's behaviour.
+ * oxios-copilot patch the live message too, matching chat's behaviour.
  */
 export function patchAssistantModel(
   messages: ChatMessage[],
@@ -694,7 +701,7 @@ function flushPendingTokens(): void {
         }),
       }
     }
-    const processor = getOrCreateProcessor(msgId)
+    const processor = getOrCreateProcessor(msgId, s.messages)
     const result = processor.handleEvent({
       kind: 'text.delta',
       messageId: msgId,
@@ -738,10 +745,17 @@ export function __clearStreamProcessorsForTesting(): void {
 }
 const streamProcessors = new Map<string, StreamProcessor>()
 
-function getOrCreateProcessor(messageId: string): StreamProcessor {
+function getOrCreateProcessor(messageId: string, messages?: ChatMessage[]): StreamProcessor {
   let p = streamProcessors.get(messageId)
   if (!p) {
     p = new StreamProcessor(messageId)
+    // Terminal chunks can arrive after `done` deleted the live processor
+    // (done races the kernel bus's usage/agent_end). A fresh processor
+    // starts empty and its first patch would stamp `blocks: []` over the
+    // streamed message — adopt the rendered message so stragglers merge
+    // into the existing timeline instead of wiping it.
+    const existing = messages?.find((m) => m.id === messageId)
+    if (existing) p.adopt(existing)
     streamProcessors.set(messageId, p)
   }
   return p
@@ -783,7 +797,7 @@ function applyProcessorResult(
 }
 
 // ---------------------------------------------------------------------------
-// Pure content-chunk routing — shared with quick-ask.ts.
+// Pure content-chunk routing — shared with oxios-copilot.ts.
 // Encapsulates adapt → processor → applyProcessorResult so other stores don't
 // duplicate the helpers or the processor map. Returns a new messages array
 // (caller wraps with setState).
@@ -798,7 +812,7 @@ export function applyContentChunk(
 ): { messages: ChatMessage[]; finishedMsgId?: string } {
   const msgId = lastAssistantMessageId(messages)
   if (!msgId) return { messages }
-  const processor = getOrCreateProcessor(msgId)
+  const processor = getOrCreateProcessor(msgId, messages)
   const { events } = adaptChunk(chunk, { msgId })
   let next = messages
   let finishedMsgId: string | undefined
@@ -823,7 +837,7 @@ export function applyTextFlush(
   if (!text) return messages
   const msgId = lastAssistantMessageId(messages)
   if (!msgId) return appendTokenToMessages(messages, text, ctx)
-  const processor = getOrCreateProcessor(msgId)
+  const processor = getOrCreateProcessor(msgId, messages)
   const result = processor.handleEvent({ kind: 'text.delta', messageId: msgId, text })
   return applyProcessorResult(messages, msgId, result, ctx)
 }
@@ -835,26 +849,23 @@ export const useChatStore = create<ChatStore>()(
     (set, get) => ({
       activeSessionId: null,
       activeProjectId: null,
-      activeMountIds: null,
       activeRole: null,
       activeModelId: null,
+      activePersonaId: null,
+      activeBrainSpace: null,
       temperature: null,
       maxTokens: null,
-
       // ── Runtime ──
       messages: [],
       isStreaming: false,
       streamStartedAt: null as number | null,
       pendingModel: null as string | null,
+      brainDefaults: { project: null, global: '' },
       connected: false,
       _sendQueue: [],
       _pendingQueue: [],
       _lastDoneSessionId: null,
       _lastDoneProjectId: null,
-      detectedProject: null,
-      detectedMountTag: null,
-      detectedMountIds: [],
-      dismissedProjectIds: [],
       activeInterview: null,
       interviewRound: 0,
       interviewAmbiguity: 0,
@@ -863,6 +874,7 @@ export const useChatStore = create<ChatStore>()(
       isLoadingSession: false,
       sessionLoadError: null as string | null,
       _lastLoadedSessionId: null as string | null,
+      effectiveProfile: null as EffectiveProfile | null,
       activeToolApproval: null,
       activePathAccess: null,
       // WebSocket lifecycle
@@ -1124,7 +1136,8 @@ export const useChatStore = create<ChatStore>()(
         const {
           activeSessionId,
           activeProjectId,
-          activeMountIds,
+          activePersonaId,
+          activeBrainSpace,
           activeRole,
           activeModelId,
           temperature,
@@ -1132,6 +1145,7 @@ export const useChatStore = create<ChatStore>()(
           connected,
           connect,
           _ws,
+          brainDefaults,
         } = get()
 
         // Ensure WS is connected first
@@ -1183,9 +1197,17 @@ export const useChatStore = create<ChatStore>()(
           session_id: activeSessionId ?? '',
           // Web-C2: backend WS handler reads singular `project_id`
           project_id: activeProjectId ?? '',
-          mount_ids: activeMountIds ?? '',
           // RFC-032: role hint for model routing
           role: activeRole ?? '',
+          // Session persona override — backend validates against the
+          // registry and threads it to ExecEnv::persona_id for the turn.
+          persona_id: activePersonaId ?? '',
+          // Session brain binding — the RESOLVED value (explicit picker
+          // choice, else project/global default; '' = unconnected turn) so
+          // the kernel records the effective binding on the session. The
+          // backend validates the space and persists it.
+          brain_space:
+            resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? '',
           // Per-message model override (or last-picked persistent one).
           model: activeModelId ?? '',
         }
@@ -1217,11 +1239,14 @@ export const useChatStore = create<ChatStore>()(
         // F9: discard buffered tokens from any prior streaming session.
         discardPendingTokens()
         // Task 10: surface the in-flight window (skeleton) and any failure
-        // (banner) so the chat pane never appears blank and stranded.
         set({
           isLoadingSession: true,
           sessionLoadError: null,
           _lastLoadedSessionId: sessionId,
+          // The previous session's snapshot must not bleed into the
+          // loading window; use-effective-profile's fetch fallback covers
+          // the gap until this fetch resolves.
+          effectiveProfile: null,
         })
         try {
           const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
@@ -1354,6 +1379,21 @@ export const useChatStore = create<ChatStore>()(
             messages,
             activeSessionId: sessionId,
             activeProjectId: projectId,
+            // Session persona override is durable truth on reopen: the
+            // backend persisted it on the turn that set it.
+            activePersonaId: (data.active_persona_id as string | null) ?? null,
+            // Server-derived execution snapshot (design §6.1) rides on the
+            // SessionDetail; null when no persona binds.
+            effectiveProfile:
+              (data.effective_profile as EffectiveProfile | null | undefined) ?? null,
+            // Chat brain binding outlives the turn (chat picker): restore
+            // the session's bound space on reopen. The GET handler does not
+            // expose a top-level field yet — fall back to session metadata,
+            // which the WS ingress stamps on every bound turn.
+            activeBrainSpace:
+              (data.brain_space as string | null) ??
+              (data.metadata?.brain_space as string | null) ??
+              null,
             isStreaming: false,
             _pendingQueue: [],
             sessionLoadError: null,
@@ -1388,6 +1428,9 @@ export const useChatStore = create<ChatStore>()(
           interviewRound: 0,
           interviewAmbiguity: 0,
           compression: null,
+          // No session ⇒ no profile; the next turn's done chunk (or the
+          // session-detail fallback) re-resolves it.
+          effectiveProfile: null,
         }))
       },
 
@@ -1403,19 +1446,6 @@ export const useChatStore = create<ChatStore>()(
         set({ messages: kept, activeProjectId })
       },
 
-      rateMessage(messageId: string, rating: 1 | -1 | null) {
-        set((s) => ({
-          messages: s.messages.map((m) => {
-            if (m.id !== messageId) return m
-            if (rating === null) {
-              const { rating: _drop, ...rest } = m.metadata ?? {}
-              return { ...m, metadata: rest }
-            }
-            return { ...m, metadata: { ...m.metadata, rating } }
-          }),
-        }))
-      },
-
       setActiveProject(projectId: string | null) {
         // F9: discard buffered tokens when switching projects (clears messages).
         discardPendingTokens()
@@ -1424,18 +1454,19 @@ export const useChatStore = create<ChatStore>()(
           activeSessionId: null,
           messages: [],
           _pendingQueue: [],
-          detectedProject: null,
-        })
-      },
-
-      setActiveMountIds(mountIds: string[] | null) {
-        set({
-          activeMountIds: mountIds ? mountIds.join(',') : null,
         })
       },
 
       setActiveRole(role: string | null) {
         set({ activeRole: role })
+      },
+
+      setActivePersona(personaId: string | null) {
+        set({ activePersonaId: personaId })
+      },
+
+      setActiveBrainSpace(brainSpaceId: string | null) {
+        set({ activeBrainSpace: brainSpaceId })
       },
 
       setActiveModelId(modelId: string | null) {
@@ -1444,6 +1475,10 @@ export const useChatStore = create<ChatStore>()(
 
       setTemperature(temperature: number | null) {
         set({ temperature })
+      },
+
+      setBrainDefaults(next: { project: string | null; global: string }) {
+        set({ brainDefaults: next })
       },
 
       setMaxTokens(maxTokens: number | null) {
@@ -1466,32 +1501,14 @@ export const useChatStore = create<ChatStore>()(
         })
       },
 
-      setDetectedMountTag(tag: string | null) {
-        set({ detectedMountTag: tag })
-      },
-
-      clearDetectedMount() {
-        set({ detectedMountTag: null, detectedMountIds: [] })
-      },
-
-      setDetectedProject(project: Project | null) {
-        set({ detectedProject: project })
-      },
-
-      dismissDetection(projectId: string) {
-        set((s) => ({
-          dismissedProjectIds: [...s.dismissedProjectIds, projectId],
-          detectedProject: s.detectedProject?.id === projectId ? null : s.detectedProject,
-        }))
-      },
-
       clearPersist() {
         set({
           activeSessionId: null,
           activeProjectId: null,
-          activeMountIds: null,
           activeRole: null,
           activeModelId: null,
+          activePersonaId: null,
+          activeBrainSpace: null,
           temperature: null,
           maxTokens: null,
           messages: [],
@@ -1501,8 +1518,6 @@ export const useChatStore = create<ChatStore>()(
           interviewAmbiguity: 0,
           activeToolApproval: null,
           activePathAccess: null,
-          detectedMountTag: null,
-          detectedMountIds: [],
         })
       },
 
@@ -1619,7 +1634,7 @@ export const useChatStore = create<ChatStore>()(
           console.warn('[chat] tool approval resolve failed:', e)
         }
       },
-      async resolvePathAccess(id: string, action: 'mount' | 'temp' | 'deny') {
+      async resolvePathAccess(id: string, action: 'temp' | 'deny') {
         clearWatchdog()
         const { activePathAccess } = get()
         if (!activePathAccess || activePathAccess.id !== id) return
@@ -1709,7 +1724,7 @@ export const useChatStore = create<ChatStore>()(
               set({ messages: ensured.messages })
               msgId = ensured.messages[ensured.index]!.id
             }
-            const processor = getOrCreateProcessor(msgId)
+            const processor = getOrCreateProcessor(msgId, get().messages)
             const { events } = adaptChunk(chunk, { msgId })
             for (const ev of events) {
               const result = processor.handleEvent(ev)
@@ -1806,25 +1821,6 @@ export const useChatStore = create<ChatStore>()(
             }))
             const sid = chunk.session_id ?? null
             const vid = chunk.project_id ?? null
-            // RFC-025: extract mount_tag from metadata (gateway sets it)
-            const chunkExtra = chunk as unknown as Record<string, unknown>
-            const mountTag = chunkExtra.mount_tag as string | undefined
-            const mountIdsRaw = chunkExtra.mount_ids as string | string[] | undefined
-            // Web-M4: gateway serializes mount_ids as a JSON-array string
-            // (e.g. `["id1","id2"]`); splitting on comma produces garbage.
-            const mountIds = Array.isArray(mountIdsRaw)
-              ? mountIdsRaw
-              : typeof mountIdsRaw === 'string' && mountIdsRaw.trim().startsWith('[')
-                ? (() => {
-                    try {
-                      return JSON.parse(mountIdsRaw) as string[]
-                    } catch {
-                      return []
-                    }
-                  })()
-                : mountIdsRaw
-                  ? mountIdsRaw.split(',').filter(Boolean)
-                  : []
             const toolCalls = chunk.tool_calls ?? []
             const phase = chunk.phase
             const evaluationPassed: boolean | undefined =
@@ -1899,13 +1895,10 @@ export const useChatStore = create<ChatStore>()(
             if (vid) {
               set({ activeProjectId: vid, _lastDoneProjectId: vid })
             }
-            // RFC-025: store detected mount tag + ids for the detection badge.
-            if (mountTag) {
-              set({ detectedMountTag: mountTag })
-            }
-            if (mountIds.length > 0) {
-              set({ detectedMountIds: mountIds })
-            }
+            // Server-derived execution snapshot (design §6.1): the kernel
+            // resolves it per turn and the gateway sends it (explicitly
+            // null when no persona binds) — kernel truth always wins.
+            set({ effectiveProfile: chunk.effective_profile ?? null })
             // Queue drain: if the user queued follow-ups while this turn
             // streamed, dispatch the next one now that the turn is idle.
             _activeRequestId = null
@@ -2036,9 +2029,10 @@ export const useChatStore = create<ChatStore>()(
       partialize: (state): PersistedState => ({
         activeSessionId: state.activeSessionId,
         activeProjectId: state.activeProjectId,
-        activeMountIds: state.activeMountIds,
         activeRole: state.activeRole,
         activeModelId: state.activeModelId,
+        activePersonaId: state.activePersonaId,
+        activeBrainSpace: state.activeBrainSpace,
         temperature: state.temperature,
         maxTokens: state.maxTokens,
       }),

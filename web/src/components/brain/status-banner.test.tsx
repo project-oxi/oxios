@@ -6,60 +6,30 @@ import { StatusBanner } from './status-banner'
 // (see web/src/__tests__/components/shared/error-state.test.tsx).
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: Record<string, unknown>) => {
+      if (params && 'roots' in params) return `${key}:${String(params.roots)}`
+      return key
+    },
     i18n: { language: 'en' },
   }),
 }))
 
 const onlineStatus = {
   available: true,
-  space: 'personal',
-  episodes: 1,
+  pending_extraction: 0,
+  binary: { installed: true, path: '/usr/bin/oxibrain', version: '0.8.0' },
 } as BrainStatus
 
-const installingStatus = {
+const binaryMissingStatus = {
   available: false,
-  space: null,
-  episodes: null,
-  supervisor: {
-    state: 'installing',
-    installed_version: null,
-    daemon_version: null,
-    managed_by: 'none',
-    last_error: null,
-  },
+  pending_extraction: null,
+  binary: { installed: false, path: null, version: null },
 } as BrainStatus
 
-const startingStatus = {
+const degradedStatus = {
   available: false,
-  space: null,
-  episodes: null,
-  supervisor: {
-    state: 'starting',
-    installed_version: null,
-    daemon_version: null,
-    managed_by: 'none',
-    last_error: null,
-  },
-} as BrainStatus
-
-const failedStatus = {
-  available: false,
-  space: null,
-  episodes: null,
-  supervisor: {
-    state: 'failed',
-    installed_version: null,
-    daemon_version: null,
-    managed_by: 'none',
-    last_error: 'no-release-asset',
-  },
-} as BrainStatus
-
-const noSupervisorStatus = {
-  available: false,
-  space: null,
-  episodes: null,
+  pending_extraction: 3,
+  binary: { installed: true, path: '/usr/bin/oxibrain', version: '0.8.0' },
 } as BrainStatus
 
 describe('StatusBanner', () => {
@@ -73,24 +43,14 @@ describe('StatusBanner', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows progress while installing', () => {
-    render(<StatusBanner status={installingStatus} />)
-    expect(screen.getByText('brain.installing')).toBeInTheDocument()
+  it('shows the binary-missing install hint when the brain binary is absent', () => {
+    render(<StatusBanner status={binaryMissingStatus} />)
+    expect(screen.getByText('brain.notInstalled')).toBeInTheDocument()
+    expect(screen.getByText('brain.notInstalledHint')).toBeInTheDocument()
   })
 
-  it('shows progress while starting', () => {
-    render(<StatusBanner status={startingStatus} />)
-    expect(screen.getByText('brain.starting')).toBeInTheDocument()
-  })
-
-  it('shows failure title and last_error when state is failed', () => {
-    render(<StatusBanner status={failedStatus} />)
-    expect(screen.getByText('brain.failedTitle')).toBeInTheDocument()
-    expect(screen.getByText(/no-release-asset/)).toBeInTheDocument()
-  })
-
-  it('falls back to manual guidance when no supervisor info is present', () => {
-    render(<StatusBanner status={noSupervisorStatus} />)
+  it('falls back to the degraded banner when the binary is installed but no session is active', () => {
+    render(<StatusBanner status={degradedStatus} />)
     expect(screen.getByText('brain.degradedTitle')).toBeInTheDocument()
     expect(screen.getByText('brain.manualDescription')).toBeInTheDocument()
   })

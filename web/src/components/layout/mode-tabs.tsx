@@ -92,15 +92,15 @@ export function ModeTabs({ collapsed = false }: { collapsed?: boolean }) {
             aria-current={isActive ? 'page' : undefined}
             title={`${t(labelKey)} (⌃${idx + 1})`}
             className={cn(
-              'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium select-none transition-all',
+              'flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-sm font-medium select-none transition-all',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
               isActive
                 ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                 : 'text-sidebar-foreground/50 hover:bg-sidebar-accent/50',
             )}
           >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{t(labelKey)}</span>
+            <Icon className="h-3.5 w-3.5 shrink-0" />
+            <span className="whitespace-nowrap">{t(labelKey)}</span>
           </Link>
         )
       })}

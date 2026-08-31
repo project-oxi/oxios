@@ -3,14 +3,14 @@ import { ArrowLeft, Network } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LinkGraph } from '@/components/knowledge/link-graph'
 
-export const Route = createFileRoute('/brain/knowledge/graph')({
-  component: function GraphPage() {
+export const Route = createFileRoute('/knowledge/library/graph')({
+  component: function LibraryGraphPage() {
     const { t } = useTranslation()
     return (
       <div className="flex flex-col h-full">
         <div className="flex items-center gap-3 px-5 py-3.5 border-b shrink-0">
           <Link
-            to="/brain/knowledge"
+            to="/knowledge/library"
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />

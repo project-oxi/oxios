@@ -1,20 +1,20 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { BrainSearch } from '@/components/brain/search'
-import { SpaceSelect } from '@/components/brain/space-select'
+import { BrainOverview } from '@/components/brain/overview'
+import { DefaultBrainSelect, SpaceSelect } from '@/components/brain/space-select'
 import { StatusBanner } from '@/components/brain/status-banner'
 import { PageHeader } from '@/components/shared/page-header'
 import { useBrainStatus } from '@/hooks/use-brain'
 
-export const Route = createFileRoute('/brain/search')({
-  component: SearchPage,
+export const Route = createFileRoute('/knowledge/memory/')({
+  component: MemoryOverviewPage,
   validateSearch: (search: Record<string, unknown>) => ({
-    // Search is space-scoped server-side ('' = prompt for a space first).
+    // Selected space for the scoped brain queries ('' = none picked yet).
     space: (search.space as string) ?? '',
   }),
 })
 
-function SearchPage() {
+function MemoryOverviewPage() {
   const { t } = useTranslation()
   const { data: status } = useBrainStatus()
   const { space } = Route.useSearch()
@@ -25,19 +25,20 @@ function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('brain.search')} subtitle={t('brain.subtitle')} />
+      <PageHeader
+        title={t('knowledge.surface.memory')}
+        subtitle={t('knowledge.surface.memorySubtitle')}
+        actions={<DefaultBrainSelect className="w-44" />}
+      />
       <StatusBanner status={status} />
       <SpaceSelect value={space} onValueChange={selectSpace} className="max-w-xs" />
-      {space ? (
-        <BrainSearch
-          space={space}
-          onSelectEntity={(id) => navigate({ to: '/brain/entity', search: { id, space } })}
-        />
-      ) : (
-        <p className="text-sm text-muted-foreground" role="status">
-          {t('brain.selectSpace')}
-        </p>
-      )}
+      <BrainOverview
+        space={space}
+        onSelectSpace={selectSpace}
+        onSelectEntity={(id) =>
+          navigate({ to: '/knowledge/memory/entities', search: { id, space } })
+        }
+      />
     </div>
   )
 }

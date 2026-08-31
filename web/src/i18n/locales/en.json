@@ -1437,7 +1437,52 @@
     "statusCursor": "Ln {{line}}, Col {{col}}",
     "clickForDiff": "Click to view diff",
     "noDiff": "No changes from current version",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "surface": {
+      "memory": "Memory",
+      "library": "Library",
+      "timeline": "Timeline",
+      "journal": "Journal",
+      "assets": "Assets",
+      "memorySubtitle": "Oxibrain daemon — episodes, entities, statements, contradictions",
+      "librarySubtitle": "Notes, captures, journal, and assets in your knowledge base"
+    },
+    "workspace": {
+      "title": "Knowledge Workspace",
+      "subtitle": "Memory and library sources side by side",
+      "contextList": "Sources",
+      "contextListMemory": "Memory sources",
+      "contextListLibrary": "Library sources",
+      "reader": "Reader",
+      "inspector": "Inspector",
+      "emptyReader": "Select a source to inspect",
+      "emptyLibrary": "No library documents yet",
+      "emptyMemory": "No memory sources yet",
+      "noSources": "No sources available",
+      "brainNotConnected": "Brain not connected",
+      "brainNotConnectedHint": "Bind a brain space to see memory sources here.",
+      "kindBadge": {
+        "memory": "Memory / Brain",
+        "library": "Library / Knowledge"
+      },
+      "missingMeta": "(metadata unavailable)",
+      "unavailableChip": "Unavailable — backing record not found",
+      "removeUnavailable": "Remove unavailable source",
+      "addToStudio": "Add to Studio",
+      "handoff": {
+        "title": "Add to Studio",
+        "subtitle": "Choose where this content lands in Studio",
+        "projectless": "Start without a project",
+        "projectlessHint": "Open Studio with the selected sources and no project bound.",
+        "currentSession": "Add to current Studio conversation",
+        "currentSessionHint": "Append to the session currently open in the chat tab.",
+        "chooseProject": "Choose project",
+        "chooseProjectHint": "Bind these sources to an existing project.",
+        "noProject": "No project",
+        "submit": "Open Studio",
+        "cancel": "Cancel"
+      }
+    }
   },
   "marketplace": {
     "title": "Marketplace",

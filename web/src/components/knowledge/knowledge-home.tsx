@@ -176,7 +176,7 @@ export function KnowledgeHome() {
             label={t('knowledge.homeGraph')}
             value={graphNodes}
             sublabel={t('knowledge.homeGraphLinks', { count: graphEdges })}
-            onClick={() => navigate({ to: '/brain/knowledge/graph' })}
+            onClick={() => navigate({ to: '/knowledge/library/graph' })}
             actionLabel={graphNodes > 0 ? t('knowledge.homeExplore') : undefined}
           />
 

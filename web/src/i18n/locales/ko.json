@@ -1437,7 +1437,52 @@
     "statusCursor": "{{line}}줄 {{col}}열",
     "clickForDiff": "차이를 보려면 클릭",
     "noDiff": "현재 버전과 차이 없음",
-    "saveFailed": "저장 실패"
+    "saveFailed": "저장 실패",
+    "surface": {
+      "memory": "메모리",
+      "library": "라이브러리",
+      "timeline": "타임라인",
+      "journal": "저널",
+      "assets": "에셋",
+      "memorySubtitle": "Oxibrain 데몬 — 에피소드, 엔티티, 구문, 모순",
+      "librarySubtitle": "지식 베이스의 노트, 캡처, 저널, 에셋"
+    },
+    "workspace": {
+      "title": "지식 작업 공간",
+      "subtitle": "메모리 및 라이브러리 소스를 나란히",
+      "contextList": "소스",
+      "contextListMemory": "메모리 소스",
+      "contextListLibrary": "라이브러리 소스",
+      "reader": "뷰어",
+      "inspector": "인스펙터",
+      "emptyReader": "소스를 선택해 자세히 보기",
+      "emptyLibrary": "라이브러리 문서가 아직 없습니다",
+      "emptyMemory": "메모리 소스가 아직 없습니다",
+      "noSources": "사용 가능한 소스가 없습니다",
+      "brainNotConnected": "브레인이 연결되지 않음",
+      "brainNotConnectedHint": "메모리 소스를 보려면 브레인 스페이스를 연결하세요.",
+      "kindBadge": {
+        "memory": "메모리 / 브레인",
+        "library": "라이브러리 / 지식"
+      },
+      "missingMeta": "(메타데이터 없음)",
+      "unavailableChip": "사용 불가 — 백킹 레코드를 찾을 수 없습니다",
+      "removeUnavailable": "사용 불가 소스 제거",
+      "addToStudio": "스튜디오로 추가",
+      "handoff": {
+        "title": "스튜디오로 추가",
+        "subtitle": "스튜디오에서 이 콘텐츠가 어디로 갈지 선택",
+        "projectless": "프로젝트 없이 시작",
+        "projectlessHint": "선택한 소스와 함께 프로젝트 미연결 상태로 스튜디오 열기.",
+        "currentSession": "현재 스튜디오 대화에 추가",
+        "currentSessionHint": "현재 채팅 탭에 열려 있는 세션에 이어 붙이기.",
+        "chooseProject": "프로젝트 선택",
+        "chooseProjectHint": "기존 프로젝트에 이 소스들을 연결합니다.",
+        "noProject": "프로젝트 없음",
+        "submit": "스튜디오 열기",
+        "cancel": "취소"
+      }
+    }
   },
   "marketplace": {
     "title": "마켓플레이스",

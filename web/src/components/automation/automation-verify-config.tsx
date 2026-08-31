@@ -1,7 +1,7 @@
-// TaskVerifyConfig — verify-gate section for the task detail dialog (RFC-043 §D2)
+// AutomationVerifyConfig — verify-gate section for the automation detail dialog.
 //
 // Controlled subcomponent: receives the current verify state and an `onSave`
-// callback that performs the mutation (typically useSetTaskVerify.mutate).
+// callback that performs the mutation (typically useSetAutomationVerify.mutate).
 // "Save" sends the merged SetVerifyParams payload — every field is sent so
 // the store sees the current snapshot. Toggling enabled is staged in local
 // state and only committed when the user presses Save.
@@ -14,10 +14,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import type { SetVerifyParams } from '@/types/task'
+import type { SetVerifyParams } from '@/types/automation'
 
-export interface TaskVerifyConfigProps {
-  /** Current persisted values from the task. */
+export interface AutomationVerifyConfigProps {
+  /** Current persisted values from the automation. */
   enabled: boolean
   requirement?: string
   maxIterations: number
@@ -31,13 +31,13 @@ export interface TaskVerifyConfigProps {
   onSave: (params: SetVerifyParams) => void
 }
 
-export function TaskVerifyConfig({
+export function AutomationVerifyConfig({
   enabled,
   requirement,
   maxIterations,
   isPending,
   onSave,
-}: TaskVerifyConfigProps) {
+}: AutomationVerifyConfigProps) {
   const { t } = useTranslation()
   const [localEnabled, setLocalEnabled] = useState(enabled)
   const [localRequirement, setLocalRequirement] = useState(requirement ?? '')
@@ -59,35 +59,35 @@ export function TaskVerifyConfig({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border p-3">
+    <div className="space-y-3 rounded-lg border p-3" data-testid="automation-verify-config">
       <div className="flex items-center gap-1.5">
         <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
         <Label className="text-xs font-medium text-muted-foreground">
-          {t('tasks.verifyTitle')}
+          {t('automations.verifyTitle')}
         </Label>
       </div>
 
       <div className="flex items-center justify-between gap-2">
         <Label htmlFor="verify-enabled" className="text-sm">
-          {t('tasks.verifyEnabled')}
+          {t('automations.verifyEnabled')}
         </Label>
         <Switch
           id="verify-enabled"
           checked={localEnabled}
           onCheckedChange={setLocalEnabled}
           size="sm"
-          aria-label={t('tasks.verifyEnabled')}
+          aria-label={t('automations.verifyEnabled')}
         />
       </div>
 
       <div>
         <Label className="text-xs font-medium mb-1 block text-muted-foreground">
-          {t('tasks.verifyRequirement')}
+          {t('automations.verifyRequirement')}
         </Label>
         <Textarea
           value={localRequirement}
           onChange={(e) => setLocalRequirement(e.target.value)}
-          placeholder={t('tasks.verifyRequirementPlaceholder')}
+          placeholder={t('automations.verifyRequirementPlaceholder')}
           rows={3}
           disabled={!localEnabled}
         />
@@ -98,7 +98,7 @@ export function TaskVerifyConfig({
           htmlFor="verify-max-iterations"
           className="text-xs font-medium mb-1 block text-muted-foreground"
         >
-          {t('tasks.verifyMaxIterations')}
+          {t('automations.verifyMaxIterations')}
         </Label>
         <Input
           id="verify-max-iterations"
@@ -118,7 +118,7 @@ export function TaskVerifyConfig({
           onClick={handleSave}
           disabled={!localEnabled || !dirty || isPending}
         >
-          {isPending ? t('tasks.saving') : t('tasks.verifySave')}
+          {isPending ? t('automations.saving') : t('automations.verifySave')}
         </Button>
       </div>
     </div>

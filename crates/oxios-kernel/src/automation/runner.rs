@@ -1,18 +1,21 @@
-//! Task runner — the single execution path for task runs (RFC-043).
+//! Automation runner — the single execution path for automation runs.
 //!
 //! Shared by the manual-run HTTP endpoint, the auto-run tick loop, and the
-//! `task` agent tool. Wraps [`KernelHandle::run_goal`] with an overall
-//! deadline and, when the verify gate is enabled, a verify/repair loop
-//! driven by a separate verifier conversation.
+//! `automation` agent tool. Wraps [`KernelHandle::run_goal`] with an overall
+//! deadline and, when the verify gate is armed, a verify/repair loop driven
+//! by a separate verifier conversation.
+//!
+//! The whole execution runs from the [`AutomationContextSnapshot`] captured
+//! by [`AutomationStore::begin_run`]; a later edit to the automation
+//! definition is never observed mid-run.
 
-use std::str::FromStr;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
+use crate::automation::model::AutomationRunTrigger;
+use crate::automation::store::AutomationStore;
 use crate::kernel_handle::KernelHandle;
-use crate::task::model::TaskRunTrigger;
-use crate::task::store::TaskStore;
 
 /// One execution attempt's outcome.
 #[derive(Debug, Clone, Default)]
@@ -22,8 +25,10 @@ struct Outcome {
     error: Option<String>,
 }
 
-/// Execute a task run end-to-end: mark running → run the goal (bounded by
-/// `timeout_secs` total) → optionally verify/repair → finalize.
+/// Execute an automation run end-to-end: open the run (snapshot + run row +
+/// definition execution state in one transaction) → run the snapshot's
+/// instruction (bounded by `timeout_secs` total) → optionally verify/repair
+/// from the snapshot's verify config → finalize.
 ///
 /// The budget is a single deadline shared by the main execution, every
 /// verifier call, and every repair re-run — a verify-enabled run can never
@@ -34,46 +39,41 @@ struct Outcome {
 /// passed (default true — a goal with no acceptance criteria that ran
 /// cleanly is a success). This is the opposite of the metrics code's
 /// `unwrap_or(false)`, which is a latent bug there and must NOT be copied.
-pub async fn execute_task_run(
-    store: Arc<Mutex<TaskStore>>,
+pub async fn execute_automation_run(
+    store: Arc<Mutex<AutomationStore>>,
     kernel: Arc<KernelHandle>,
     id: &str,
-    trigger: TaskRunTrigger,
+    trigger: AutomationRunTrigger,
     timeout_secs: u64,
 ) -> (String, bool, String) {
-    let task = match store.lock().await.get_task_by_id(id).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!(%id, error = %e, "task load failed");
-            return (String::new(), false, format!("Failed to load task: {e}"));
-        }
-    };
-    let instruction = task.instruction.clone();
-
-    // 1. Mark running + open a task_runs row.
-    let run_id = match store.lock().await.mark_running(id, trigger).await {
+    // 1. Open the run: snapshot is captured here and is the ONLY definition
+    //    data this execution ever sees.
+    let run = match store.lock().await.begin_run(id, trigger, None).await {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!(%id, error = %e, "mark_running failed");
+            tracing::error!(%id, error = %e, "begin_run failed");
             return (String::new(), false, format!("Failed to start run: {e}"));
         }
     };
+    let snapshot = run.context_snapshot.clone();
+    let instruction = snapshot.instruction.clone();
 
     let deadline =
         tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1));
 
-    // 2. Execute.
+    // 2. Execute from the snapshot.
     let mut result = run_bounded(&kernel, &instruction, deadline).await;
 
-    // 3. Verify/repair loop (RFC-043 §Verify Gate) — only when the run
-    //    succeeded and the gate is armed.
+    // 3. Verify/repair loop — only when the run succeeded and the gate
+    //    (from the snapshot) is armed.
     let mut verified = false;
-    if task.verify_enabled && result.success {
-        let criterion = task
-            .verify_requirement
+    if snapshot.verify.enabled && result.success {
+        let criterion = snapshot
+            .verify
+            .requirement
             .clone()
             .unwrap_or_else(|| instruction.clone());
-        let max_attempts = task.verify_max_iterations.max(1);
+        let max_attempts = snapshot.verify.max_iterations.max(1);
         let mut feedback = String::new();
         for attempt in 0..max_attempts {
             let verdict_input = verifier_prompt(&instruction, &criterion, &result.summary);
@@ -96,7 +96,7 @@ pub async fn execute_task_run(
             }
         }
         if verified {
-            tracing::info!(%id, feedback = %feedback, "task verified");
+            tracing::info!(%id, feedback = %feedback, "automation verified");
         } else if result.success {
             result.success = false;
             result.error = Some(format!(
@@ -105,54 +105,24 @@ pub async fn execute_task_run(
         }
     }
 
-    // 4. Finalize: task_runs row + task terminal state.
+    // 4. Finalize: run row + definition terminal state.
     if let Err(e) = store
         .lock()
         .await
-        .mark_finished(
+        .finish_run(
             id,
-            &run_id,
+            &run.id,
             result.success,
-            verified,
-            result.summary.clone(),
-            result.error,
+            Some(result.summary.clone()),
+            Some(result.summary.clone()),
+            result.error.clone(),
         )
         .await
     {
-        tracing::error!(%id, error = %e, "mark_finished failed");
+        tracing::error!(%id, error = %e, "finish_run failed");
     }
 
-    (run_id, result.success, result.summary)
-}
-
-/// Compute the next cron fire time after `after` as an RFC3339 string.
-/// Normalizes 5-field (Linux cron) expressions by prepending a seconds
-/// field, matching `CronScheduler::normalize_expr`. Re-exported here so
-/// the auto-run tick can defer gated tasks without reaching into the
-/// store's private helpers.
-///
-/// Used by the binary crate's auto-run tick (`src/api/plugin.rs`); rustc's
-/// standalone-lib dead_code check can't see that caller.
-#[allow(dead_code)]
-pub fn cron_next_after(
-    pattern: &str,
-    after: &chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<String> {
-    let normalized = {
-        let fields: Vec<&str> = pattern.split_whitespace().collect();
-        if fields.len() == 5 {
-            format!("0 {pattern}")
-        } else {
-            pattern.to_string()
-        }
-    };
-    let schedule = cron::Schedule::from_str(&normalized)
-        .map_err(|e| anyhow::anyhow!("Invalid cron expression '{pattern}': {e}"))?;
-    let next = schedule
-        .after(after)
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No future fire time for cron '{pattern}'"))?;
-    Ok(next.to_rfc3339())
+    (run.id, result.success, result.summary)
 }
 
 /// Run one goal bounded by the remaining budget. Timeout produces a failed

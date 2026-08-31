@@ -43,8 +43,9 @@ pub struct AppState {
     pub readiness: std::sync::Arc<oxios_kernel::ReadinessGate>,
     /// Gateway handle — runtime channel control (`/api/channels`).
     pub gateway: std::sync::Arc<oxios_gateway::Gateway>,
-    /// Task store (RFC-043) — SQLite-backed task lifecycle management.
-    pub task_store: std::sync::Arc<tokio::sync::Mutex<oxios_kernel::task::TaskStore>>,
+    /// Automation store — SQLite-backed automation lifecycle management.
+    pub automation_store:
+        std::sync::Arc<tokio::sync::Mutex<oxios_kernel::automation::AutomationStore>>,
 }
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

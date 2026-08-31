@@ -1,4 +1,4 @@
-// Task templates — recurring automation templates (ported from LobeHub)
+// Automation templates — recurring automation presets (ported from LobeHub)
 // Pre-built templates for common scheduled agent tasks:
 // - Weekly design inspiration (fonts + colors)
 // - Daily creator tracking
@@ -8,7 +8,7 @@
 
 // ── Types ──
 
-export type TaskTemplateCategory =
+export type AutomationTemplateCategory =
   | 'content-creation'
   | 'research'
   | 'monitoring'
@@ -16,14 +16,14 @@ export type TaskTemplateCategory =
   | 'creative'
   | 'analytics'
 
-export type TaskTemplateSchedule = 'daily' | 'weekly' | 'hourly' | 'custom'
+export type AutomationTemplateSchedule = 'daily' | 'weekly' | 'hourly' | 'custom'
 
-export interface TaskTemplate {
+export interface AutomationTemplate {
   id: string
   identifier: string
   title: string
   description: string
-  category: TaskTemplateCategory
+  category: AutomationTemplateCategory
   /** Cron pattern (e.g. "0 10 * * 3" = every Wednesday 10am). */
   cronPattern: string
   /** Human-readable schedule label. */
@@ -40,7 +40,7 @@ export interface TaskTemplate {
 
 // ── Templates ──
 
-export const TASK_TEMPLATES: TaskTemplate[] = [
+export const AUTOMATION_TEMPLATES: AutomationTemplate[] = [
   {
     id: 'weekly-design-inspiration',
     identifier: 'weekly-design-inspiration',
@@ -163,12 +163,15 @@ Alert immediately for negative sentiment or viral mentions. Otherwise, batch int
 
 // ── Categories ──
 
-export const TASK_TEMPLATE_CATEGORIES: { id: TaskTemplateCategory; label: string; icon: string }[] =
-  [
-    { id: 'creative', label: 'Creative', icon: 'Palette' },
-    { id: 'monitoring', label: 'Monitoring', icon: 'Radar' },
-    { id: 'analytics', label: 'Analytics', icon: 'BarChart' },
-    { id: 'research', label: 'Research', icon: 'Search' },
-    { id: 'productivity', label: 'Productivity', icon: 'CheckCircle' },
-    { id: 'content-creation', label: 'Content', icon: 'PenTool' },
-  ]
+export const AUTOMATION_TEMPLATE_CATEGORIES: {
+  id: AutomationTemplateCategory
+  label: string
+  icon: string
+}[] = [
+  { id: 'creative', label: 'Creative', icon: 'Palette' },
+  { id: 'monitoring', label: 'Monitoring', icon: 'Radar' },
+  { id: 'analytics', label: 'Analytics', icon: 'BarChart' },
+  { id: 'research', label: 'Research', icon: 'Search' },
+  { id: 'productivity', label: 'Productivity', icon: 'CheckCircle' },
+  { id: 'content-creation', label: 'Content', icon: 'PenTool' },
+]

@@ -73,13 +73,21 @@ for old in "$@"; do
 done
 
 rc="$HOME/.zshrc"; [ -f "$rc" ] || rc="$HOME/.zprofile"
-if ! grep -q 'BEGIN oxios (managed)' "$rc" 2>/dev/null; then
-  # SC2016 disable: \$PATH must remain literal in the user's rc file so it expands at
-  # shell startup, not at printf time.
-  # shellcheck disable=SC2016
-  printf '\n# BEGIN oxios (managed)\nexport PATH="%s/bin:\$PATH"\n# END oxios (managed)\n' "$OXIOS_ROOT" >> "$rc"
-  echo "PATH entry added to $rc — restart your shell or: export PATH=\"$OXIOS_ROOT/bin:\$PATH\""
+# Rewrite any managed PATH block, not just skip when one exists: a block
+# pointing at a previous OXIOS_ROOT (e.g. the legacy ~/.oxios home) satisfies
+# a marker-only check and leaves `oxios` unresolvable. Drop every managed
+# block, then append one for the current root.
+if grep -q 'BEGIN oxios (managed)' "$rc" 2>/dev/null; then
+  tmp_rc=$(mktemp)
+  sed "/# BEGIN oxios (managed)/,/# END oxios (managed)/d" "$rc" > "$tmp_rc" \
+    && mv "$tmp_rc" "$rc" \
+    || { rm -f "$tmp_rc"; echo "failed to update PATH block in $rc" >&2; exit 1; }
 fi
+# SC2016 disable: \$PATH must remain literal in the user's rc file so it expands at
+# shell startup, not at printf time.
+# shellcheck disable=SC2016
+printf '\n# BEGIN oxios (managed)\nexport PATH="%s/bin:\$PATH"\n# END oxios (managed)\n' "$OXIOS_ROOT" >> "$rc"
+echo "PATH entry for $OXIOS_ROOT/bin ensured in $rc — restart your shell or: export PATH=\"$OXIOS_ROOT/bin:\$PATH\""
 
 echo "installed oxios $ver -> $OXIOS_ROOT/bin/oxios"
 echo "shadow check:"

@@ -227,7 +227,7 @@ pub(crate) fn prune_versions(
     for entry in entries {
         let entry =
             entry.with_context(|| format!("read_dir entry in {}", versions_dir.display()))?;
-        if !entry.file_type().map_or(false, |t| t.is_dir()) {
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -512,6 +512,34 @@ impl BrainInstaller {
             let _ = tokio::fs::remove_file(brain_dir.join(name)).await;
         }
         tracing::debug!("brain legacy daemon cleanup done");
+    }
+
+    /// Other recognized locations where an `oxibrain` binary also exists —
+    /// shadow diagnostics for `oxios brain status`. The winning path
+    /// (from [`locate_binary`](Self::locate_binary)) is excluded; the
+    /// pre-standard shared location and every `PATH` hit are listed when
+    /// they exist on disk. Pure filesystem probe — no daemon, no spawn.
+    pub fn shadow_roots(&self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let winner = self.locate_binary();
+        let push = |path: PathBuf, out: &mut Vec<PathBuf>, seen: &mut Vec<PathBuf>| {
+            if path.is_file() && Some(&path) != winner.as_ref() && !seen.contains(&path) {
+                seen.push(path.clone());
+                out.push(path);
+            }
+        };
+        push(self.legacy_binary.clone(), &mut out, &mut seen);
+        if let Some(home) = std::env::var_os("HOME") {
+            let cargo_bin = PathBuf::from(home).join(".cargo").join("bin").join("oxibrain");
+            push(cargo_bin, &mut out, &mut seen);
+        }
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                push(dir.join("oxibrain"), &mut out, &mut seen);
+            }
+        }
+        out
     }
 
     /// Read `<binary> --version` stdout (trimmed); `None` when it fails.

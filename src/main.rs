@@ -1899,9 +1899,21 @@ async fn cmd_foundation(
             println!("registry:       {}", registry_path.display());
             println!("brain dir:      {}", dir.display());
             let installer = oxios_kernel::BrainInstaller::from_brain_section(home, &config.brain);
-            match installer.locate_binary() {
+            let winner = installer.locate_binary();
+            match &winner {
                 Some(binary) => println!("brain binary:   {}", binary.display()),
                 None => println!("brain binary:   (missing — run `oxios brain install`)"),
+            }
+            let shadows = installer.shadow_roots();
+            if !shadows.is_empty() {
+                println!(
+                    "brain shadows:  {}",
+                    shadows
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
             let exe = brain_executable(home, Some(&installer));
             let state = quick_probe(&exe);

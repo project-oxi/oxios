@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useKnowledgeRecursiveTree, useKnowledgeSearch } from '@/hooks/use-knowledge'
 import { api } from '@/lib/api-client'
+import { flattenTree } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { usePortalStore } from '@/stores/portal'
@@ -110,7 +111,7 @@ export function KnowledgeWorkspace({ space: spaceOverride = '' }: KnowledgeWorks
         const results = res?.results ?? []
         const indexByPath = new Map<string, KnowledgeTreeNode>()
         if (tree)
-          flattenNodes(tree).forEach((n) => {
+          flattenTree(tree).forEach((n) => {
             if (!n.is_dir) indexByPath.set(n.path, n)
           })
         setLibraryHits(
@@ -138,7 +139,7 @@ export function KnowledgeWorkspace({ space: spaceOverride = '' }: KnowledgeWorks
       }))
     }
     if (!tree) return []
-    return flattenNodes(tree)
+    return flattenTree(tree)
       .filter((n) => !n.is_dir)
       .slice(0, 30)
       .map((n) => ({
@@ -417,15 +418,6 @@ function keyOf(src: Source): string {
   return src.kind === 'memory' ? `memory:${src.id}` : `library:${src.path}`
 }
 
-function flattenNodes(nodes: KnowledgeTreeNode[]): KnowledgeTreeNode[] {
-  const out: KnowledgeTreeNode[] = []
-  for (const n of nodes) {
-    out.push(n)
-    if (n.children && n.children.length > 0) out.push(...flattenNodes(n.children))
-  }
-  return out
-}
-
 function SourceRow({
   src,
   selected,
@@ -484,7 +476,7 @@ function SourceRow({
         <div className="mt-1 ml-1">
           <Button variant="ghost" size="sm" onClick={onOpenPreview} className="h-7 px-2 text-xs">
             <Plus className="h-3 w-3" />
-            preview
+            {t('knowledge.workspace.preview')}
           </Button>
         </div>
       )}
@@ -609,13 +601,13 @@ function InspectorCard({
         </div>
         {isMemory && src.snippet && (
           <div>
-            <dt className="text-muted-foreground">excerpt</dt>
+            <dt className="text-muted-foreground">{t('knowledge.workspace.excerpt')}</dt>
             <dd className="line-clamp-3 text-foreground/90">{src.snippet}</dd>
           </div>
         )}
         {isMemory && src.score !== undefined && (
           <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">score</dt>
+            <dt className="text-muted-foreground">{t('knowledge.workspace.score')}</dt>
             <dd className="tabular-nums">{fmtScore(src.score)}</dd>
           </div>
         )}

@@ -245,7 +245,7 @@ export function StudioHandoffSheet({
                   activeProject={chosenProject}
                   onSelect={(project) => setChosenProject(project)}
                 />
-                {activeProjectId && (
+                {!activeProjectId && (
                   <p className="mt-2 text-2xs text-muted-foreground">
                     {t('knowledge.workspace.handoff.noProject')}
                   </p>

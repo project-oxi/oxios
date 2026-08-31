@@ -1465,6 +1465,9 @@
         "memory": "Memory / Brain",
         "library": "Library / Knowledge"
       },
+      "preview": "Preview",
+      "excerpt": "Excerpt",
+      "score": "Score",
       "missingMeta": "(metadata unavailable)",
       "unavailableChip": "Unavailable — backing record not found",
       "removeUnavailable": "Remove unavailable source",

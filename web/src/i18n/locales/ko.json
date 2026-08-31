@@ -1465,6 +1465,9 @@
         "memory": "메모리 / 브레인",
         "library": "라이브러리 / 지식"
       },
+      "preview": "미리보기",
+      "excerpt": "발췌",
+      "score": "점수",
       "missingMeta": "(메타데이터 없음)",
       "unavailableChip": "사용 불가 — 백킹 레코드를 찾을 수 없습니다",
       "removeUnavailable": "사용 불가 소스 제거",

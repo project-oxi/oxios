@@ -43,7 +43,7 @@ const AGENT_RUN_TIMEOUT_SECS: u64 = 300;
 /// | `create` | Create one automation          | `name`, `instruction` | `description`, `trigger`, `cron_pattern`, `timezone`, `heartbeat_interval_secs`, `max_executions`, `persona_id`, `project_id`, `brain_space` |
 /// | `list`   | List automations               | —                   | `status`, `limit`, `offset` |
 /// | `get`    | Automation detail              | `id`                | —               |
-/// | `update` | Partial update                 | `id`                | `name`, `description`, `instruction`, `persona_id`, `project_id`, `brain_space` |
+/// | `update` | Partial update (absent key = keep, null = clear) | `id` | `name`, `description`, `instruction`, `persona_id`, `project_id`, `brain_space` |
 /// | `pause`  | Set status to `paused`         | `id`                | —               |
 /// | `resume` | Set status to `active`         | `id`                | —               |
 /// | `run`    | Trigger a background run       | `id`                | —               |
@@ -175,16 +175,16 @@ impl AgentTool for AutomationTool {
                     "description": "Stop after N executions (create)"
                 },
                 "persona_id": {
-                    "type": "string",
-                    "description": "Persona bound to the automation (create, update); omit for default"
+                    "type": ["string", "null"],
+                    "description": "Persona bound to the automation (create, update); omit to keep, null to unbind"
                 },
                 "project_id": {
-                    "type": "string",
-                    "description": "Project bound to the automation (create, update); omit for projectless"
+                    "type": ["string", "null"],
+                    "description": "Project bound to the automation (create, update); omit to keep, null for projectless"
                 },
                 "brain_space": {
-                    "type": "string",
-                    "description": "Brain space bound to the automation (create, update)"
+                    "type": ["string", "null"],
+                    "description": "Brain space bound to the automation (create, update); omit to keep, null to unbind"
                 },
                 "status": {
                     "type": "string",

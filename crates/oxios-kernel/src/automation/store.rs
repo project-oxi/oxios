@@ -221,8 +221,9 @@ impl AutomationStore {
         Ok(())
     }
 
-    /// Persist the verify-gate configuration. `None` fields keep their
-    /// current value; unknown ids error.
+    /// Persist the verify-gate configuration. Patch rule: absent (`None`)
+    /// fields keep their current value; an explicit `Some(None)` requirement
+    /// clears it. Unknown ids error.
     pub async fn set_verify(&self, id: &str, params: SetVerifyParams) -> Result<()> {
         let conn = self.conn.lock().await;
         let now = Utc::now().to_rfc3339();
@@ -235,12 +236,16 @@ impl AutomationStore {
             )
             .optional()?
             .ok_or_else(|| anyhow::anyhow!("automation {id} not found"))?;
+        let next_requirement = match params.requirement {
+            Some(v) => v, // Some(None) clears, Some(Some) replaces
+            None => requirement,
+        };
         conn.execute(
             "UPDATE automations SET verify_enabled = ?1, verify_requirement = ?2, \
              verify_max_iterations = ?3, updated_at = ?4 WHERE id = ?5",
             params![
                 params.enabled.map(|b| b as i64).unwrap_or(enabled),
-                params.requirement.or(requirement),
+                next_requirement,
                 params.max_iterations.map(|v| v as i64).or(max_iter),
                 now,
                 id
@@ -249,69 +254,99 @@ impl AutomationStore {
         Ok(())
     }
 
-    /// Set/replace the trigger configuration and re-arm scheduling:
-    /// cron/heartbeat get a fresh `next_run_at` and flip to `Active`;
-    /// manual clears `next_run_at` (remains `Active` — runnable on demand).
+    /// Set/replace the trigger configuration. NEVER changes `status`:
+    /// - Active definition → `next_run_at` is recomputed for the new config
+    ///   (manual → NULL = runnable on demand).
+    /// - Paused/failed/exhausted definition → `next_run_at = NULL` (dormant);
+    ///   reactivation goes through `update_status(Active)`, whose
+    ///   exhausted-guard still blocks spent definitions.
+    ///
+    /// `timezone`/`max_executions` follow the double-option patch rule:
+    /// absent = preserve the stored value, explicit null = clear.
     pub async fn set_trigger(&self, id: &str, params: SetTriggerParams) -> Result<()> {
         validate_trigger_config(
             params.trigger,
             params.cron_pattern.as_deref(),
             params.heartbeat_interval_secs,
         )?;
-        if params.max_executions == Some(0) {
+        let conn = self.conn.lock().await;
+        // Read the row first: patch fields need the current values, and the
+        // next_run computation depends on the current status.
+        let (current_tz, current_max, status): (Option<String>, Option<i64>, String) = conn
+            .query_row(
+                "SELECT timezone, max_executions, status FROM automations WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("automation {id} not found"))?;
+        let timezone = params.timezone.unwrap_or(current_tz);
+        let max_executions = match params.max_executions {
+            Some(v) => v,
+            None => current_max.map(|v| v as u32),
+        };
+        if max_executions == Some(0) {
             anyhow::bail!("max_executions must be at least 1 when set");
         }
-        let conn = self.conn.lock().await;
+
         let now = Utc::now();
-        let next_run = match params.trigger {
-            AutomationTrigger::Manual => None,
-            AutomationTrigger::Cron => Some(cron_next(
-                params
-                    .cron_pattern
-                    .as_deref()
-                    .expect("validated: cron requires a pattern"),
-                &now,
-            )?),
-            AutomationTrigger::Heartbeat => Some(
-                (now + chrono::Duration::seconds(
+        let active = status == AutomationStatus::Active.to_string();
+        // Only an Active definition carries a scheduled next run; every
+        // other state is dormant until update_status(Active) re-arms it.
+        let next_run = if active {
+            match params.trigger {
+                AutomationTrigger::Manual => None,
+                AutomationTrigger::Cron => Some(cron_next(
                     params
-                        .heartbeat_interval_secs
-                        .expect("validated: heartbeat requires an interval")
-                        as i64,
-                ))
-                .to_rfc3339(),
-            ),
+                        .cron_pattern
+                        .as_deref()
+                        .expect("validated: cron requires a pattern"),
+                    &now,
+                )?),
+                AutomationTrigger::Heartbeat => Some(
+                    (now + chrono::Duration::seconds(
+                        params
+                            .heartbeat_interval_secs
+                            .expect("validated: heartbeat requires an interval")
+                            as i64,
+                    ))
+                    .to_rfc3339(),
+                ),
+            }
+        } else {
+            None
         };
-        let changed = conn.execute(
+        conn.execute(
             r#"UPDATE automations SET
                  "trigger" = ?1, cron_pattern = ?2, timezone = ?3,
                  heartbeat_interval_secs = ?4, max_executions = ?5,
-                 status = 'active', next_run_at = ?6, updated_at = ?7
+                 next_run_at = ?6, updated_at = ?7
                WHERE id = ?8"#,
             params![
                 params.trigger.to_string(),
                 params.cron_pattern,
-                params.timezone,
+                timezone,
                 params.heartbeat_interval_secs.map(|v| v as i64),
-                params.max_executions.map(|v| v as i64),
+                max_executions.map(|v| v as i64),
                 next_run,
                 now.to_rfc3339(),
                 id,
             ],
         )?;
-        if changed == 0 {
-            anyhow::bail!("automation {id} not found");
-        }
         Ok(())
     }
 
-    /// Partially update editable definition fields — `None` leaves a field
-    /// unchanged. `updated_at` is stamped; schedule state is untouched.
+    /// Partially update editable definition fields. Patch rule: absent
+    /// (`None`) leaves a field unchanged; an explicit `Some(None)` clears it
+    /// (bindings/description become NULL). `updated_at` is stamped;
+    /// schedule state is untouched.
     pub async fn update_automation(&self, id: &str, params: UpdateAutomationParams) -> Result<()> {
         // Lock first: the boxed ToSql values are !Send, so they must not
         // live across an await point.
         let conn = self.conn.lock().await;
-        // (column, value) pairs built only from Some fields.
+        // (column, value) pairs built only from present fields. A present
+        // Option<Option<String>> binds Option<String> directly — None inside
+        // serializes as SQL NULL (clear).
         let mut sets: Vec<(&str, Box<dyn rusqlite::ToSql>)> = Vec::new();
         if let Some(v) = params.name {
             sets.push(("name", Box::new(v)));
@@ -1250,8 +1285,8 @@ mod tests {
                 &a.id,
                 UpdateAutomationParams {
                     instruction: Some("instruction v2".into()),
-                    project_id: Some("beta".into()),
-                    persona_id: Some("persona-b".into()),
+                    project_id: Some(Some("beta".into())),
+                    persona_id: Some(Some("persona-b".into())),
                     ..Default::default()
                 },
             )
@@ -1527,7 +1562,7 @@ mod tests {
                 &a.id,
                 SetVerifyParams {
                     enabled: Some(true),
-                    requirement: Some("must include BANANA".into()),
+                    requirement: Some(Some("must include BANANA".into())),
                     max_iterations: Some(5),
                 },
             )
@@ -1583,6 +1618,302 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    // ── Fix round 2: double-option patch semantics ──
+
+    #[tokio::test]
+    async fn update_automation_explicit_null_clears_bindings_and_description() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(CreateAutomationParams {
+                description: Some("temp note".into()),
+                persona_id: Some("persona-1".into()),
+                project_id: Some("proj-1".into()),
+                brain_space: Some("space-1".into()),
+                ..manual_params("unbindable")
+            })
+            .await
+            .unwrap();
+        store
+            .update_automation(
+                &a.id,
+                UpdateAutomationParams {
+                    description: Some(None),
+                    persona_id: Some(None),
+                    project_id: Some(None),
+                    brain_space: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let updated = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(
+            updated.description, None,
+            "explicit null clears description"
+        );
+        assert_eq!(updated.persona_id, None, "explicit null unbinds persona");
+        assert_eq!(updated.project_id, None, "explicit null unbinds project");
+        assert_eq!(updated.brain_space, None, "explicit null unbinds brain");
+    }
+
+    #[tokio::test]
+    async fn update_automation_absent_keys_leave_values_intact() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(CreateAutomationParams {
+                description: Some("kept".into()),
+                project_id: Some("proj-1".into()),
+                ..manual_params("stable")
+            })
+            .await
+            .unwrap();
+        store
+            .update_automation(
+                &a.id,
+                UpdateAutomationParams {
+                    name: Some("renamed".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let updated = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(updated.description.as_deref(), Some("kept"));
+        assert_eq!(updated.project_id.as_deref(), Some("proj-1"));
+    }
+
+    #[tokio::test]
+    async fn update_automation_clear_only_counts_as_a_change() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(CreateAutomationParams {
+                description: Some("gone".into()),
+                ..manual_params("clear-only")
+            })
+            .await
+            .unwrap();
+        // Clearing the only provided field IS a change — must not bail.
+        store
+            .update_automation(
+                &a.id,
+                UpdateAutomationParams {
+                    description: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.get_automation(&a.id).await.unwrap().description, None);
+    }
+
+    #[tokio::test]
+    async fn set_verify_explicit_null_clears_requirement() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(manual_params("verifiable"))
+            .await
+            .unwrap();
+        store
+            .set_verify(
+                &a.id,
+                SetVerifyParams {
+                    enabled: Some(true),
+                    requirement: Some(Some("must contain BANANA".into())),
+                    max_iterations: Some(4),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .set_verify(
+                &a.id,
+                SetVerifyParams {
+                    requirement: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let updated = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(updated.verify.requirement, None, "explicit null clears");
+        assert!(updated.verify.enabled, "absent key leaves enabled intact");
+        assert_eq!(updated.verify.max_iterations, 4);
+    }
+
+    #[tokio::test]
+    async fn set_trigger_on_paused_preserves_status_and_dormant_next_run() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(cron_params("pausable"))
+            .await
+            .unwrap();
+        store
+            .update_status(&a.id, &AutomationStatus::Paused)
+            .await
+            .unwrap();
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Heartbeat,
+                    cron_pattern: None,
+                    timezone: None,
+                    heartbeat_interval_secs: Some(600),
+                    max_executions: None,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let edited = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(
+            edited.status,
+            AutomationStatus::Paused,
+            "editing the trigger config must NOT un-pause"
+        );
+        assert_eq!(
+            edited.next_run_at, None,
+            "dormant while paused: no next_run_at"
+        );
+        // Reactivating arms the schedule again.
+        store
+            .update_status(&a.id, &AutomationStatus::Active)
+            .await
+            .unwrap();
+        let resumed = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(resumed.status, AutomationStatus::Active);
+        assert!(resumed.next_run_at.is_some(), "reactivation re-arms");
+    }
+
+    #[tokio::test]
+    async fn set_trigger_on_active_recomputes_next_run() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store.create_automation(cron_params("live")).await.unwrap();
+        let before = a.next_run_at.clone();
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Cron,
+                    cron_pattern: Some("*/5 * * * *".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let edited = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(edited.status, AutomationStatus::Active);
+        let next = edited.next_run_at.expect("active cron keeps a next run");
+        assert_ne!(Some(&next), before.as_ref(), "next_run_at was recomputed");
+        let parsed = chrono::DateTime::parse_from_rfc3339(&next).unwrap();
+        assert!(parsed.with_timezone(&Utc) > Utc::now());
+        assert_eq!(edited.cron_pattern.as_deref(), Some("*/5 * * * *"));
+    }
+
+    #[tokio::test]
+    async fn set_trigger_preserves_omitted_timezone_and_max_executions() {
+        let store = AutomationStore::in_memory().unwrap();
+        let mut params = cron_params("capped");
+        params.timezone = Some("Asia/Seoul".into());
+        params.max_executions = Some(5);
+        let a = store.create_automation(params).await.unwrap();
+        // Omitted timezone/max_executions: both preserved.
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Cron,
+                    cron_pattern: Some("0 12 * * *".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let kept = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(kept.timezone.as_deref(), Some("Asia/Seoul"));
+        assert_eq!(kept.max_executions, Some(5));
+        // Explicit null clears them.
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Cron,
+                    cron_pattern: Some("0 12 * * *".into()),
+                    timezone: Some(None),
+                    max_executions: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let cleared = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(cleared.timezone, None);
+        assert_eq!(cleared.max_executions, None);
+    }
+
+    #[tokio::test]
+    async fn editing_an_exhausted_automation_cannot_rearm_it() {
+        let store = AutomationStore::in_memory().unwrap();
+        let mut params = cron_params("spent");
+        params.max_executions = Some(1);
+        let a = store.create_automation(params).await.unwrap();
+        // Flip to exhausted the way the runner does.
+        store
+            .begin_run(&a.id, AutomationRunTrigger::Cron, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_automation(&a.id).await.unwrap().status,
+            AutomationStatus::Exhausted
+        );
+        // A trigger edit preserves the exhausted state and stays dormant.
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Heartbeat,
+                    cron_pattern: None,
+                    timezone: None,
+                    heartbeat_interval_secs: Some(600),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let edited = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(edited.status, AutomationStatus::Exhausted);
+        assert_eq!(edited.next_run_at, None);
+        // Reactivation is blocked while exhausted...
+        let rearm = store.update_status(&a.id, &AutomationStatus::Active).await;
+        assert!(rearm.is_err(), "exhausted cannot reactivate");
+        // ...until the cap is raised via set_trigger, which still does not
+        // flip status; the explicit Active is what re-arms.
+        store
+            .set_trigger(
+                &a.id,
+                SetTriggerParams {
+                    trigger: AutomationTrigger::Cron,
+                    cron_pattern: Some("0 9 * * *".into()),
+                    max_executions: Some(Some(10)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_automation(&a.id).await.unwrap().status,
+            AutomationStatus::Exhausted
+        );
+        store
+            .update_status(&a.id, &AutomationStatus::Active)
+            .await
+            .unwrap();
+        let armed = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(armed.status, AutomationStatus::Active);
+        assert!(armed.next_run_at.is_some());
+        assert_eq!(armed.max_executions, Some(10));
     }
 
     #[tokio::test]

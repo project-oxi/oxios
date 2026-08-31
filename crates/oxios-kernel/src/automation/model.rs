@@ -392,6 +392,61 @@ pub struct AutomationRun {
     pub completed_at: Option<String>,
 }
 
+// ── Patch-field deserialization ──
+
+/// Serde helper for PATCH fields with three states:
+///
+/// - JSON key absent → `None` (leave the stored value unchanged)
+/// - JSON key present as `null` → `Some(None)` (clear the stored value)
+/// - JSON key present with a value → `Some(Some(v))` (replace)
+///
+/// Hand-rolled (no serde_with dependency). Pair with `#[serde(default)]` so
+/// an absent key skips the deserializer entirely.
+pub(crate) mod double_option {
+    use serde::Deserialize;
+    use serde::de::{Deserializer, Visitor};
+    use std::fmt;
+    use std::marker::PhantomData;
+
+    pub(crate) fn deserialize<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de>,
+    {
+        struct DoubleOptionVisitor<T>(PhantomData<T>);
+
+        impl<'de, T> Visitor<'de> for DoubleOptionVisitor<T>
+        where
+            T: Deserialize<'de>,
+        {
+            type Value = Option<Option<T>>;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a value or null")
+            }
+
+            // Explicit JSON null → clear.
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(Some(None))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(Some(None))
+            }
+
+            // Present value → replace.
+            fn visit_some<D2>(self, d: D2) -> Result<Self::Value, D2::Error>
+            where
+                D2: Deserializer<'de>,
+            {
+                T::deserialize(d).map(|v| Some(Some(v)))
+            }
+        }
+
+        deserializer.deserialize_option(DoubleOptionVisitor(PhantomData))
+    }
+}
+
 // ── Create/update params ──
 
 /// Create an automation. Trigger-specific fields are validated
@@ -436,49 +491,59 @@ pub struct ListAutomationsParams {
     pub offset: Option<u32>,
 }
 
-/// Set/replace the trigger configuration and (re)arm scheduling.
-#[derive(Debug, Clone, Deserialize)]
+/// Set/replace the trigger configuration. Never changes `status`: Active
+/// definitions get a recomputed `next_run_at`; paused/failed/exhausted
+/// definitions go dormant (`next_run_at = NULL`) until reactivated via
+/// `update_status(Active)`, whose exhausted-guard still applies.
+///
+/// Patch fields use the double-option rule: absent JSON key = preserve the
+/// stored value, explicit `null` = clear.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetTriggerParams {
     pub trigger: AutomationTrigger,
     #[serde(default)]
     pub cron_pattern: Option<String>,
-    #[serde(default)]
-    pub timezone: Option<String>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub timezone: Option<Option<String>>,
     #[serde(default)]
     pub heartbeat_interval_secs: Option<u64>,
-    #[serde(default)]
-    pub max_executions: Option<u32>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub max_executions: Option<Option<u32>>,
 }
 
-/// Partial verify-gate update — `None` fields keep their current value.
+/// Partial verify-gate update. Patch fields use the double-option rule:
+/// absent JSON key = keep, explicit `null` = clear (`requirement` only —
+/// enabled/max_iterations are never null on the row).
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SetVerifyParams {
     #[serde(default)]
     pub enabled: Option<bool>,
-    #[serde(default)]
-    pub requirement: Option<String>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub requirement: Option<Option<String>>,
     #[serde(default)]
     pub max_iterations: Option<u32>,
 }
 
-/// Partial definition update — `None` fields are left unchanged.
+/// Partial definition update. Patch fields use the double-option rule:
+/// absent JSON key = leave unchanged, explicit `null` = clear (set to NULL).
+/// `name`/`instruction` are plain options — they are never cleared.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAutomationParams {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub description: Option<Option<String>>,
     #[serde(default)]
     pub instruction: Option<String>,
-    #[serde(default)]
-    pub persona_id: Option<String>,
-    #[serde(default)]
-    pub project_id: Option<String>,
-    #[serde(default)]
-    pub brain_space: Option<String>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub persona_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub project_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option::deserialize")]
+    pub brain_space: Option<Option<String>>,
 }
 
 impl Automation {
@@ -583,7 +648,7 @@ mod tests {
 
     #[test]
     fn absent_project_id_round_trips_as_none_without_sentinel() {
-        let mut a = automation_with(AutomationTrigger::Manual, AutomationStatus::Active);
+        let a = automation_with(AutomationTrigger::Manual, AutomationStatus::Active);
         // All scoped bindings absent — the valid projectless shape.
         assert!(a.project_id.is_none() && a.persona_id.is_none() && a.brain_space.is_none());
 
@@ -651,6 +716,54 @@ mod tests {
             "failed".parse::<AutomationStatus>().unwrap(),
             AutomationStatus::Failed
         );
+    }
+
+    // ── Fix round 2: double-option patch deserialization ──
+
+    #[test]
+    fn double_option_fields_distinguish_absent_null_and_value() {
+        // Absent key → None (leave unchanged).
+        let absent: UpdateAutomationParams = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(absent.project_id, None);
+        assert_eq!(absent.description, None);
+
+        // Explicit null → Some(None) (clear).
+        let cleared: UpdateAutomationParams = serde_json::from_value(serde_json::json!({
+            "projectId": null,
+            "personaId": null,
+            "brainSpace": null,
+            "description": null,
+        }))
+        .unwrap();
+        assert_eq!(cleared.project_id, Some(None));
+        assert_eq!(cleared.persona_id, Some(None));
+        assert_eq!(cleared.brain_space, Some(None));
+        assert_eq!(cleared.description, Some(None));
+
+        // Present value → Some(Some(v)) (replace).
+        let set: UpdateAutomationParams = serde_json::from_value(serde_json::json!({
+            "projectId": "proj-1",
+            "description": "note",
+        }))
+        .unwrap();
+        assert_eq!(set.project_id, Some(Some("proj-1".into())));
+        assert_eq!(set.description, Some(Some("note".into())));
+
+        // Same rule on SetTriggerParams timezone/maxExecutions and
+        // SetVerifyParams requirement.
+        let trigger: SetTriggerParams = serde_json::from_value(serde_json::json!({
+            "trigger": "cron",
+            "cronPattern": "0 9 * * *",
+            "timezone": null,
+        }))
+        .unwrap();
+        assert_eq!(trigger.timezone, Some(None));
+        assert_eq!(trigger.max_executions, None);
+
+        let verify: SetVerifyParams =
+            serde_json::from_value(serde_json::json!({ "requirement": null })).unwrap();
+        assert_eq!(verify.requirement, Some(None));
+        assert_eq!(verify.enabled, None);
     }
 
     // ── Snapshot contract: ONLY the six fields, immutable semantics ──

@@ -530,7 +530,10 @@ impl BrainInstaller {
         };
         push(self.legacy_binary.clone(), &mut out, &mut seen);
         if let Some(home) = std::env::var_os("HOME") {
-            let cargo_bin = PathBuf::from(home).join(".cargo").join("bin").join("oxibrain");
+            let cargo_bin = PathBuf::from(home)
+                .join(".cargo")
+                .join("bin")
+                .join("oxibrain");
             push(cargo_bin, &mut out, &mut seen);
         }
         if let Some(path_var) = std::env::var_os("PATH") {

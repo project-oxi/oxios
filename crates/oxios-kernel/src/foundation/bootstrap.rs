@@ -141,7 +141,11 @@ pub fn brain_executable(home: &Path, installer: Option<&BrainInstaller>) -> Path
     if let Some(found) = installer.and_then(|i| i.locate_binary()) {
         return found;
     }
-    let managed = home.join(".oxi").join("oxibrain").join("bin").join("oxibrain");
+    let managed = home
+        .join(".oxi")
+        .join("oxibrain")
+        .join("bin")
+        .join("oxibrain");
     if managed.is_file() {
         return managed;
     }

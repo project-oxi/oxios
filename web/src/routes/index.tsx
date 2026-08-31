@@ -17,7 +17,12 @@ import { PageHeader } from '@/components/shared/page-header'
 import { useAgentCountHistory } from '@/hooks/use-agent-count-history'
 import { useApprovals } from '@/hooks/use-approvals'
 import { useBrainStatus } from '@/hooks/use-brain'
-import { computeDelta, seriesFromSnapshots, useResourceHistory } from '@/hooks/use-resource-history'
+import {
+  computeDelta,
+  memoryPercent,
+  seriesFromSnapshots,
+  useResourceHistory,
+} from '@/hooks/use-resource-history'
 import { useTokenRate } from '@/hooks/use-token-rate'
 import { api } from '@/lib/api-client'
 import type { Agent, SystemStatus } from '@/types'
@@ -56,7 +61,7 @@ function DashboardPage() {
   // Resource history (last 30 samples) → sparklines
   const { data: snapshots } = useResourceHistory(30, 10_000)
   const cpuSeries = seriesFromSnapshots(Array.isArray(snapshots) ? snapshots : [], 'cpu_percent')
-  const memSeries = seriesFromSnapshots(Array.isArray(snapshots) ? snapshots : [], 'memory_percent')
+  const memSeries = (Array.isArray(snapshots) ? snapshots : []).map(memoryPercent)
   const cpuDelta = computeDelta(cpuSeries)
   const memDelta = computeDelta(memSeries)
   const cpuNow = cpuSeries.length > 0 ? (cpuSeries[cpuSeries.length - 1] ?? 0) : 0

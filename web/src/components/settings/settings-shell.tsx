@@ -196,7 +196,7 @@ export function SettingsShell({
         aria-label={t('settings.title')}
       >
         <div className="sticky top-[5.5rem] max-h-[calc(100vh-6rem)] flex flex-col">
-          <div className="flex-1 min-h-0">
+          <div className="flex min-h-0 flex-1 flex-col">
             <SettingsRail
               groups={railGroups}
               activeId={activeId}
@@ -281,7 +281,7 @@ function MobileSheet({
         <DialogHeader className="px-4 pt-4 pb-2 border-b">
           <DialogTitle>{t('settings.title')}</DialogTitle>
         </DialogHeader>
-        <div className="px-3 pt-3 pb-4 h-[calc(100vh-4rem)]">
+        <div className="flex flex-col px-3 pt-3 pb-4 h-[calc(100vh-4rem)]">
           <SettingsRail
             groups={railGroups}
             activeId={activeId}

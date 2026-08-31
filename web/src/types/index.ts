@@ -560,8 +560,13 @@ export interface Approval {
 export interface ResourceSnapshot {
   timestamp: string
   cpu_percent: number
-  memory_percent: number
-  disk_percent: number
+  memory_used_mb: number
+  memory_total_mb: number
+  active_agents: number
+  pending_tasks: number
+  total_token_usage: number
+  disk_used_gb: number
+  load_avg_1m: number
 }
 
 // Audit

@@ -16,7 +16,6 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Mail,
-  MessageSquare,
   Network,
   PanelLeft,
   PanelLeftClose,
@@ -24,6 +23,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  StickyNote,
   Theater,
   Trash2,
   Wallet,
@@ -389,7 +389,7 @@ function KnowledgeNav() {
                 onClick={() => openChat()}
                 className={cn(itemCollapsedBase, mode === 'chat' && itemActive)}
               >
-                <MessageSquare className="h-4 w-4" />
+                <StickyNote className="h-4 w-4" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">{t('knowledge.chatTitle')}</TooltipContent>
@@ -496,7 +496,7 @@ function KnowledgeNav() {
           onClick={() => openChat()}
           className={cn(itemBase, mode === 'chat' ? itemActive : itemInactive)}
         >
-          <MessageSquare className="h-4 w-4" />
+          <StickyNote className="h-4 w-4" />
           <span>{t('knowledge.chatTitle')}</span>
         </button>
         <button

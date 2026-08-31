@@ -72,7 +72,7 @@ export function SettingsRail({
   }, [activeId])
 
   return (
-    <nav aria-label={t('settings.title')} className="flex h-full w-full flex-col gap-2">
+    <nav aria-label={t('settings.title')} className="flex w-full min-h-0 flex-1 flex-col gap-2">
       {/* Search */}
       <div className="relative">
         <Search

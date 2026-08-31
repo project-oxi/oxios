@@ -1,13 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
+  Bot,
   ChevronRight,
   FolderKanban,
   FolderPlus,
   Inbox,
+  LayoutDashboard,
   List,
   MoreHorizontal,
   Plus,
+  Settings,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +39,16 @@ import {
   sectionHeader,
   sectionSeparator,
 } from './sidebar'
+
+// Global destinations reachable from chat mode — the session nav is the
+// whole sidebar here, so these keep Dashboard/Agents/Projects/Settings
+// one click away without switching sidebar mode.
+const quickLinks = [
+  { to: '/', labelKey: 'common.dashboard', icon: LayoutDashboard },
+  { to: '/agents', labelKey: 'common.agents', icon: Bot },
+  { to: '/projects', labelKey: 'common.projects', icon: FolderKanban },
+  { to: '/settings', labelKey: 'common.settings', icon: Settings },
+]
 
 // ---------------------------------------------------------------------------
 // ChatSessionNav — renders inside the main sidebar when chat mode is active.
@@ -265,6 +278,17 @@ function ExpandedChatNav() {
         {projects.length > 0 && <div className={sectionSeparator} />}
       </div>
 
+      {/* Quick links — the only global nav in chat mode */}
+      <div className={sectionGap}>
+        <span className={sectionHeader.replace('mb-1 ', '')}>{t('chat.quickLinks')}</span>
+        {quickLinks.map((link) => (
+          <Link key={link.to} to={link.to} className={cn(itemDense, itemInactive)}>
+            <link.icon className="h-4 w-4 shrink-0" />
+            <span className="block truncate">{t(link.labelKey)}</span>
+          </Link>
+        ))}
+      </div>
+
       {/* Footer: management actions */}
       <div className={sectionSeparator.replace('my-2', 'mt-2 mb-1')} />
       <DropdownMenu>
@@ -367,6 +391,16 @@ function CollapsedChatNav() {
         </TooltipTrigger>
         <TooltipContent side="right">{t('chat.newConversationButton')}</TooltipContent>
       </Tooltip>
+      {quickLinks.map((link) => (
+        <Tooltip key={link.to}>
+          <TooltipTrigger asChild>
+            <Link to={link.to} className={cn(itemCollapsedBase, itemInactive)}>
+              <link.icon className="h-4 w-4" />
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right">{t(link.labelKey)}</TooltipContent>
+        </Tooltip>
+      ))}
     </div>
   )
 }

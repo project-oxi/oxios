@@ -34,6 +34,14 @@ export function seriesFromSnapshots(
 }
 
 /**
+ * Memory utilization (0–100) derived from used/total MB. The wire shape
+ * carries raw counters, not precomputed percentages. 0 when total is 0.
+ */
+export function memoryPercent(s: ResourceSnapshot): number {
+  return s.memory_total_mb > 0 ? (s.memory_used_mb / s.memory_total_mb) * 100 : 0
+}
+
+/**
  * Compute the % delta between the first and last value in a series.
  * Returns 0 for empty / single-point series.
  */

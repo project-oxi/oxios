@@ -30,6 +30,7 @@ import { MetricGaugeCard } from '@/components/shared/metric-gauge-card'
 import { PageHeader } from '@/components/shared/page-header'
 import { RefreshButton } from '@/components/shared/refresh-button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { memoryPercent } from '@/hooks/use-resource-history'
 import { api } from '@/lib/api-client'
 import type { ResourceSnapshot } from '@/types'
 export const Route = createFileRoute('/resources')({ component: ResourcesPage })
@@ -53,12 +54,10 @@ function ResourcesPage() {
 
   const snapshots = Array.isArray(data) ? data : []
   const latest = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null
-
   const chartData = snapshots.map((s) => ({
     time: new Date(s.timestamp).toLocaleTimeString(),
     cpu: s.cpu_percent,
-    memory: s.memory_percent,
-    disk: s.disk_percent,
+    memory: memoryPercent(s),
   }))
 
   return (
@@ -73,8 +72,11 @@ function ResourcesPage() {
       {latest && (
         <div className="grid gap-4 md:grid-cols-3">
           <MetricGaugeCard label={t('resources.cpu')} value={latest.cpu_percent} />
-          <MetricGaugeCard label={t('resources.memory')} value={latest.memory_percent} />
-          <MetricGaugeCard label={t('resources.disk')} value={latest.disk_percent} />
+          <MetricGaugeCard label={t('resources.memory')} value={memoryPercent(latest)} />
+          <MetricGaugeCard
+            label={t('resources.disk')}
+            display={`${latest.disk_used_gb.toFixed(1)} GB`}
+          />
         </div>
       )}
 
@@ -139,14 +141,6 @@ function ResourcesPage() {
                   fill={getChartColor('--chart-2')}
                   fillOpacity={0.1}
                   name={`${t('resources.memory')} %`}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="disk"
-                  stroke={getChartColor('--chart-3')}
-                  fill={getChartColor('--chart-3')}
-                  fillOpacity={0.1}
-                  name={`${t('resources.disk')} %`}
                 />
               </AreaChart>
             </ResponsiveContainer>

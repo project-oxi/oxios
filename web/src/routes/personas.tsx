@@ -28,6 +28,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
 
@@ -42,8 +43,6 @@ function PersonasPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [category, setCategory] = useState('general')
-  const [genre, setGenre] = useState('')
   const [createToolProfile, setCreateToolProfile] = useState<'base' | 'code' | 'minimal'>('code')
 
   const {
@@ -67,8 +66,6 @@ function PersonasPage() {
       name: string
       description: string
       system_prompt: string
-      category: string
-      genre: string | null
       tool_profile: string
     }) => api.post('/api/personas', p),
     onSuccess: () => {
@@ -77,8 +74,6 @@ function PersonasPage() {
       setName('')
       setDescription('')
       setSystemPrompt('')
-      setCategory('general')
-      setGenre('')
       setCreateToolProfile('code')
     },
   })
@@ -105,6 +100,12 @@ function PersonasPage() {
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : t('personas.saveFailed'))
     },
+  })
+
+  const toggleEnabledMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.put(`/api/personas/${id}`, { enabled }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['personas'] }),
   })
 
   if (isLoading) return <LoadingCards count={4} />
@@ -173,33 +174,6 @@ function PersonasPage() {
                 rows={4}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>{t('personas.category')}</Label>
-                <Select
-                  value={category}
-                  onValueChange={setCategory}
-                  options={['normal', 'coding', 'writing', 'research', 'operations', 'general'].map(
-                    (c) => ({ label: t(`chat.persona.categories.${c}`), value: c }),
-                  )}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>{t('personas.genre')}</Label>
-                <Select
-                  value={genre || 'none'}
-                  onValueChange={(v) => setGenre(v === 'none' ? '' : v)}
-                  disabled={category !== 'writing'}
-                  options={[
-                    { label: t('personas.genreNone'), value: 'none' },
-                    ...['novel', 'scenario', 'essay', 'blog'].map((g) => ({
-                      label: t(`chat.persona.genres.${g}`),
-                      value: g,
-                    })),
-                  ]}
-                />
-              </div>
-            </div>
             <div className="space-y-1">
               <Label>{t('personas.toolProfile')}</Label>
               <Select
@@ -228,8 +202,6 @@ function PersonasPage() {
                   name,
                   description,
                   system_prompt: systemPrompt,
-                  category,
-                  genre: category === 'writing' && genre ? genre : null,
                   tool_profile: createToolProfile,
                 })
               }
@@ -264,7 +236,19 @@ function PersonasPage() {
                     <p className="text-xs text-muted-foreground mt-1">{persona.description}</p>
                   )}
                 </div>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1">
+                  {/* The active persona must stay enabled: PUT /api/personas/active cannot
+                      clear it and get_active_persona() does not filter enabled, so a
+                      disabled active persona would still inject its prompt. */}
+                  <Switch
+                    checked={persona.enabled}
+                    disabled={persona.active === true || toggleEnabledMutation.isPending}
+                    onCheckedChange={(v) =>
+                      toggleEnabledMutation.mutate({ id: persona.id, enabled: v })
+                    }
+                    aria-label={t('personas.toggleEnabled')}
+                    title={persona.active ? t('personas.activeToggleHint') : undefined}
+                  />
                   <Button
                     variant="ghost"
                     size="icon"
@@ -309,15 +293,8 @@ function PersonasPage() {
                     {persona.system_prompt}
                   </p>
                 )}
-                {(persona.genre || (persona.capabilities?.length ?? 0) > 0) && (
+                {(persona.capabilities?.length ?? 0) > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {persona.genre && (
-                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary">
-                        {t(`chat.persona.genres.${persona.genre}`, {
-                          defaultValue: persona.genre ?? '',
-                        })}
-                      </span>
-                    )}
                     {(persona.capabilities ?? []).map((cap) => (
                       <span
                         key={cap}

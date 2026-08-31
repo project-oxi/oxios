@@ -598,11 +598,6 @@ export interface Persona {
   /// Persona record). NOT a UI gate: conditional chat controls read the
   /// server-derived `EffectiveProfile` (design §6.1) instead.
   capabilities?: string[]
-  /// UI taxonomy bucket: 'normal' | 'coding' | 'writing' | 'research' |
-  /// 'operations' | 'general' (free string; unknown → 'other' grouping).
-  category?: string
-  /// Writing sub-category: 'novel' | 'scenario' | 'essay' | 'blog'.
-  genre?: string | null
   /// Tool access profile: 'base' (all tools incl. Oxios control) |
   /// 'code' (coding tools, no control) | 'minimal' (file + web search).
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'

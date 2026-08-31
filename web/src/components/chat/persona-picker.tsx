@@ -8,59 +8,6 @@ import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
 import type { Persona } from '@/types'
 
-// ─── Category taxonomy ────────────────────────────────────────
-
-/** Display order for known categories; unknown values fall into 'other'. */
-export const CATEGORY_ORDER = [
-  'normal',
-  'coding',
-  'writing',
-  'research',
-  'operations',
-  'general',
-] as const
-
-const CATEGORY_LABEL_KEYS: Record<string, string> = {
-  normal: 'chat.persona.categories.normal',
-  coding: 'chat.persona.categories.coding',
-  writing: 'chat.persona.categories.writing',
-  research: 'chat.persona.categories.research',
-  operations: 'chat.persona.categories.operations',
-  general: 'chat.persona.categories.general',
-}
-
-const GENRE_LABEL_KEYS: Record<string, string> = {
-  novel: 'chat.persona.genres.novel',
-  scenario: 'chat.persona.genres.scenario',
-  essay: 'chat.persona.genres.essay',
-  blog: 'chat.persona.genres.blog',
-}
-
-/** Group personas by category in display order; unknown categories last. */
-export function groupByCategory<T extends { category?: string | null }>(
-  personas: T[],
-): Array<{ category: string; labelKey: string; items: T[] }> {
-  const buckets = new Map<string, T[]>()
-  for (const p of personas) {
-    const cat = p.category ?? 'general'
-    const list = buckets.get(cat) ?? []
-    list.push(p)
-    buckets.set(cat, list)
-  }
-  const groups: Array<{ category: string; labelKey: string; items: T[] }> = []
-  for (const cat of CATEGORY_ORDER) {
-    const items = buckets.get(cat)
-    if (items?.length)
-      groups.push({ category: cat, labelKey: CATEGORY_LABEL_KEYS[cat] ?? '', items })
-    buckets.delete(cat)
-  }
-  // Unknown/user-defined categories render under their raw name, last.
-  for (const [cat, items] of buckets) {
-    groups.push({ category: cat, labelKey: '', items })
-  }
-  return groups
-}
-
 // ─── Props ────────────────────────────────────────────────────
 
 export interface PersonaPickerProps {
@@ -78,9 +25,8 @@ export interface PersonaPickerProps {
  *
  * The first row ("auto") clears the override so the turn inherits the
  * global active persona (set on the personas page / command palette).
- * Rows are grouped by category with genre badges for writing personas.
- * Keep the surface small: no editing here — management stays on the
- * personas page.
+ * Rows are rendered as a flat list in roster order. Keep the surface
+ * small: no editing here — management stays on the personas page.
  */
 export function PersonaPicker({
   personas,
@@ -91,9 +37,7 @@ export function PersonaPicker({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
-
   const enabled = useMemo(() => personas.filter((p) => p.enabled !== false), [personas])
-  const groups = useMemo(() => groupByCategory(enabled), [enabled])
   const active = enabled.find((p) => p.id === activePersonaId) ?? null
 
   // Reset scroll on open — the picker is short-lived per interaction.
@@ -152,46 +96,31 @@ export function PersonaPicker({
             {!activePersonaId && <Check className="h-3.5 w-3.5 shrink-0" />}
           </button>
 
-          {groups.map((group) => (
-            <div key={group.category} className="mt-1">
-              <div className="px-2 py-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {group.labelKey ? t(group.labelKey) : group.category}
-              </div>
-              {group.items.map((p) => {
-                const selected = p.id === activePersonaId
-                const genreKey = p.genre != null ? GENRE_LABEL_KEYS[p.genre] : undefined
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => pick(p)}
-                    className={cn(
-                      'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
-                      'hover:bg-accent',
-                      selected && 'bg-accent/60',
-                    )}
-                  >
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate">{p.name}</span>
-                      {p.description && (
-                        <span className="truncate text-xs text-muted-foreground">
-                          {p.description}
-                        </span>
-                      )}
+          {enabled.map((p) => {
+            const selected = p.id === activePersonaId
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => pick(p)}
+                className={cn(
+                  'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
+                  'hover:bg-accent',
+                  selected && 'bg-accent/60',
+                )}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{p.name}</span>
+                  {p.description && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {p.description}
                     </span>
-                    <span className="flex shrink-0 items-center gap-1">
-                      {genreKey && (
-                        <span className="rounded bg-info-muted px-1.5 py-0.5 text-2xs font-medium text-info">
-                          {t(genreKey)}
-                        </span>
-                      )}
-                      {selected && <Check className="h-3.5 w-3.5" />}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          ))}
+                  )}
+                </span>
+                {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+              </button>
+            )
+          })}
 
           {enabled.length === 0 && (
             <div className="px-2 py-3 text-center text-xs text-muted-foreground">
@@ -204,7 +133,6 @@ export function PersonaPicker({
   )
 }
 
-// ─── Container ────────────────────────────────────────────────
 
 interface ActivePersonaName {
   id: string

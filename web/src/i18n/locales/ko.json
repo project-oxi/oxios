@@ -249,6 +249,7 @@
     "newConversationButton": "새 대화",
     "newProjectButton": "새 프로젝트",
     "moreActions": "더 보기",
+    "quickLinks": "빠른 링크",
     "connecting": "연결 중...",
     "connectingToServer": "서버에 연결 중...",
     "startConversationHint": "메시지를 보내 대화를 시작하세요.",
@@ -527,22 +528,7 @@
       "auto": "자동",
       "globalDefault": "전역 기본값",
       "globalIs": "전역: {{name}}",
-      "none": "페르소나가 없습니다",
-      "categories": {
-        "normal": "일반",
-        "coding": "코딩",
-        "writing": "글쓰기",
-        "research": "리서치",
-        "operations": "운영",
-        "general": "범용",
-        "other": "기타"
-      },
-      "genres": {
-        "novel": "소설",
-        "scenario": "시나리오",
-        "essay": "에세이",
-        "blog": "블로그"
-      }
+      "none": "페르소나가 없습니다"
     },
     "folderPickerLocalOnly": "폴더 선택은 로컬 호스트에서만 사용할 수 있습니다 — 경로를 직접 입력해 추가하세요",
     "todo": {
@@ -1458,11 +1444,8 @@
     "saved": "페르소나가 저장되었습니다",
     "systemPrompt": "시스템 프롬프트",
     "systemPromptLabel": "시스템 프롬프트",
-    "category": "카테고리",
-    "categoryPlaceholder": "카테고리 선택",
-    "genre": "장르",
-    "genrePlaceholder": "장르 선택",
-    "genreNone": "없음",
+    "toggleEnabled": "활성",
+    "activeToggleHint": "활성 페르소나는 비활성화할 수 없습니다",
     "toolProfile": "도구 접근",
     "toolProfileHint": "이 페르소나 에이전트의 도구 범위 — 서버가 여기서 채팅 어포던스(파일, 터미널, diff, 팬아웃)를 도출합니다",
     "toolProfiles": {

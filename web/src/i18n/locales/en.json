@@ -249,6 +249,7 @@
     "newConversationButton": "New conversation",
     "newProjectButton": "New project",
     "moreActions": "More",
+    "quickLinks": "Quick links",
     "connecting": "Connecting...",
     "connectingToServer": "Connecting to server...",
     "startConversationHint": "Send a message to start a conversation.",
@@ -527,22 +528,7 @@
       "auto": "Auto",
       "globalDefault": "Global default",
       "globalIs": "Global: {{name}}",
-      "none": "No personas",
-      "categories": {
-        "normal": "Normal",
-        "coding": "Coding",
-        "writing": "Writing",
-        "research": "Research",
-        "operations": "Operations",
-        "general": "General",
-        "other": "Other"
-      },
-      "genres": {
-        "novel": "Novel",
-        "scenario": "Scenario",
-        "essay": "Essay",
-        "blog": "Blog"
-      }
+      "none": "No personas"
     },
     "folderPickerLocalOnly": "Folder picking is only available on the local host — add a path manually",
     "todo": {
@@ -1458,11 +1444,8 @@
     "saved": "Persona saved",
     "systemPrompt": "System prompt",
     "systemPromptLabel": "System prompt",
-    "category": "Category",
-    "categoryPlaceholder": "Select a category",
-    "genre": "Genre",
-    "genrePlaceholder": "Select a genre",
-    "genreNone": "None",
+    "toggleEnabled": "Enabled",
+    "activeToggleHint": "The active persona cannot be disabled",
     "toolProfile": "Tool access",
     "toolProfileHint": "Tool scope for this persona's agents — the server derives chat affordances (files, terminal, diff, fan-out) from it",
     "toolProfiles": {

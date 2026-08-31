@@ -59,7 +59,7 @@ function routeFromEvent(event: OxiosEvent): string | undefined {
     return '/memory'
   }
   if (type === 'tool_started' || type === 'tool_finished') {
-    return '/chat'
+    return '/studio'
   }
   return undefined
 }

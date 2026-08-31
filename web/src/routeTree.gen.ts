@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as BudgetRouteImport } from './routes/budget'
-import { Route as ChatRouteImport } from './routes/chat'
 import { Route as EmailRouteImport } from './routes/email'
 import { Route as EventsRouteImport } from './routes/events'
 import { Route as GitRouteImport } from './routes/git'
@@ -36,14 +35,13 @@ import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
 import { Route as OperateIndexRouteImport } from './routes/operate/index'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
-import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
-import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
 import { Route as StudioIndexRouteImport } from './routes/studio/index'
 import { Route as StudioAutomationsRouteImport } from './routes/studio/automations'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
 import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
 import { Route as BrainKnowledgeIndexRouteImport } from './routes/brain/knowledge/index'
 import { Route as BrainKnowledgeGraphRouteImport } from './routes/brain/knowledge/graph'
+import { Route as StudioSessionsSessionIdRouteImport } from './routes/studio/sessions/$sessionId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,11 +56,6 @@ const AssetsRoute = AssetsRouteImport.update({
 const BudgetRoute = BudgetRouteImport.update({
   id: '/budget',
   path: '/budget',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChatRoute = ChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EmailRoute = EmailRouteImport.update({
@@ -180,16 +173,6 @@ const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   path: '/projects/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SessionsIndexRoute = SessionsIndexRouteImport.update({
-  id: '/sessions/',
-  path: '/sessions/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
-  id: '/sessions/$sessionId',
-  path: '/sessions/$sessionId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const StudioIndexRoute = StudioIndexRouteImport.update({
   id: '/studio/',
   path: '/studio/',
@@ -220,12 +203,16 @@ const BrainKnowledgeGraphRoute = BrainKnowledgeGraphRouteImport.update({
   path: '/brain/knowledge/graph',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StudioSessionsSessionIdRoute = StudioSessionsSessionIdRouteImport.update({
+  id: '/studio/sessions/$sessionId',
+  path: '/studio/sessions/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
   '/events': typeof EventsRoute
   '/git': typeof GitRoute
@@ -244,25 +231,23 @@ export interface FileRoutesByFullPath {
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/studio/automations': typeof StudioAutomationsRoute
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/projects/': typeof ProjectsIndexRoute
-  '/sessions/': typeof SessionsIndexRoute
   '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
   '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
   '/events': typeof EventsRoute
   '/git': typeof GitRoute
@@ -281,18 +266,17 @@ export interface FileRoutesByTo {
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/studio/automations': typeof StudioAutomationsRoute
   '/agents': typeof AgentsIndexRoute
   '/brain': typeof BrainIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
   '/operate': typeof OperateIndexRoute
   '/projects': typeof ProjectsIndexRoute
-  '/sessions': typeof SessionsIndexRoute
   '/studio': typeof StudioIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
   '/brain/knowledge': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRoutesById {
@@ -300,7 +284,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
   '/events': typeof EventsRoute
   '/git': typeof GitRoute
@@ -319,18 +302,17 @@ export interface FileRoutesById {
   '/brain/search': typeof BrainSearchRoute
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/studio/automations': typeof StudioAutomationsRoute
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/projects/': typeof ProjectsIndexRoute
-  '/sessions/': typeof SessionsIndexRoute
   '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
   '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
 }
 export interface FileRouteTypes {
@@ -339,7 +321,6 @@ export interface FileRouteTypes {
     | '/'
     | '/assets'
     | '/budget'
-    | '/chat'
     | '/email'
     | '/events'
     | '/git'
@@ -358,25 +339,23 @@ export interface FileRouteTypes {
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
-    | '/sessions/$sessionId'
     | '/studio/automations'
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
     | '/operate/'
     | '/projects/'
-    | '/sessions/'
     | '/studio/'
     | '/workspace/'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
+    | '/studio/sessions/$sessionId'
     | '/brain/knowledge/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/assets'
     | '/budget'
-    | '/chat'
     | '/email'
     | '/events'
     | '/git'
@@ -395,25 +374,23 @@ export interface FileRouteTypes {
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
-    | '/sessions/$sessionId'
     | '/studio/automations'
     | '/agents'
     | '/brain'
     | '/knowledge'
     | '/operate'
     | '/projects'
-    | '/sessions'
     | '/studio'
     | '/workspace'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
+    | '/studio/sessions/$sessionId'
     | '/brain/knowledge'
   id:
     | '__root__'
     | '/'
     | '/assets'
     | '/budget'
-    | '/chat'
     | '/email'
     | '/events'
     | '/git'
@@ -432,18 +409,17 @@ export interface FileRouteTypes {
     | '/brain/search'
     | '/knowledge/graph'
     | '/projects/$projectId'
-    | '/sessions/$sessionId'
     | '/studio/automations'
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
     | '/operate/'
     | '/projects/'
-    | '/sessions/'
     | '/studio/'
     | '/workspace/'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
+    | '/studio/sessions/$sessionId'
     | '/brain/knowledge/'
   fileRoutesById: FileRoutesById
 }
@@ -451,7 +427,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AssetsRoute: typeof AssetsRoute
   BudgetRoute: typeof BudgetRoute
-  ChatRoute: typeof ChatRoute
   EmailRoute: typeof EmailRoute
   EventsRoute: typeof EventsRoute
   GitRoute: typeof GitRoute
@@ -470,17 +445,16 @@ export interface RootRouteChildren {
   BrainSearchRoute: typeof BrainSearchRoute
   KnowledgeGraphRoute: typeof KnowledgeGraphRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
-  SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   StudioAutomationsRoute: typeof StudioAutomationsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   BrainIndexRoute: typeof BrainIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
   OperateIndexRoute: typeof OperateIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
-  SessionsIndexRoute: typeof SessionsIndexRoute
   StudioIndexRoute: typeof StudioIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   BrainKnowledgeGraphRoute: typeof BrainKnowledgeGraphRoute
+  StudioSessionsSessionIdRoute: typeof StudioSessionsSessionIdRoute
   BrainKnowledgeIndexRoute: typeof BrainKnowledgeIndexRoute
 }
 
@@ -505,13 +479,6 @@ declare module '@tanstack/react-router' {
       path: '/budget'
       fullPath: '/budget'
       preLoaderRoute: typeof BudgetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat': {
-      id: '/chat'
-      path: '/chat'
-      fullPath: '/chat'
-      preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/email': {
@@ -675,20 +642,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sessions/': {
-      id: '/sessions/'
-      path: '/sessions'
-      fullPath: '/sessions/'
-      preLoaderRoute: typeof SessionsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/sessions/$sessionId': {
-      id: '/sessions/$sessionId'
-      path: '/sessions/$sessionId'
-      fullPath: '/sessions/$sessionId'
-      preLoaderRoute: typeof SessionsSessionIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/studio/': {
       id: '/studio/'
       path: '/studio'
@@ -731,6 +684,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrainKnowledgeGraphRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/studio/sessions/$sessionId': {
+      id: '/studio/sessions/$sessionId'
+      path: '/studio/sessions/$sessionId'
+      fullPath: '/studio/sessions/$sessionId'
+      preLoaderRoute: typeof StudioSessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -750,7 +710,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AssetsRoute: AssetsRoute,
   BudgetRoute: BudgetRoute,
-  ChatRoute: ChatRoute,
   EmailRoute: EmailRoute,
   EventsRoute: EventsRoute,
   GitRoute: GitRoute,
@@ -769,17 +728,16 @@ const rootRouteChildren: RootRouteChildren = {
   BrainSearchRoute: BrainSearchRoute,
   KnowledgeGraphRoute: KnowledgeGraphRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
-  SessionsSessionIdRoute: SessionsSessionIdRoute,
   StudioAutomationsRoute: StudioAutomationsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   BrainIndexRoute: BrainIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
   OperateIndexRoute: OperateIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
-  SessionsIndexRoute: SessionsIndexRoute,
   StudioIndexRoute: StudioIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   BrainKnowledgeGraphRoute: BrainKnowledgeGraphRoute,
+  StudioSessionsSessionIdRoute: StudioSessionsSessionIdRoute,
   BrainKnowledgeIndexRoute: BrainKnowledgeIndexRoute,
 }
 export const routeTree = rootRouteImport

@@ -124,6 +124,10 @@ interface ChatRuntimeState {
    *  conditional chat controls (via use-effective-profile); persona
    *  names/categories/capability strings are never consulted. */
   effectiveProfile: EffectiveProfile | null
+  /** Studio one-turn model override (IA design §8.3 `Turn options`).
+   *  Runtime-only: consumed by the NEXT sendMessage payload (`model`)
+   *  and cleared immediately after the frame is written. */
+  turnModelOverride: string | null
   // ── WebSocket lifecycle (encapsulated, not persisted) ──
   /** WebSocket instance managed by the store. */
   _ws: WebSocket | null
@@ -176,6 +180,12 @@ interface ChatActions {
   branchFrom: (messageId: string) => void
   /** Set the active project explicitly. */
   setActiveProject: (projectId: string | null) => void
+  /** Bind (or unbind) the project for FUTURE turns without touching the
+   *  live conversation (IA design §8.3: "binding changes future turns
+   *  only"). Unlike setActiveProject, the active session, its transcript,
+   *  and buffered tokens are preserved; the next send carries the new
+   *  `project_id` and the server records it on the session. */
+  bindProject: (projectId: string | null) => void
   /** RFC-032: Set the active role hint. */
   setActiveRole: (role: string | null) => void
   /** Session persona override (null = inherit global active persona). */
@@ -187,6 +197,9 @@ interface ChatActions {
   setBrainDefaults: (next: { project: string | null; global: string }) => void
   /** Set the per-message model override id (null = no override). */
   setActiveModelId: (modelId: string | null) => void
+  /** Set the one-turn model override (Studio `Turn options`); consumed
+   *  by the next send, then cleared. */
+  setTurnModelOverride: (modelId: string | null) => void
   /** Set the per-message sampling temperature (null = provider default). */
   setTemperature: (temperature: number | null) => void
   /** Set the per-message max output tokens (null = provider default). */
@@ -868,6 +881,7 @@ export const useChatStore = create<ChatStore>()(
       isStreaming: false,
       streamStartedAt: null as number | null,
       pendingModel: null as string | null,
+      turnModelOverride: null as string | null,
       brainDefaults: { project: null, global: '' },
       connected: false,
       _sendQueue: [],
@@ -1148,6 +1162,7 @@ export const useChatStore = create<ChatStore>()(
           activeBrainSpace,
           activeRole,
           activeModelId,
+          turnModelOverride,
           temperature,
           maxTokens,
           connected,
@@ -1217,7 +1232,7 @@ export const useChatStore = create<ChatStore>()(
           brain_space:
             resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ?? '',
           // Per-message model override (or last-picked persistent one).
-          model: activeModelId ?? '',
+          model: turnModelOverride ?? activeModelId ?? '',
         }
         if (temperature != null) payload.temperature = temperature
         if (maxTokens != null) payload.max_tokens = maxTokens
@@ -1229,6 +1244,10 @@ export const useChatStore = create<ChatStore>()(
           payload.request_id = _activeRequestId
         }
         _ws.send(JSON.stringify(payload))
+        // One-turn override: consumed by this send, cleared for the next.
+        if (turnModelOverride !== null) {
+          set({ turnModelOverride: null })
+        }
       },
 
       sendCommandMessage(content: string) {
@@ -1516,6 +1535,12 @@ export const useChatStore = create<ChatStore>()(
         })
       },
 
+      bindProject(projectId: string | null) {
+        // Future-turns-only binding (IA design §8.3): the conversation,
+        // its transcript, and buffered tokens stay untouched.
+        set({ activeProjectId: projectId })
+      },
+
       setActiveRole(role: string | null) {
         set({ activeRole: role })
       },
@@ -1530,6 +1555,10 @@ export const useChatStore = create<ChatStore>()(
 
       setActiveModelId(modelId: string | null) {
         set({ activeModelId: modelId })
+      },
+
+      setTurnModelOverride(modelId: string | null) {
+        set({ turnModelOverride: modelId })
       },
 
       setTemperature(temperature: number | null) {

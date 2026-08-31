@@ -34,6 +34,9 @@ pub struct PersonaSummary {
     active: bool,
     /// Tool access profile: `base` | `code` | `minimal` | `control`.
     tool_profile: String,
+    /// Presentation lens for the Studio surface: `general` | `code` |
+    /// `research` | `operations` | `writing`. Presentation only.
+    presentation_lens: String,
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
@@ -49,6 +52,7 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
             .map(|p| PersonaSummary {
                 active: active_id.as_deref() == Some(p.id.as_str()),
                 tool_profile: p.tool_profile.to_string(),
+                presentation_lens: p.presentation_lens.to_string(),
                 id: p.id,
                 name: p.name,
                 role: p.role,
@@ -79,6 +83,7 @@ pub async fn handle_persona_get(
             "capabilities": p.capabilities,
             "active": state.kernel.persona.active_id().as_deref() == Some(p.id.as_str()),
             "tool_profile": p.tool_profile.to_string(),
+            "presentation_lens": p.presentation_lens.to_string(),
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }
@@ -101,6 +106,10 @@ pub struct PersonaCreateRequest {
     /// Tool access profile: `base` | `code` | `minimal`. Defaults to `code`.
     #[serde(default)]
     tool_profile: Option<String>,
+    /// Presentation lens: `general` | `code` | `research` | `operations` |
+    /// `writing`. Defaults to `general`.
+    #[serde(default)]
+    presentation_lens: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -131,6 +140,11 @@ pub async fn handle_persona_create(
             .tool_profile
             .as_deref()
             .map(oxios_kernel::ToolProfile::from_str_loose)
+            .unwrap_or_default(),
+        presentation_lens: body
+            .presentation_lens
+            .as_deref()
+            .map(oxios_kernel::PresentationLens::from_str_loose)
             .unwrap_or_default(),
     };
     let created_id = persona.id.clone();
@@ -163,6 +177,7 @@ pub struct PersonaUpdateRequest {
     personality_traits: Option<Vec<String>>,
     capabilities: Option<Vec<String>>,
     tool_profile: Option<String>,
+    presentation_lens: Option<String>,
 }
 
 /// PUT /api/personas/:id — Update a persona.
@@ -194,6 +209,11 @@ pub async fn handle_persona_update(
             .as_deref()
             .map(oxios_kernel::ToolProfile::from_str_loose)
             .unwrap_or(existing.tool_profile),
+        presentation_lens: body
+            .presentation_lens
+            .as_deref()
+            .map(oxios_kernel::PresentationLens::from_str_loose)
+            .unwrap_or(existing.presentation_lens),
     };
 
     state
@@ -382,6 +402,7 @@ mod tests {
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
             active: true,
             tool_profile: "base".into(),
+            presentation_lens: "code".into(),
         };
         let json = serde_json::to_value(&summary).expect("serialize");
         let caps: Vec<String> = json

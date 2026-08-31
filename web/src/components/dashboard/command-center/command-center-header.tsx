@@ -72,7 +72,7 @@ export function CommandCenterHeader({ health }: { health: SystemHealth | null })
       }
       actions={
         <Button asChild>
-          <Link to="/chat">
+          <Link to="/studio">
             <Plus className="h-4 w-4" aria-hidden="true" />
             {t('commandCenter.newTask')}
           </Link>

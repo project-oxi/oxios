@@ -252,6 +252,9 @@ impl AgentTool for PersonaTool {
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or_default(),
+                    presentation_lens: str_or(&params, "presentation_lens")
+                        .map(|s| crate::persona::PresentationLens::from_str_loose(&s))
+                        .unwrap_or_default(),
                 };
 
                 // Security review (fail-open on engine/parse error): an
@@ -340,6 +343,9 @@ impl AgentTool for PersonaTool {
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or(existing.tool_profile),
+                    presentation_lens: str_or(&params, "presentation_lens")
+                        .map(|s| crate::persona::PresentationLens::from_str_loose(&s))
+                        .unwrap_or(existing.presentation_lens),
                 };
 
                 if prompt_changed && !updated.system_prompt.trim().is_empty() {

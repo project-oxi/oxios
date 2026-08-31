@@ -818,7 +818,6 @@
     "thu": "Thu",
     "fri": "Fri",
     "sat": "Sat",
-    "tasks": "Tasks",
     "brain": "Brain",
     "add": "Add"
   },
@@ -1628,7 +1627,16 @@
       "minimal": "minimal tools",
       "control": "Control"
     },
-    "sessionPersonaHint": "Pick a per-session persona from the chat composer"
+    "sessionPersonaHint": "Pick a per-session persona from the chat composer",
+    "presentationLens": "Presentation lens",
+    "presentationLensHint": "Presentation only — shapes how the Studio surface is arranged. It never changes tools or permissions",
+    "presentationLenses": {
+      "general": "General — calm conversation",
+      "code": "Code — tools and diffs in focus",
+      "research": "Research — synthesis and sources",
+      "operations": "Operations — approvals and state",
+      "writing": "Writing — draft and outline"
+    }
   },
   "projects": {
     "create": "Create",
@@ -1707,7 +1715,6 @@
     "chips": {
       "addMcp": "Add an MCP server",
       "budget": "Show this month's budget",
-      "tasks": "List scheduled tasks",
       "model": "Change the default model"
     },
     "copy": "Copy",
@@ -2424,7 +2431,6 @@
       "title": "Session Report",
       "loadFailed": "Could not load session.",
       "totals": "Totals",
-      "tasks": "Tasks",
       "taskList": "Task list",
       "drained": "Providers drained",
       "resets": "Resets observed",
@@ -2829,5 +2835,55 @@
     "titlePlaceholder": "Milestone name",
     "progress": "{{closed}} of {{total}} closed",
     "due": "due {{date}}"
+  },
+  "studio": {
+    "context": {
+      "project": "Project",
+      "persona": "Persona",
+      "model": "Model",
+      "brain": "Brain",
+      "noProject": "No project",
+      "defaultModel": "Configured model",
+      "brainNotConnected": "Not connected",
+      "nextTurnHint": "Changes apply from the next turn"
+    },
+    "inspector": {
+      "label": "Inspector",
+      "close": "Close inspector",
+      "context": "Context",
+      "sources": "Sources",
+      "activity": "Activity",
+      "outline": "Outline",
+      "review": "Review",
+      "unnamedSource": "Unnamed source",
+      "toolRun": "Tool",
+      "subagent": "Agent",
+      "reasoning": "Reasoning",
+      "pendingApproval": "Pending approval",
+      "pendingPathAccess": "Path access request",
+      "pendingChange": "Pending change"
+    },
+    "turnOptions": {
+      "label": "Turn options",
+      "title": "This turn only",
+      "noOverride": "Use session model",
+      "resetsHint": "Overrides apply to the next send only, then reset."
+    },
+    "launch": {
+      "title": "Add to Studio",
+      "description": "Choose where this context should open. References are validated — nothing binds implicitly.",
+      "brainMemory": "Memory",
+      "knowledgeDocument": "Document",
+      "citation": "Citation",
+      "artifact": "Artifact",
+      "removeChip": "Remove unavailable reference",
+      "destination": "Destination",
+      "projectless": "Start without a project",
+      "current": "Add to current conversation",
+      "chooseProject": "Choose project",
+      "project": "Project",
+      "pickProject": "Pick a project…",
+      "apply": "Open in Studio"
+    }
   }
 }

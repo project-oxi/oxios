@@ -1,24 +1,11 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { MessageSquare } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import { EmptyState } from '@/components/shared/empty-state'
+// Studio — the conversation-first creation surface (IA design §8).
+// `/studio` resolves to the last open Studio session when one exists,
+// otherwise to a fresh projectless conversation. A new conversation
+// receives NO implicit project binding.
 
-/**
- * Studio landing route — a shell-safe placeholder. The conversation-first
- * Studio workbench is owned by the wave-2 Studio worker, which recomposes
- * the legacy chat route into this file.
- */
-function StudioIndex() {
-  const { t } = useTranslation()
-  return (
-    <EmptyState
-      icon={<MessageSquare className="h-10 w-10" />}
-      title={t('sidebar.studio')}
-      description={t('common.surfacePlaceholderBody')}
-    />
-  )
-}
+import { createFileRoute } from '@tanstack/react-router'
+import { StudioShell } from '@/components/studio/studio-shell'
 
 export const Route = createFileRoute('/studio/')({
-  component: StudioIndex,
+  component: StudioShell,
 })

@@ -91,8 +91,8 @@ export function OxiosCopilotDialog() {
       )
       closeCopilot()
       reset()
-      router.history.push('/chat')
-      // Seed the chat store so /chat shows the promoted exchange immediately.
+      router.history.push('/studio')
+      // Seed the chat store so /studio shows the promoted exchange immediately.
       await useChatStore.getState().loadSession(res.session_id)
       toast.success(t('oxiosCopilot.promoted'))
     } catch {

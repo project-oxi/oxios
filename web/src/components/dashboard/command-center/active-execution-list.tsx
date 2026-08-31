@@ -141,7 +141,7 @@ function EmptyRuns() {
       <p className="text-xs text-muted-foreground/70">
         {t('commandCenter.activeExecution.emptyHint')}
       </p>
-      <Link to="/chat" className="text-xs font-medium text-primary hover:underline">
+      <Link to="/studio" className="text-xs font-medium text-primary hover:underline">
         {t('commandCenter.activeExecution.startTask')}
       </Link>
     </div>

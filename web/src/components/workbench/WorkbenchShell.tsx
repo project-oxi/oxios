@@ -68,13 +68,13 @@ function useWorkbenchShortcut(active: boolean): void {
       return
     }
     // Read the current pathname from window.location so this hook works
-    // outside a RouterProvider (tests, embedded routes). The chat route
+    // outside a RouterProvider (tests, embedded routes). The Studio route
     // is the only legitimate activation context for ⌘P. (The
     // use-tab-shortcuts registry only covers ⌃1-3 route switching, so the
     // bespoke listener stays; it is gated on `active` here.)
     const onKey = (e: KeyboardEvent) => {
-      const onChat = window.location.pathname.startsWith('/chat')
-      if (!onChat) return
+      const onStudio = window.location.pathname.startsWith('/studio')
+      if (!onStudio) return
       if (!e.metaKey && !e.ctrlKey) return
       if (e.shiftKey || e.altKey) return
       if (e.code !== 'KeyP' && e.key.toLowerCase() !== 'p') return

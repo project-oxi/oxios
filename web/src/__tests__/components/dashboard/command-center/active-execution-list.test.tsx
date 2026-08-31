@@ -131,7 +131,7 @@ describe('ActiveExecutionList', () => {
     expect(screen.getByText('commandCenter.activeExecution.empty')).toBeInTheDocument()
     expect(
       screen.getByRole('link', { name: 'commandCenter.activeExecution.startTask' }),
-    ).toHaveAttribute('href', '/chat')
+    ).toHaveAttribute('href', '/studio')
   })
 
   it('localizes a failed agents query with retry', () => {

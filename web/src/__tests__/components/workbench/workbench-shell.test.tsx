@@ -65,16 +65,19 @@ const CODE_ROOTS: EffectiveProfile = {
   persona_id: 'dev',
   tool_profile: 'code',
   affordances: ['diff', 'files', 'terminal', 'worktree-fanout'],
+  presentation_lens: 'code',
 }
 const CODE_FOLDERLESS: EffectiveProfile = {
   persona_id: 'dev',
   tool_profile: 'code',
   affordances: ['diff'],
+  presentation_lens: 'code',
 }
 const MINIMAL: EffectiveProfile = {
   persona_id: 'writer',
   tool_profile: 'minimal',
   affordances: [],
+  presentation_lens: 'writing',
 }
 
 const PROJECT: Project = {
@@ -157,9 +160,9 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
-  // WorkbenchShell binds ⌘P only on the /chat route (verified by
+  // WorkbenchShell binds ⌘P only on the /studio route (verified by
   // preventDefault); jsdom defaults to "/" so set the route first.
-  window.history.replaceState(null, '', '/chat')
+  window.history.replaceState(null, '', '/studio')
   setupServer()
   useChatStore.getState().disconnect()
   useChatStore.setState({
@@ -444,8 +447,8 @@ describe('WorkbenchShell — quick open', () => {
   })
 })
 
-describe('ProjectSelectorPopover — project binding (fix F2)', () => {
-  it('clicking a project entry binds it via setActiveProject', async () => {
+describe('ProjectSelectorPopover — project binding (IA design §8.3)', () => {
+  it('clicking a project entry binds it for future turns', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     useChatStore.setState({ activeProjectId: null })
     render(<ProjectSelectorPopover activeProject={null} onSelect={() => {}} />, {
@@ -460,9 +463,13 @@ describe('ProjectSelectorPopover — project binding (fix F2)', () => {
     await waitFor(() => expect(useChatStore.getState().activeProjectId).toBe(PROJECT.id))
   })
 
-  it('clicking "No project" detaches the session', async () => {
+  it('clicking "No project" unbinds future turns and KEEPS the live session', async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    useChatStore.setState({ activeProjectId: PROJECT.id, activeSessionId: 'sess-shell' })
+    useChatStore.setState({
+      activeProjectId: PROJECT.id,
+      activeSessionId: 'sess-shell',
+      messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 't' }],
+    })
     render(<ProjectSelectorPopover activeProject={PROJECT} onSelect={() => {}} />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <QueryClientProvider client={qc}>{children}</QueryClientProvider>
@@ -471,6 +478,9 @@ describe('ProjectSelectorPopover — project binding (fix F2)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'workbench.projectSelector.label' }))
     await userEvent.click(await screen.findByText('workbench.noProject'))
     await waitFor(() => expect(useChatStore.getState().activeProjectId).toBeNull())
-    expect(useChatStore.getState().activeSessionId).toBeNull()
+    // Future-turns-only (IA design §8.3): the live conversation and its
+    // transcript are never reset by a binding change.
+    expect(useChatStore.getState().activeSessionId).toBe('sess-shell')
+    expect(useChatStore.getState().messages).toHaveLength(1)
   })
 })

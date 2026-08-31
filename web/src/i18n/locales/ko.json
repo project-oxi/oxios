@@ -818,7 +818,6 @@
     "thu": "목",
     "fri": "금",
     "sat": "토",
-    "tasks": "작업",
     "brain": "브레인",
     "add": "추가"
   },
@@ -1628,7 +1627,16 @@
       "minimal": "최소 도구",
       "control": "제어"
     },
-    "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다"
+    "sessionPersonaHint": "채팅 입력창에서 세션별 페르소나를 선택할 수 있습니다",
+    "presentationLens": "프레젠테이션 렌즈",
+    "presentationLensHint": "표현 전용 — Studio 화면 구성에만 영향을 줍니다. 도구나 권한은 바뀌지 않습니다",
+    "presentationLenses": {
+      "general": "일반 — 차분한 대화",
+      "code": "코드 — 도구와 diff 중심",
+      "research": "리서치 — 종합과 출처",
+      "operations": "운영 — 승인과 상태",
+      "writing": "집필 — 초고와 아웃라인"
+    }
   },
   "projects": {
     "create": "생성",
@@ -1707,7 +1715,6 @@
     "chips": {
       "addMcp": "MCP 서버 추가해줘",
       "budget": "이번 달 예산 보여줘",
-      "tasks": "예약된 작업 목록 보여줘",
       "model": "기본 모델 바꿔줘"
     },
     "copy": "복사",
@@ -2424,7 +2431,6 @@
       "title": "세션 리포트",
       "loadFailed": "세션을 불러올 수 없습니다.",
       "totals": "합계",
-      "tasks": "작업 수",
       "taskList": "작업 목록",
       "drained": "소진된 프로바이더",
       "resets": "초기화 횟수",
@@ -2829,5 +2835,55 @@
     "titlePlaceholder": "마일스톤 이름",
     "progress": "{{total}}개 중 {{closed}}개 닫힘",
     "due": "마감 {{date}}"
+  },
+  "studio": {
+    "context": {
+      "project": "프로젝트",
+      "persona": "페르소나",
+      "model": "모델",
+      "brain": "브레인",
+      "noProject": "프로젝트 없음",
+      "defaultModel": "구성된 모델",
+      "brainNotConnected": "연결 안 됨",
+      "nextTurnHint": "변경 사항은 다음 턴부터 적용됩니다"
+    },
+    "inspector": {
+      "label": "인스펙터",
+      "close": "인스펙터 닫기",
+      "context": "컨텍스트",
+      "sources": "출처",
+      "activity": "활동",
+      "outline": "아웃라인",
+      "review": "리뷰",
+      "unnamedSource": "이름 없는 출처",
+      "toolRun": "도구",
+      "subagent": "에이전트",
+      "reasoning": "추론",
+      "pendingApproval": "승인 대기",
+      "pendingPathAccess": "경로 접근 요청",
+      "pendingChange": "변경 대기"
+    },
+    "turnOptions": {
+      "label": "턴 옵션",
+      "title": "이 턴에만",
+      "noOverride": "세션 모델 사용",
+      "resetsHint": "오버라이드는 다음 전송 한 번에만 적용된 후 초기화됩니다."
+    },
+    "launch": {
+      "title": "Studio에 추가",
+      "description": "이 컨텍스트를 열 위치를 선택하세요. 참조는 검증되며 암묵적으로 바인딩되지 않습니다.",
+      "brainMemory": "메모리",
+      "knowledgeDocument": "문서",
+      "citation": "인용",
+      "artifact": "아티팩트",
+      "removeChip": "사용할 수 없는 참조 제거",
+      "destination": "대상",
+      "projectless": "프로젝트 없이 시작",
+      "current": "현재 대화에 추가",
+      "chooseProject": "프로젝트 선택",
+      "project": "프로젝트",
+      "pickProject": "프로젝트 선택…",
+      "apply": "Studio에서 열기"
+    }
   }
 }

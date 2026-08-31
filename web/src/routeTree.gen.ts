@@ -23,7 +23,6 @@ import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as SecurityRouteImport } from './routes/security'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SkillsRouteImport } from './routes/skills'
-import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TokenMaxingRouteImport } from './routes/token-maxing'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
@@ -38,6 +37,7 @@ import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
+import { Route as StudioAutomationsRouteImport } from './routes/studio/automations'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
 import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
 import { Route as BrainKnowledgeIndexRouteImport } from './routes/brain/knowledge/index'
@@ -113,11 +113,6 @@ const SkillsRoute = SkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TasksRoute = TasksRouteImport.update({
-  id: '/tasks',
-  path: '/tasks',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const TokenMaxingRoute = TokenMaxingRouteImport.update({
   id: '/token-maxing',
   path: '/token-maxing',
@@ -188,6 +183,11 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StudioAutomationsRoute = StudioAutomationsRouteImport.update({
+  id: '/studio/automations',
+  path: '/studio/automations',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
   id: '/workspace/',
   path: '/workspace/',
@@ -224,7 +224,6 @@ export interface FileRoutesByFullPath {
   '/security': typeof SecurityRoute
   '/settings': typeof SettingsRoute
   '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
@@ -234,6 +233,7 @@ export interface FileRoutesByFullPath {
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
@@ -259,7 +259,6 @@ export interface FileRoutesByTo {
   '/security': typeof SecurityRoute
   '/settings': typeof SettingsRoute
   '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
@@ -269,6 +268,7 @@ export interface FileRoutesByTo {
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/agents': typeof AgentsIndexRoute
   '/brain': typeof BrainIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
@@ -295,7 +295,6 @@ export interface FileRoutesById {
   '/security': typeof SecurityRoute
   '/settings': typeof SettingsRoute
   '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
   '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/brain/contradictions': typeof BrainContradictionsRoute
@@ -305,6 +304,7 @@ export interface FileRoutesById {
   '/knowledge/graph': typeof KnowledgeGraphRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
@@ -332,7 +332,6 @@ export interface FileRouteTypes {
     | '/security'
     | '/settings'
     | '/skills'
-    | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
     | '/brain/contradictions'
@@ -342,6 +341,7 @@ export interface FileRouteTypes {
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/studio/automations'
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
@@ -367,7 +367,6 @@ export interface FileRouteTypes {
     | '/security'
     | '/settings'
     | '/skills'
-    | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
     | '/brain/contradictions'
@@ -377,6 +376,7 @@ export interface FileRouteTypes {
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/studio/automations'
     | '/agents'
     | '/brain'
     | '/knowledge'
@@ -402,7 +402,6 @@ export interface FileRouteTypes {
     | '/security'
     | '/settings'
     | '/skills'
-    | '/tasks'
     | '/token-maxing'
     | '/agents/$agentId'
     | '/brain/contradictions'
@@ -412,6 +411,7 @@ export interface FileRouteTypes {
     | '/knowledge/graph'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/studio/automations'
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
@@ -438,7 +438,6 @@ export interface RootRouteChildren {
   SecurityRoute: typeof SecurityRoute
   SettingsRoute: typeof SettingsRoute
   SkillsRoute: typeof SkillsRoute
-  TasksRoute: typeof TasksRoute
   TokenMaxingRoute: typeof TokenMaxingRoute
   AgentsAgentIdRoute: typeof AgentsAgentIdRouteWithChildren
   BrainContradictionsRoute: typeof BrainContradictionsRoute
@@ -448,6 +447,7 @@ export interface RootRouteChildren {
   KnowledgeGraphRoute: typeof KnowledgeGraphRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
+  StudioAutomationsRoute: typeof StudioAutomationsRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   BrainIndexRoute: typeof BrainIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
@@ -558,13 +558,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/tasks': {
-      id: '/tasks'
-      path: '/tasks'
-      fullPath: '/tasks'
-      preLoaderRoute: typeof TasksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/token-maxing': {
       id: '/token-maxing'
       path: '/token-maxing'
@@ -663,6 +656,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/studio/automations': {
+      id: '/studio/automations'
+      path: '/studio/automations'
+      fullPath: '/studio/automations'
+      preLoaderRoute: typeof StudioAutomationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/workspace/': {
       id: '/workspace/'
       path: '/workspace'
@@ -721,7 +721,6 @@ const rootRouteChildren: RootRouteChildren = {
   SecurityRoute: SecurityRoute,
   SettingsRoute: SettingsRoute,
   SkillsRoute: SkillsRoute,
-  TasksRoute: TasksRoute,
   TokenMaxingRoute: TokenMaxingRoute,
   AgentsAgentIdRoute: AgentsAgentIdRouteWithChildren,
   BrainContradictionsRoute: BrainContradictionsRoute,
@@ -731,6 +730,7 @@ const rootRouteChildren: RootRouteChildren = {
   KnowledgeGraphRoute: KnowledgeGraphRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
+  StudioAutomationsRoute: StudioAutomationsRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   BrainIndexRoute: BrainIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,

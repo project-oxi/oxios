@@ -21,7 +21,7 @@ import {
 } from '@/lib/cron-utils'
 import { cn } from '@/lib/utils'
 
-interface CronScheduleEditorProps {
+interface AutomationCronEditorProps {
   /** Current cron expression (5-field). */
   value: string
   /** Fired with the new cron expression whenever the GUI or raw input changes. */
@@ -104,7 +104,7 @@ function describeSchedule(s: SimpleSchedule, t: TFunction, ko: boolean): string 
  * every keystroke / control change in both modes. Descriptions are derived
  * directly from the structured schedule state — no external parsing library.
  */
-export function CronScheduleEditor({ value, onChange, id }: CronScheduleEditorProps) {
+export function AutomationCronEditor({ value, onChange, id }: AutomationCronEditorProps) {
   const { t, i18n } = useTranslation()
   const ko = i18n.resolvedLanguage?.startsWith('ko') ?? false
 

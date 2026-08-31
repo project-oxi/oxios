@@ -23,25 +23,25 @@ interface HoveredMarker {
 }
 
 /** Minimal structural shape the timeline renders — cron jobs and scheduled
- * tasks both satisfy it. */
+ * automations both satisfy it. */
 export interface TimelineEntry {
   id: string
   name: string
   schedule: string
   next_run?: string
-  /** Optional — tasks map `status !== 'canceled'` semantics onto it. */
+  /** Optional — automation excludes paused/exhausted/failed entries. */
   enabled?: boolean
 }
 
 /**
- * Gantt-style timeline view for scheduled work (tasks with a cron schedule).
+ * Schedule timeline view for scheduled automations (cron/heartbeat).
  *
  * Shows each entry as a row with fire-time markers projected across a
  * selectable time window (24h / 48h / 7d). The authoritative `next_run`
  * from the backend is always shown as a highlighted primary marker;
  * additional projected fire times visualize the schedule pattern.
  */
-export function CronTimelineView({
+export function AutomationScheduleTimeline({
   jobs,
   onEdit,
   onDelete,
@@ -74,7 +74,7 @@ export function CronTimelineView({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-testid="automation-schedule-timeline">
       {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex gap-0.5 rounded-lg border bg-muted/50 p-0.5">
@@ -103,75 +103,56 @@ export function CronTimelineView({
       {/* Timeline */}
       <div className="max-h-[70vh] overflow-auto rounded-xl border bg-card shadow-sm">
         <div style={{ width: LABEL_WIDTH + trackWidth, minWidth: '100%' }}>
-          {/* Time axis header */}
-          <div className="sticky top-0 z-30 flex border-b bg-muted/30 backdrop-blur-sm">
-            <div
-              className="sticky left-0 z-30 shrink-0 border-r bg-muted/30 px-3 py-1.5"
-              style={{ width: LABEL_WIDTH }}
-            >
-              <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {t('cronJobs.timeline.now')}
+          {/* Header row: range labels */}
+          <div className="sticky top-0 z-10 flex border-b bg-card">
+            <div className="shrink-0 border-r px-3 py-1.5" style={{ width: LABEL_WIDTH }}>
+              <span className="text-xs font-medium text-muted-foreground">
+                {t('cronJobs.timeline.viewTimeline')}
               </span>
             </div>
             <div className="relative h-7" style={{ width: trackWidth }}>
               {ticks.map((tick) => (
                 <div
                   key={tick.getTime()}
-                  className="absolute top-0 h-full"
+                  className="absolute top-0 h-full px-1 text-[10px] font-medium text-muted-foreground"
                   style={{ left: msToPx(tick.getTime() - nowMs) }}
                 >
-                  <span className="absolute top-1 -translate-x-1/2 whitespace-nowrap text-[10px] text-muted-foreground">
-                    {formatTickLabel(tick, range)}
-                  </span>
+                  {formatTickLabel(tick, range)}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Job rows */}
+          {/* Rows */}
           {jobs.map((job, i) => {
-            const data = fireData.get(job.id)
+            const data = fireData.get(job.id) ?? { fireTimes: [], isDense: false }
+            const hasFires = data.fireTimes.length > 0
             const color = chartColor(i)
-            const hasFires = data && data.fireTimes.length > 0
-
             return (
               <div key={job.id} className="flex border-b last:border-b-0">
-                {/* Sticky label */}
                 <div
-                  className="sticky left-0 z-20 shrink-0 border-r bg-card px-3 py-2"
+                  className="flex shrink-0 items-center gap-1.5 border-r px-3 py-2"
                   style={{ width: LABEL_WIDTH }}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={cn(
-                        'truncate text-sm font-medium',
-                        job.enabled === false && 'text-muted-foreground',
-                      )}
-                    >
-                      {job.name}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1">
-                    <code className="rounded bg-muted px-1 py-0.5 text-[10px]">{job.schedule}</code>
-                    {job.enabled === false && (
-                      <Badge variant="secondary" className="h-4 px-1 text-[9px]">
-                        {t('cronJobs.timeline.disabled')}
-                      </Badge>
-                    )}
-                    {data?.parseFailed && (
-                      <span className="text-[9px] text-muted-foreground/50">
-                        {t('cronJobs.timeline.parseFailed')}
-                      </span>
-                    )}
-                  </div>
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: color }}
+                    aria-hidden
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium" title={job.name}>
+                    {job.name}
+                  </span>
+                  <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">
+                    {job.schedule}
+                  </Badge>
                   {(onEdit || onDelete) && (
-                    <div className="mt-1 flex gap-0.5">
+                    <div className="ml-1 flex shrink-0 items-center gap-0.5">
                       {onEdit && (
                         <button
                           type="button"
                           onClick={() => onEdit(job)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                           aria-label={t('common.edit')}
-                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -180,8 +161,8 @@ export function CronTimelineView({
                         <button
                           type="button"
                           onClick={() => onDelete(job)}
-                          aria-label={t('cronJobs.deleteJob')}
-                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={t('common.delete')}
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -189,10 +170,7 @@ export function CronTimelineView({
                     </div>
                   )}
                 </div>
-
-                {/* Track */}
                 <div className="relative h-12" style={{ width: trackWidth }}>
-                  {/* Gridlines */}
                   {ticks.map((tick) => (
                     <div
                       key={tick.getTime()}

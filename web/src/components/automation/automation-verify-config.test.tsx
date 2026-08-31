@@ -1,5 +1,5 @@
-// TaskVerifyConfig — verifies the toggle + save round-trip commits a merged
-// SetVerifyParams payload (RFC-043 §D9/D2).
+// AutomationVerifyConfig — verifies the toggle + save round-trip commits a merged
+// SetVerifyParams payload.
 //
 // The component stages edits in local state; on Save it calls `onSave` with
 // every field from the staged state, so the store receives a complete
@@ -8,37 +8,39 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { TaskVerifyConfig } from './task-verify-config'
+import { AutomationVerifyConfig } from './automation-verify-config'
 
-describe('TaskVerifyConfig', () => {
+describe('AutomationVerifyConfig', () => {
   it('renders the verify title and current requirement', () => {
     render(
-      <TaskVerifyConfig
+      <AutomationVerifyConfig
         enabled
         requirement="Must include 3 pairings"
         maxIterations={3}
         onSave={vi.fn()}
       />,
     )
-    expect(screen.getByText('tasks.verifyTitle')).toBeInTheDocument()
+    expect(screen.getByText('automations.verifyTitle')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Must include 3 pairings')).toBeInTheDocument()
     expect(screen.getByDisplayValue('3')).toBeInTheDocument()
   })
 
   it('toggles enabled and saves with the merged payload', () => {
     const onSave = vi.fn()
-    render(<TaskVerifyConfig enabled={false} requirement="" maxIterations={2} onSave={onSave} />)
+    render(
+      <AutomationVerifyConfig enabled={false} requirement="" maxIterations={2} onSave={onSave} />,
+    )
     // Flip the switch on.
     const toggle = screen.getByRole('switch')
     fireEvent.click(toggle)
     // Fill in the criterion.
-    const textarea = screen.getByPlaceholderText('tasks.verifyRequirementPlaceholder')
+    const textarea = screen.getByPlaceholderText('automations.verifyRequirementPlaceholder')
     fireEvent.change(textarea, { target: { value: 'returns a JSON object' } })
     // Bump max iterations.
-    const iterations = screen.getByLabelText('tasks.verifyMaxIterations')
+    const iterations = screen.getByLabelText('automations.verifyMaxIterations')
     fireEvent.change(iterations, { target: { value: '5' } })
     // Save.
-    fireEvent.click(screen.getByRole('button', { name: 'tasks.verifySave' }))
+    fireEvent.click(screen.getByRole('button', { name: 'automations.verifySave' }))
     expect(onSave).toHaveBeenCalledTimes(1)
     expect(onSave).toHaveBeenCalledWith({
       enabled: true,
@@ -49,10 +51,10 @@ describe('TaskVerifyConfig', () => {
 
   it('trims the requirement and sends null when empty', () => {
     const onSave = vi.fn()
-    render(<TaskVerifyConfig enabled requirement="old" maxIterations={3} onSave={onSave} />)
-    const textarea = screen.getByPlaceholderText('tasks.verifyRequirementPlaceholder')
+    render(<AutomationVerifyConfig enabled requirement="old" maxIterations={3} onSave={onSave} />)
+    const textarea = screen.getByPlaceholderText('automations.verifyRequirementPlaceholder')
     fireEvent.change(textarea, { target: { value: '   ' } })
-    fireEvent.click(screen.getByRole('button', { name: 'tasks.verifySave' }))
+    fireEvent.click(screen.getByRole('button', { name: 'automations.verifySave' }))
     expect(onSave).toHaveBeenCalledWith({
       enabled: true,
       requirement: null,

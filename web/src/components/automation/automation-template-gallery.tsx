@@ -1,6 +1,6 @@
-// TaskTemplateGallery — gallery of pre-built recurring task templates
+// AutomationTemplateGallery — gallery of pre-built recurring automation templates.
 // Ported from LobeHub's RecommendTaskTemplates pattern.
-// Shows cards for each template with "Add Task" button.
+// Shows cards for each template with "Add Automation" button.
 
 import {
   BarChart,
@@ -42,14 +42,17 @@ const ICONS: Record<string, LucideIcon> = {
 
 // ── Props ──
 
-interface TaskTemplateGalleryProps {
+interface AutomationTemplateGalleryProps {
   onSelectTemplate?: (template: TaskTemplate) => void
   className?: string
 }
 
 // ── Component ──
 
-export function TaskTemplateGallery({ onSelectTemplate, className }: TaskTemplateGalleryProps) {
+export function AutomationTemplateGallery({
+  onSelectTemplate,
+  className,
+}: AutomationTemplateGalleryProps) {
   const [activeCategory, setActiveCategory] = useState<TaskTemplateCategory | 'all'>('all')
   const { t } = useTranslation()
 
@@ -59,7 +62,7 @@ export function TaskTemplateGallery({ onSelectTemplate, className }: TaskTemplat
   }, [activeCategory])
 
   return (
-    <div className={cn('flex flex-col', className)}>
+    <div className={cn('flex flex-col', className)} data-testid="automation-template-gallery">
       {/* Category filter */}
       <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-1">
         <CategoryChip
@@ -88,7 +91,7 @@ export function TaskTemplateGallery({ onSelectTemplate, className }: TaskTemplat
       {/* Template grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {filtered.map((template) => (
-          <TaskTemplateCard
+          <AutomationTemplateCard
             key={template.id}
             template={template}
             onSelect={() => onSelectTemplate?.(template)}
@@ -141,7 +144,7 @@ function CategoryChip({
 
 // ── Template card ──
 
-function TaskTemplateCard({
+function AutomationTemplateCard({
   template,
   onSelect,
 }: {

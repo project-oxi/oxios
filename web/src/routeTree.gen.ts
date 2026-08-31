@@ -18,6 +18,7 @@ import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TokenMaxingRouteImport } from './routes/token-maxing'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
+import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as OperateIndexRouteImport } from './routes/operate/index'
 import { Route as OperateCapabilitiesRouteImport } from './routes/operate/capabilities'
 import { Route as OperateEventsRouteImport } from './routes/operate/events'
@@ -30,7 +31,6 @@ import { Route as KnowledgeLibraryIndexRouteImport } from './routes/knowledge/li
 import { Route as KnowledgeLibraryAssetsRouteImport } from './routes/knowledge/library/assets'
 import { Route as KnowledgeLibraryGraphRouteImport } from './routes/knowledge/library/graph'
 import { Route as KnowledgeLibraryJournalRouteImport } from './routes/knowledge/library/journal'
-import { Route as KnowledgeLibraryWorkspaceRouteImport } from './routes/knowledge/library/workspace'
 import { Route as KnowledgeMemoryIndexRouteImport } from './routes/knowledge/memory/index'
 import { Route as KnowledgeMemoryContradictionsRouteImport } from './routes/knowledge/memory/contradictions'
 import { Route as KnowledgeMemoryEntitiesRouteImport } from './routes/knowledge/memory/entities'
@@ -88,6 +88,11 @@ const AgentsIndexRoute = AgentsIndexRouteImport.update({
 const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
   id: '/agents/$agentId',
   path: '/agents/$agentId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeIndexRoute = KnowledgeIndexRouteImport.update({
+  id: '/knowledge/',
+  path: '/knowledge/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OperateIndexRoute = OperateIndexRouteImport.update({
@@ -150,12 +155,6 @@ const KnowledgeLibraryJournalRoute = KnowledgeLibraryJournalRouteImport.update({
   path: '/knowledge/library/journal',
   getParentRoute: () => rootRouteImport,
 } as any)
-const KnowledgeLibraryWorkspaceRoute =
-  KnowledgeLibraryWorkspaceRouteImport.update({
-    id: '/knowledge/library/workspace',
-    path: '/knowledge/library/workspace',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const KnowledgeMemoryIndexRoute = KnowledgeMemoryIndexRouteImport.update({
   id: '/knowledge/memory/',
   path: '/knowledge/memory/',
@@ -239,6 +238,7 @@ export interface FileRoutesByFullPath {
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
@@ -246,7 +246,6 @@ export interface FileRoutesByFullPath {
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
-  '/knowledge/library/workspace': typeof KnowledgeLibraryWorkspaceRoute
   '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
   '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
   '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
@@ -276,6 +275,7 @@ export interface FileRoutesByTo {
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents': typeof AgentsIndexRoute
+  '/knowledge': typeof KnowledgeIndexRoute
   '/operate': typeof OperateIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
@@ -283,7 +283,6 @@ export interface FileRoutesByTo {
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
-  '/knowledge/library/workspace': typeof KnowledgeLibraryWorkspaceRoute
   '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
   '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
   '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
@@ -314,6 +313,7 @@ export interface FileRoutesById {
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/agents/': typeof AgentsIndexRoute
+  '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
@@ -321,7 +321,6 @@ export interface FileRoutesById {
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
-  '/knowledge/library/workspace': typeof KnowledgeLibraryWorkspaceRoute
   '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
   '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
   '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
@@ -353,6 +352,7 @@ export interface FileRouteTypes {
     | '/operate/runs'
     | '/sessions/$sessionId'
     | '/agents/'
+    | '/knowledge/'
     | '/operate/'
     | '/sessions/'
     | '/workspace/'
@@ -360,7 +360,6 @@ export interface FileRouteTypes {
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
-    | '/knowledge/library/workspace'
     | '/knowledge/memory/contradictions'
     | '/knowledge/memory/entities'
     | '/knowledge/memory/search'
@@ -390,6 +389,7 @@ export interface FileRouteTypes {
     | '/operate/runs'
     | '/sessions/$sessionId'
     | '/agents'
+    | '/knowledge'
     | '/operate'
     | '/sessions'
     | '/workspace'
@@ -397,7 +397,6 @@ export interface FileRouteTypes {
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
-    | '/knowledge/library/workspace'
     | '/knowledge/memory/contradictions'
     | '/knowledge/memory/entities'
     | '/knowledge/memory/search'
@@ -427,6 +426,7 @@ export interface FileRouteTypes {
     | '/operate/runs'
     | '/sessions/$sessionId'
     | '/agents/'
+    | '/knowledge/'
     | '/operate/'
     | '/sessions/'
     | '/workspace/'
@@ -434,7 +434,6 @@ export interface FileRouteTypes {
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
-    | '/knowledge/library/workspace'
     | '/knowledge/memory/contradictions'
     | '/knowledge/memory/entities'
     | '/knowledge/memory/search'
@@ -465,13 +464,13 @@ export interface RootRouteChildren {
   OperateRunsRoute: typeof OperateRunsRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
+  KnowledgeIndexRoute: typeof KnowledgeIndexRoute
   OperateIndexRoute: typeof OperateIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   KnowledgeLibraryAssetsRoute: typeof KnowledgeLibraryAssetsRoute
   KnowledgeLibraryGraphRoute: typeof KnowledgeLibraryGraphRoute
   KnowledgeLibraryJournalRoute: typeof KnowledgeLibraryJournalRoute
-  KnowledgeLibraryWorkspaceRoute: typeof KnowledgeLibraryWorkspaceRoute
   KnowledgeMemoryContradictionsRoute: typeof KnowledgeMemoryContradictionsRoute
   KnowledgeMemoryEntitiesRoute: typeof KnowledgeMemoryEntitiesRoute
   KnowledgeMemorySearchRoute: typeof KnowledgeMemorySearchRoute
@@ -551,6 +550,13 @@ declare module '@tanstack/react-router' {
       path: '/agents/$agentId'
       fullPath: '/agents/$agentId'
       preLoaderRoute: typeof AgentsAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/': {
+      id: '/knowledge/'
+      path: '/knowledge'
+      fullPath: '/knowledge/'
+      preLoaderRoute: typeof KnowledgeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/operate/': {
@@ -635,13 +641,6 @@ declare module '@tanstack/react-router' {
       path: '/knowledge/library/journal'
       fullPath: '/knowledge/library/journal'
       preLoaderRoute: typeof KnowledgeLibraryJournalRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/knowledge/library/workspace': {
-      id: '/knowledge/library/workspace'
-      path: '/knowledge/library/workspace'
-      fullPath: '/knowledge/library/workspace'
-      preLoaderRoute: typeof KnowledgeLibraryWorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/knowledge/memory/': {
@@ -764,13 +763,13 @@ const rootRouteChildren: RootRouteChildren = {
   OperateRunsRoute: OperateRunsRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
+  KnowledgeIndexRoute: KnowledgeIndexRoute,
   OperateIndexRoute: OperateIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   KnowledgeLibraryAssetsRoute: KnowledgeLibraryAssetsRoute,
   KnowledgeLibraryGraphRoute: KnowledgeLibraryGraphRoute,
   KnowledgeLibraryJournalRoute: KnowledgeLibraryJournalRoute,
-  KnowledgeLibraryWorkspaceRoute: KnowledgeLibraryWorkspaceRoute,
   KnowledgeMemoryContradictionsRoute: KnowledgeMemoryContradictionsRoute,
   KnowledgeMemoryEntitiesRoute: KnowledgeMemoryEntitiesRoute,
   KnowledgeMemorySearchRoute: KnowledgeMemorySearchRoute,

@@ -1,6 +1,9 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { OperateInspector, type OperateInspectorProps } from '@/components/operate/operate-inspector'
+import {
+  OperateInspector,
+  type OperateInspectorProps,
+} from '@/components/operate/operate-inspector'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),

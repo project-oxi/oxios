@@ -522,6 +522,11 @@ function AutomationFormDialog({
 
   // Prefill on open: edit → existing fields; create → template initial.
   useEffect(() => {
+    // The dialog stays mounted for the page lifetime, so stale AI suggestion
+    // chips from a previous session must be dropped when it is closed or
+    // (re)opened — a stale chip would overwrite the fresh prefill.
+    if (!open) return
+    setSuggestions([])
     if (editAutomation) {
       setName(editAutomation.name)
       setInstruction(editAutomation.instruction)

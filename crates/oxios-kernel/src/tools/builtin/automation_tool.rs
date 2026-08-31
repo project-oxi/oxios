@@ -150,8 +150,8 @@ impl AgentTool for AutomationTool {
                     "description": "Goal instruction executed on each run (create, update)"
                 },
                 "description": {
-                    "type": "string",
-                    "description": "Human-readable description (create, update)"
+                    "type": ["string", "null"],
+                    "description": "Human-readable description (create, update); omit to keep, null to clear"
                 },
                 "trigger": {
                     "type": "string",

@@ -227,7 +227,7 @@ pub(crate) fn prune_versions(
     for entry in entries {
         let entry =
             entry.with_context(|| format!("read_dir entry in {}", versions_dir.display()))?;
-        if !entry.file_type().map_or(false, |t| t.is_dir()) {
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -261,8 +261,7 @@ pub(crate) fn prune_versions(
 pub(crate) trait Installer: Send + Sync {
     /// Download + verify + extract + install into the managed layout.
     /// Returns the absolute path of the installed launcher.
-    fn install(&self, versions_dir: &Path, launcher: &Path)
-    -> BoxFuture<'static, Result<PathBuf>>;
+    fn install(&self, versions_dir: &Path, launcher: &Path) -> BoxFuture<'static, Result<PathBuf>>;
 }
 
 /// Default [`Installer`]: fetch the latest GitHub release for oxibrain.
@@ -684,7 +683,10 @@ mod tests {
             std::fs::read_link(&launcher).unwrap(),
             std::path::Path::new("../versions/1.2.3/oxibrain")
         );
-        assert!(launcher.is_file(), "launcher must resolve through the symlink");
+        assert!(
+            launcher.is_file(),
+            "launcher must resolve through the symlink"
+        );
 
         // A second release flips the launcher; pruning keeps two versions.
         place_binary(&versions, &launcher, "1.3.0", b"#!/bin/sh\n").unwrap();

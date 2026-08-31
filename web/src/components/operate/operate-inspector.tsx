@@ -177,11 +177,11 @@ export function OperateInspector({
         </section>
       ) : null}
 
-      {/* 6. Canonical detail link — agent runs go to the canonical agent page */}
+      {/* 6. Runs inventory link — agent runs surface in the operate runs list */}
       {isAgent && (
         <section data-section="details" aria-label={t('operate.sections.details')}>
           <Button variant="outline" size="sm" asChild className="w-full">
-            <Link to="/agents/$agentId" params={{ agentId: run.id }}>
+            <Link to="/operate/runs">
               <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
               {t('commandCenter.inspector.openRun')}
             </Link>

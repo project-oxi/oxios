@@ -13,8 +13,6 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }))
 
-vi.mock('@/routes/agents', () => ({ defaultAgentSearch: {} }))
-
 function run(overrides: Partial<AgentListItem> = {}): AgentListItem {
   return {
     id: 'aaa111-agent',

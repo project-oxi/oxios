@@ -125,9 +125,7 @@ function ActionButton({ action, item }: { action: string; item: OperateAttention
   if (action === 'open_agent' && item.origin.agentId) {
     return (
       <Button variant="outline" size="sm" asChild>
-        <Link to="/agents/$agentId" params={{ agentId: item.origin.agentId }}>
-          {label}
-        </Link>
+        <Link to="/operate/runs">{label}</Link>
       </Button>
     )
   }

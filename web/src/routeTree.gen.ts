@@ -9,15 +9,12 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as GitRouteImport } from './routes/git'
 import { Route as PersonasRouteImport } from './routes/personas'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TokenMaxingRouteImport } from './routes/token-maxing'
-import { Route as AgentsIndexRouteImport } from './routes/agents/index'
-import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as OperateIndexRouteImport } from './routes/operate/index'
 import { Route as OperateCapabilitiesRouteImport } from './routes/operate/capabilities'
@@ -26,7 +23,6 @@ import { Route as OperateRunsRouteImport } from './routes/operate/runs'
 import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
-import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
 import { Route as KnowledgeLibraryIndexRouteImport } from './routes/knowledge/library/index'
 import { Route as KnowledgeLibraryAssetsRouteImport } from './routes/knowledge/library/assets'
 import { Route as KnowledgeLibraryGraphRouteImport } from './routes/knowledge/library/graph'
@@ -45,11 +41,6 @@ import { Route as OperateSystemSecurityRouteImport } from './routes/operate/syst
 import { Route as OperateSystemSettingsRouteImport } from './routes/operate/system/settings'
 import { Route as OperateSystemSkillsRouteImport } from './routes/operate/system/skills'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AssetsRoute = AssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
@@ -78,16 +69,6 @@ const TasksRoute = TasksRouteImport.update({
 const TokenMaxingRoute = TokenMaxingRouteImport.update({
   id: '/token-maxing',
   path: '/token-maxing',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsIndexRoute = AgentsIndexRouteImport.update({
-  id: '/agents/',
-  path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
-  id: '/agents/$agentId',
-  path: '/agents/$agentId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const KnowledgeIndexRoute = KnowledgeIndexRouteImport.update({
@@ -129,11 +110,6 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
   id: '/workspace/',
   path: '/workspace/',
   getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsAgentIdTraceRoute = AgentsAgentIdTraceRouteImport.update({
-  id: '/trace',
-  path: '/trace',
-  getParentRoute: () => AgentsAgentIdRoute,
 } as any)
 const KnowledgeLibraryIndexRoute = KnowledgeLibraryIndexRouteImport.update({
   id: '/knowledge/library/',
@@ -225,24 +201,20 @@ const OperateSystemSkillsRoute = OperateSystemSkillsRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/chat': typeof ChatRoute
   '/git': typeof GitRoute
   '/personas': typeof PersonasRoute
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/operate/capabilities': typeof OperateCapabilitiesRoute
   '/operate/events': typeof OperateEventsRoute
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents/': typeof AgentsIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
@@ -262,24 +234,20 @@ export interface FileRoutesByFullPath {
   '/operate/projects/': typeof OperateProjectsIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/chat': typeof ChatRoute
   '/git': typeof GitRoute
   '/personas': typeof PersonasRoute
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/operate/capabilities': typeof OperateCapabilitiesRoute
   '/operate/events': typeof OperateEventsRoute
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents': typeof AgentsIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
   '/operate': typeof OperateIndexRoute
   '/sessions': typeof SessionsIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
@@ -300,24 +268,20 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
   '/chat': typeof ChatRoute
   '/git': typeof GitRoute
   '/personas': typeof PersonasRoute
   '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
   '/operate/capabilities': typeof OperateCapabilitiesRoute
   '/operate/events': typeof OperateEventsRoute
   '/operate/runs': typeof OperateRunsRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents/': typeof AgentsIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
   '/operate/': typeof OperateIndexRoute
   '/sessions/': typeof SessionsIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
   '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
   '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
@@ -339,24 +303,20 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
     | '/assets'
     | '/chat'
     | '/git'
     | '/personas'
     | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
     | '/operate/capabilities'
     | '/operate/events'
     | '/operate/runs'
     | '/sessions/$sessionId'
-    | '/agents/'
     | '/knowledge/'
     | '/operate/'
     | '/sessions/'
     | '/workspace/'
-    | '/agents/$agentId/trace'
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
@@ -376,24 +336,20 @@ export interface FileRouteTypes {
     | '/operate/projects/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/assets'
     | '/chat'
     | '/git'
     | '/personas'
     | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
     | '/operate/capabilities'
     | '/operate/events'
     | '/operate/runs'
     | '/sessions/$sessionId'
-    | '/agents'
     | '/knowledge'
     | '/operate'
     | '/sessions'
     | '/workspace'
-    | '/agents/$agentId/trace'
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
@@ -413,24 +369,20 @@ export interface FileRouteTypes {
     | '/operate/projects'
   id:
     | '__root__'
-    | '/'
     | '/assets'
     | '/chat'
     | '/git'
     | '/personas'
     | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
     | '/operate/capabilities'
     | '/operate/events'
     | '/operate/runs'
     | '/sessions/$sessionId'
-    | '/agents/'
     | '/knowledge/'
     | '/operate/'
     | '/sessions/'
     | '/workspace/'
-    | '/agents/$agentId/trace'
     | '/knowledge/library/assets'
     | '/knowledge/library/graph'
     | '/knowledge/library/journal'
@@ -451,19 +403,16 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AssetsRoute: typeof AssetsRoute
   ChatRoute: typeof ChatRoute
   GitRoute: typeof GitRoute
   PersonasRoute: typeof PersonasRoute
   TasksRoute: typeof TasksRoute
   TokenMaxingRoute: typeof TokenMaxingRoute
-  AgentsAgentIdRoute: typeof AgentsAgentIdRouteWithChildren
   OperateCapabilitiesRoute: typeof OperateCapabilitiesRoute
   OperateEventsRoute: typeof OperateEventsRoute
   OperateRunsRoute: typeof OperateRunsRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
-  AgentsIndexRoute: typeof AgentsIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
   OperateIndexRoute: typeof OperateIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
@@ -489,13 +438,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/assets': {
       id: '/assets'
       path: '/assets'
@@ -536,20 +478,6 @@ declare module '@tanstack/react-router' {
       path: '/token-maxing'
       fullPath: '/token-maxing'
       preLoaderRoute: typeof TokenMaxingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/': {
-      id: '/agents/'
-      path: '/agents'
-      fullPath: '/agents/'
-      preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/$agentId': {
-      id: '/agents/$agentId'
-      path: '/agents/$agentId'
-      fullPath: '/agents/$agentId'
-      preLoaderRoute: typeof AgentsAgentIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/knowledge/': {
@@ -607,13 +535,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/workspace/'
       preLoaderRoute: typeof WorkspaceIndexRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/agents/$agentId/trace': {
-      id: '/agents/$agentId/trace'
-      path: '/trace'
-      fullPath: '/agents/$agentId/trace'
-      preLoaderRoute: typeof AgentsAgentIdTraceRouteImport
-      parentRoute: typeof AgentsAgentIdRoute
     }
     '/knowledge/library/': {
       id: '/knowledge/library/'
@@ -737,32 +658,17 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface AgentsAgentIdRouteChildren {
-  AgentsAgentIdTraceRoute: typeof AgentsAgentIdTraceRoute
-}
-
-const AgentsAgentIdRouteChildren: AgentsAgentIdRouteChildren = {
-  AgentsAgentIdTraceRoute: AgentsAgentIdTraceRoute,
-}
-
-const AgentsAgentIdRouteWithChildren = AgentsAgentIdRoute._addFileChildren(
-  AgentsAgentIdRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AssetsRoute: AssetsRoute,
   ChatRoute: ChatRoute,
   GitRoute: GitRoute,
   PersonasRoute: PersonasRoute,
   TasksRoute: TasksRoute,
   TokenMaxingRoute: TokenMaxingRoute,
-  AgentsAgentIdRoute: AgentsAgentIdRouteWithChildren,
   OperateCapabilitiesRoute: OperateCapabilitiesRoute,
   OperateEventsRoute: OperateEventsRoute,
   OperateRunsRoute: OperateRunsRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
-  AgentsIndexRoute: AgentsIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
   OperateIndexRoute: OperateIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,

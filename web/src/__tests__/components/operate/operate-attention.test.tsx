@@ -99,7 +99,7 @@ describe('OperateAttention', () => {
     // safe actions
     expect(screen.getByRole('link', { name: 'operate.actions.openAgent' })).toHaveAttribute(
       'href',
-      '/agents/$agentId'.replace('$agentId', 'agent_9'),
+      '/operate/runs',
     )
     expect(
       within(failedGroup).getByRole('link', { name: 'operate.actions.openAutomation' }),

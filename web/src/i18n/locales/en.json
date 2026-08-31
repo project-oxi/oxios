@@ -2883,6 +2883,11 @@
     "progress": "{{closed}} of {{total}} closed",
     "due": "due {{date}}"
   },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This page doesn't exist or has moved. The Operate console is now the home for system oversight.",
+    "backToOperate": "Go to Operate"
+  },
   "operate": {
     "attention": "Attention",
     "attentionSubtitle": "Approvals, failed runs, and live activity",

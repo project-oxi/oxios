@@ -2837,5 +2837,75 @@
     "titlePlaceholder": "Milestone name",
     "progress": "{{closed}} of {{total}} closed",
     "due": "due {{date}}"
+  },
+  "operate": {
+    "attention": "Attention",
+    "attentionSubtitle": "Approvals, failed runs, and live activity",
+    "attentionUnavailable": "Attention feed unavailable",
+    "attentionEmpty": "Nothing needs your attention right now.",
+    "groupWaitingInput": "Waiting for input",
+    "groupFailedRun": "Failed runs",
+    "recentActivity": "Recent activity",
+    "allProjects": "All projects",
+    "runCenter": "Run center",
+    "runCenterSubtitle": "Active work and recent runs",
+    "events": "Events",
+    "capabilities": "Capabilities",
+    "capabilitiesSubtitle": "Everything this system can actually do",
+    "family": {
+      "mcp": "MCP",
+      "skill": "Skills",
+      "engine": "Engine",
+      "security": "Security",
+      "channel": "Channels"
+    },
+    "connections": "Connections",
+    "skillsAndMcp": "Skills & MCP",
+    "mcp": "MCP",
+    "resourcesAndCost": "Resources and cost",
+    "resourcesAndCostSubtitle": "System load, spend, and budget",
+    "actions": {
+      "openRun": "Open run",
+      "openAgent": "Open agent",
+      "openAutomation": "Open automation"
+    },
+    "origin": {
+      "automation": "Automation",
+      "automationId": "Automation ID",
+      "project": "Project"
+    },
+    "sections": {
+      "state": "State",
+      "origin": "Origin",
+      "scope": "Scope",
+      "impact": "Rationale & impact",
+      "actions": "Actions",
+      "details": "Details"
+    },
+    "runs": {
+      "automation": "Automation runs",
+      "agents": "Agent runs",
+      "name": "Name",
+      "status": "Status",
+      "started": "Started",
+      "completed": "Completed",
+      "duration": "Duration",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "empty": "No runs recorded yet.",
+      "count": "{{count}} runs",
+      "trigger": {
+        "manual": "Manual",
+        "schedule": "Schedule",
+        "heartbeat": "Heartbeat"
+      }
+    },
+    "project": {
+      "statusLine": "{{issues}} open issues · {{milestones}} milestones · {{runs}} active runs",
+      "roots": "Roots",
+      "activeRuns": "Active runs",
+      "dirty": "modified",
+      "clean": "clean"
+    }
   }
 }

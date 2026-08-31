@@ -179,7 +179,7 @@ export function SkillDetail({
                             {!ok && (
                               <a
                                 className="text-[10px] text-info underline hover:opacity-80"
-                                href="/settings?section=host-tools"
+                                href="/operate/system/settings?section=host-tools"
                               >
                                 {t('skills.configureInSettings')}
                               </a>

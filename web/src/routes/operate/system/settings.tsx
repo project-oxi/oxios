@@ -59,7 +59,7 @@ import {
   useSetProviderOptions,
 } from '@/hooks/use-engine'
 
-export const Route = createFileRoute('/settings')({
+export const Route = createFileRoute('/operate/system/settings')({
   validateSearch: (search: Record<string, unknown>) => ({
     section: (search.section as string) || undefined,
   }),
@@ -495,7 +495,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 function SettingsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const search = useSearch({ from: '/settings' })
+  const search = useSearch({ from: Route.id })
   const [activeSection, setActiveSection] = useState(search?.section ?? 'engine')
   const [showDiff, setShowDiff] = useState(false)
   const [formValues, setFormValues] = useState<Record<string, Record<string, unknown>>>({})

@@ -59,7 +59,7 @@ import { api, isSubsystemUnavailable } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 import type { ClawHubSearchResult, Skill, SkillFormat, SkillStatus, SkillsShSkill } from '@/types'
 
-export const Route = createFileRoute('/skills')({
+export const Route = createFileRoute('/operate/system/skills')({
   component: SkillsPage,
   validateSearch: (search: Record<string, unknown>) => ({
     tab: (search.tab as string) || undefined,

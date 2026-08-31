@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/shared/page-header'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-export const Route = createFileRoute('/mcp')({
+export const Route = createFileRoute('/operate/system/mcp')({
   component: McpPage,
   validateSearch: (search: Record<string, unknown>) => ({
     tab: (search.tab as string) || undefined,

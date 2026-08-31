@@ -20,7 +20,7 @@ export function ProjectCard({ project, onEdit, onDelete }: ProjectCardProps) {
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <Link
-            to="/projects/$projectId"
+            to="/operate/projects/$projectId"
             params={{ projectId: project.id }}
             className="font-semibold text-sm truncate hover:text-primary"
           >
@@ -64,7 +64,7 @@ export function ProjectCard({ project, onEdit, onDelete }: ProjectCardProps) {
       <div className="flex items-center justify-between text-2xs text-muted-foreground">
         <span>{formatRelativeTime(project.last_active_at, t)}</span>
         <Link
-          to="/projects/$projectId"
+          to="/operate/projects/$projectId"
           params={{ projectId: project.id }}
           className="hover:text-primary font-medium"
         >

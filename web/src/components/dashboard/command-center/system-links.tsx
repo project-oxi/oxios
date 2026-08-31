@@ -25,16 +25,16 @@ export function SystemLinks({ status }: { status?: SystemStatus }) {
   const [open, setOpen] = useState(false)
 
   const links: SystemLink[] = [
-    { to: '/mcp', labelKey: 'commandCenter.system.links.mcp' },
+    { to: '/operate/system/mcp', labelKey: 'commandCenter.system.links.mcp' },
     {
       to: '/brain',
       labelKey: 'commandCenter.system.links.brain',
       dot: status?.components?.brain?.healthy,
     },
-    { to: '/skills', labelKey: 'commandCenter.system.links.skills' },
-    { to: '/budget', labelKey: 'commandCenter.system.links.budget' },
-    { to: '/resources', labelKey: 'commandCenter.system.links.resources' },
-    { to: '/security', labelKey: 'commandCenter.system.links.security' },
+    { to: '/operate/system/skills', labelKey: 'commandCenter.system.links.skills' },
+    { to: '/operate/system/resources', labelKey: 'commandCenter.system.links.budget' },
+    { to: '/operate/system/resources', labelKey: 'commandCenter.system.links.resources' },
+    { to: '/operate/system/security', labelKey: 'commandCenter.system.links.security' },
   ]
 
   return (

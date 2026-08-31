@@ -35,7 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, isSubsystemUnavailable } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 
-export const Route = createFileRoute('/email')({
+export const Route = createFileRoute('/operate/system/connections')({
   component: EmailPage,
   validateSearch: (search: Record<string, unknown>) => ({
     tab: (search.tab as string) || undefined,
@@ -161,7 +161,7 @@ function providerDashboardLabel(provider: string | null): string | null {
 function EmailPage() {
   const { t } = useTranslation()
   const { data: status, isLoading, isError, refetch } = useEmailStatus()
-  const navigate = useNavigate({ from: '/email' })
+  const navigate = useNavigate({ from: Route.id })
   const { tab: tabParam } = Route.useSearch()
   const validTabs = ['overview', 'setup', 'history', 'templates'] as const
   const explicitTab = validTabs.includes(tabParam as (typeof validTabs)[number])
@@ -759,7 +759,7 @@ function SentEmailDialog({ email }: { email: SentEmail }) {
 
 function TemplatesPanel({ active }: { active: boolean }) {
   const { t } = useTranslation()
-  const navigate = useNavigate({ from: '/email' })
+  const navigate = useNavigate({ from: Route.id })
   const { data, isLoading, isError, error, refetch, isFetching } = useEmailTemplates(active)
 
   const templates = Array.isArray(data?.templates) ? data.templates : []

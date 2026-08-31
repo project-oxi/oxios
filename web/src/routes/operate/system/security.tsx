@@ -30,7 +30,7 @@ import { api } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
 import type { ApprovalMode } from '@/types/approval'
 
-export const Route = createFileRoute('/security')({ component: SecurityPage })
+export const Route = createFileRoute('/operate/system/security')({ component: SecurityPage })
 
 // Inline labels — same i18n-conflict-avoidance pattern as Tasks 11/12.
 // Do NOT touch i18n files; user has uncommitted i18n work.

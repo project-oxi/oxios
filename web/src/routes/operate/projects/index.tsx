@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { useProjects } from '@/hooks/use-projects'
 import type { Project } from '@/types'
 
-export const Route = createFileRoute('/projects/')({ component: ProjectsPage })
+export const Route = createFileRoute('/operate/projects/')({ component: ProjectsPage })
 
 function ProjectsPage() {
   const { t } = useTranslation()

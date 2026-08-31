@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { LiveActivityFeed } from '@/components/dashboard/live-activity-feed'
 import { PageHeader } from '@/components/shared/page-header'
 
-export const Route = createFileRoute('/events')({ component: EventsPage })
+export const Route = createFileRoute('/operate/events')({ component: EventsPage })
 
 /**
  * Full event timeline — the deep-investigation surface the dashboard's

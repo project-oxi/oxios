@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useAgentDetail, useAgentTrace } from '@/hooks/use-agent-trace'
 import { cn, formatDuration, formatRelativeTime } from '@/lib/utils'
-import type { AgentListItem, AgentTraceStep } from '@/types/agent'
+import type { AgentListItem, AgentTrace, AgentTraceStep } from '@/types/agent'
 import { formatElapsed, isStoppable, statusMeta } from './runs'
 
 /** Bounded summaries — the inspector is a triage view, not a trace viewer (spec §5). */
@@ -124,36 +124,7 @@ export function RunInspector({
         </dd>
       </dl>
 
-      <section
-        className="min-h-0 flex-1 space-y-2 overflow-y-auto"
-        aria-label={t('commandCenter.inspector.steps')}
-      >
-        <h3 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {t('commandCenter.inspector.steps')}
-        </h3>
-        {recentSteps.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('commandCenter.inspector.noSteps')}</p>
-        ) : (
-          <ol className="space-y-1">
-            {recentSteps.map((step) => (
-              <InspectorStep key={step.index} step={step} />
-            ))}
-          </ol>
-        )}
-
-        <h3 className="pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {t('commandCenter.inspector.recentTools')}
-        </h3>
-        {recentTools.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('commandCenter.inspector.toolsEmpty')}</p>
-        ) : (
-          <ul className="space-y-1">
-            {recentTools.map((step) => (
-              <InspectorTool key={`tool-${step.index}`} step={step} />
-            ))}
-          </ul>
-        )}
-      </section>
+      <InspectorTraceSection trace={trace} />
 
       <footer className="flex items-center gap-2 border-t pt-3">
         <Button variant="outline" size="sm" asChild>
@@ -206,7 +177,7 @@ export function RunInspector({
   )
 }
 
-function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status }: { status: string }) {
   const { t } = useTranslation()
   const meta = statusMeta(status)
   const icons: Record<string, LucideIcon> = {
@@ -281,4 +252,63 @@ function InspectorTool({ step }: { step: AgentTraceStep }) {
       </span>
     </li>
   )
+}
+
+/**
+ * Bounded execution-steps + recent-tool-calls detail (spec §5). Shared by
+ * the dashboard RunInspector and the operate inspector, which embeds it
+ * for agent-kind runs; both stay triage views — deep investigation
+ * remains in the canonical /agents routes.
+ */
+export function InspectorTraceSection({ trace }: { trace?: AgentTrace }) {
+  const { t } = useTranslation()
+  const steps = trace?.steps ?? []
+  const recentSteps = [...steps].slice(-MAX_STEPS).reverse()
+  const recentTools = [...steps]
+    .filter((s) => s.kind === 'tool')
+    .slice(-MAX_TOOLS)
+    .reverse()
+
+  return (
+    <section
+      className="min-h-0 flex-1 space-y-2 overflow-y-auto"
+      aria-label={t('commandCenter.inspector.steps')}
+    >
+      <h3 className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {t('commandCenter.inspector.steps')}
+      </h3>
+      {recentSteps.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('commandCenter.inspector.noSteps')}</p>
+      ) : (
+        <ol className="space-y-1">
+          {recentSteps.map((step) => (
+            <InspectorStep key={step.index} step={step} />
+          ))}
+        </ol>
+      )}
+
+      <h3 className="pt-2 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {t('commandCenter.inspector.recentTools')}
+      </h3>
+      {recentTools.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('commandCenter.inspector.toolsEmpty')}</p>
+      ) : (
+        <ul className="space-y-1">
+          {recentTools.map((step) => (
+            <InspectorTool key={`tool-${step.index}`} step={step} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Self-fetching trace detail for one agent run — the operate inspector's
+ * embed for agent-kind rows. Polls only while the trace is incomplete
+ * (same cadence as the dashboard inspector via the shared hook).
+ */
+export function RunTraceDetail({ agentId }: { agentId: string }) {
+  const { data: trace } = useAgentTrace(agentId)
+  return <InspectorTraceSection trace={trace} />
 }

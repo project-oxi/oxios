@@ -249,8 +249,6 @@ impl AgentTool for PersonaTool {
                         .map(|s| s.to_string()),
                     personality_traits: str_array(&params, "personality_traits"),
                     capabilities: str_array(&params, "capabilities"),
-                    category: str_or(&params, "category").unwrap_or_else(|| "general".to_string()),
-                    genre: str_or(&params, "genre"),
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or_default(),
@@ -339,8 +337,6 @@ impl AgentTool for PersonaTool {
                     } else {
                         existing.capabilities
                     },
-                    category: str_or(&params, "category").unwrap_or(existing.category),
-                    genre: str_or(&params, "genre").or(existing.genre),
                     tool_profile: str_or(&params, "tool_profile")
                         .map(|s| crate::persona::ToolProfile::from_str_loose(&s))
                         .unwrap_or(existing.tool_profile),

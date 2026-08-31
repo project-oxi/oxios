@@ -37,12 +37,6 @@ pub struct PersonaSummary {
     personality_traits: Vec<String>,
     /// RFC-044 §8.2 capability flags driving UI affordances.
     capabilities: Vec<String>,
-    /// UI taxonomy bucket (normal | coding | writing | research |
-    /// operations | general; free string).
-    category: String,
-    /// Writing sub-category (novel | scenario | essay | blog).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    genre: Option<String>,
 }
 
 /// GET /api/personas — List all personas.
@@ -62,8 +56,6 @@ pub async fn handle_personas_list(state: State<Arc<AppState>>) -> Json<Vec<Perso
                 enabled: p.enabled,
                 personality_traits: p.personality_traits,
                 capabilities: p.capabilities,
-                category: p.category,
-                genre: p.genre,
             })
             .collect(),
     )
@@ -85,8 +77,6 @@ pub async fn handle_persona_get(
             "model": p.model,
             "personality_traits": p.personality_traits,
             "capabilities": p.capabilities,
-            "category": p.category,
-            "genre": p.genre,
             "active": state.kernel.persona.active_id().as_deref() == Some(p.id.as_str()),
             "tool_profile": p.tool_profile.to_string(),
         }))),
@@ -108,12 +98,6 @@ pub struct PersonaCreateRequest {
     personality_traits: Vec<String>,
     #[serde(default)]
     capabilities: Option<Vec<String>>,
-    /// UI taxonomy bucket. Defaults to `general` when absent.
-    #[serde(default)]
-    category: Option<String>,
-    /// Writing sub-category (novel | scenario | essay | blog).
-    #[serde(default)]
-    genre: Option<String>,
     /// Tool access profile: `base` | `code` | `minimal`. Defaults to `code`.
     #[serde(default)]
     tool_profile: Option<String>,
@@ -121,10 +105,6 @@ pub struct PersonaCreateRequest {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_category() -> String {
-    "general".to_string()
 }
 
 fn default_role() -> String {
@@ -147,8 +127,6 @@ pub async fn handle_persona_create(
         model: body.model,
         personality_traits: body.personality_traits,
         capabilities: body.capabilities.unwrap_or_default(),
-        category: body.category.unwrap_or_else(default_category),
-        genre: body.genre,
         tool_profile: body
             .tool_profile
             .as_deref()
@@ -184,8 +162,6 @@ pub struct PersonaUpdateRequest {
     model: Option<String>,
     personality_traits: Option<Vec<String>>,
     capabilities: Option<Vec<String>>,
-    category: Option<String>,
-    genre: Option<String>,
     tool_profile: Option<String>,
 }
 
@@ -213,8 +189,6 @@ pub async fn handle_persona_update(
             .personality_traits
             .unwrap_or(existing.personality_traits),
         capabilities: body.capabilities.unwrap_or(existing.capabilities),
-        category: body.category.unwrap_or(existing.category),
-        genre: body.genre.or(existing.genre),
         tool_profile: body
             .tool_profile
             .as_deref()
@@ -406,8 +380,6 @@ mod tests {
             enabled: true,
             personality_traits: vec!["pragmatic".into()],
             capabilities: vec!["terminal".into(), "diff-viewer".into()],
-            category: "general".into(),
-            genre: None,
             active: true,
             tool_profile: "base".into(),
         };

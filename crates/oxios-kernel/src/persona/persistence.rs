@@ -85,8 +85,6 @@ mod tests {
             model: None,
             personality_traits: vec!["curious".to_string()],
             capabilities: vec![],
-            category: "general".to_string(),
-            genre: None,
             tool_profile: crate::persona::ToolProfile::Code,
         }
     }

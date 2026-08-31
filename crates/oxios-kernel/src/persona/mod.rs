@@ -172,27 +172,12 @@ pub struct Persona {
     /// Backward-compatible: old files load with an empty vec (`#[serde(default)]`).
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// UI taxonomy bucket. Known values: `normal` (plain assistant incl.
-    /// oxios control), `coding`, `writing`, `research`, `operations`,
-    /// `general`. Free string — unknown values group under "other" in the
-    /// UI, so future/user-defined categories stay loadable.
-    #[serde(default = "default_category")]
-    pub category: String,
-    /// Writing sub-category: `novel` | `scenario` | `essay` | `blog`.
-    /// `None` for non-writing personas.
-    #[serde(default)]
-    pub genre: Option<String>,
     /// Tool access profile: `base` (every tool incl. Oxios control) |
     /// `code` (coding/working tools, no Oxios control) | `minimal`
     /// (file + web-search only). Drives CSpace resolution in the agent
     /// runtime. Old files load with the serde default (`code`).
     #[serde(default)]
     pub tool_profile: ToolProfile,
-}
-
-/// Serde default for [`Persona::category`].
-fn default_category() -> String {
-    "general".to_string()
 }
 
 impl Default for Persona {
@@ -207,8 +192,6 @@ impl Default for Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
-            category: default_category(),
-            genre: None,
             tool_profile: ToolProfile::default(),
         }
     }
@@ -227,8 +210,6 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
-            category: default_category(),
-            genre: None,
             tool_profile: ToolProfile::default(),
         }
     }
@@ -251,8 +232,6 @@ impl Persona {
             model: None,
             personality_traits: vec![],
             capabilities: vec![],
-            category: default_category(),
-            genre: None,
             tool_profile: ToolProfile::default(),
         }
     }
@@ -303,8 +282,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "practical".to_string(),
             ],
             capabilities: vec!["terminal".to_string(), "diff-viewer".to_string(), "worktree-fanout".to_string()],
-            category: "coding".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -338,8 +315,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "quality-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
-            category: "coding".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -373,8 +348,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "evidence-focused".to_string(),
             ],
             capabilities: vec![],
-            category: "research".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -412,8 +385,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "tradeoff-aware".to_string(),
             ],
             capabilities: vec![],
-            category: "general".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -451,8 +422,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "clarity-focused".to_string(),
             ],
             capabilities: vec![],
-            category: "general".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -488,8 +457,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "failure-aware".to_string(),
             ],
             capabilities: vec![],
-            category: "operations".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -526,8 +493,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "risk-focused".to_string(),
             ],
             capabilities: vec!["diff-viewer".to_string()],
-            category: "operations".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -565,8 +530,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "concise".to_string(),
             ],
             capabilities: vec![],
-            category: "writing".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -603,8 +566,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "adaptive".to_string(),
             ],
             capabilities: vec![],
-            category: "general".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Code,
         },
         Persona {
@@ -626,8 +587,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "adaptable".to_string(),
             ],
             capabilities: vec![],
-            category: "normal".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Base,
         },
         Persona {
@@ -651,8 +610,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "concise".to_string(),
             ],
             capabilities: vec![],
-            category: "normal".to_string(),
-            genre: None,
             tool_profile: ToolProfile::Control,
         },
         Persona {
@@ -693,8 +650,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "continuity-focused".to_string(),
             ],
             capabilities: vec![],
-            category: "writing".to_string(),
-            genre: Some("novel".to_string()),
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -734,8 +689,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "format-aware".to_string(),
             ],
             capabilities: vec![],
-            category: "writing".to_string(),
-            genre: Some("scenario".to_string()),
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -774,8 +727,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "voice-driven".to_string(),
             ],
             capabilities: vec![],
-            category: "writing".to_string(),
-            genre: Some("essay".to_string()),
             tool_profile: ToolProfile::Minimal,
         },
         Persona {
@@ -812,8 +763,6 @@ pub fn default_personas() -> Vec<Persona> {
                 "reader-first".to_string(),
             ],
             capabilities: vec![],
-            category: "writing".to_string(),
-            genre: Some("blog".to_string()),
             tool_profile: ToolProfile::Minimal,
         },
     ]
@@ -855,8 +804,6 @@ mod tests {
         let mut p = Persona::new("Test", "tester", "Test persona", "Test prompt");
         p.model = Some("anthropic/claude-sonnet-4".to_string());
         p.personality_traits = vec!["curious".to_string(), "thorough".to_string()];
-        p.category = "writing".to_string();
-        p.genre = Some("novel".to_string());
 
         let json = serde_json::to_string(&p).unwrap();
         let restored: Persona = serde_json::from_str(&json).unwrap();
@@ -864,27 +811,6 @@ mod tests {
         assert_eq!(restored.name, "Test");
         assert_eq!(restored.model.as_deref(), Some("anthropic/claude-sonnet-4"));
         assert_eq!(restored.personality_traits.len(), 2);
-        assert_eq!(restored.category, "writing");
-        assert_eq!(restored.genre.as_deref(), Some("novel"));
-    }
-
-    #[test]
-    fn test_persona_v2_json_without_new_fields_loads_with_defaults() {
-        // Pre-category persistence files must load with the general
-        // category and no genre.
-        let legacy = serde_json::json!({
-            "id": "legacy",
-            "name": "Legacy",
-            "role": "developer",
-            "description": "old file",
-            "system_prompt": "old prompt",
-            "enabled": true,
-            "personality_traits": [],
-            "capabilities": []
-        });
-        let p: Persona = serde_json::from_value(legacy).unwrap();
-        assert_eq!(p.category, "general");
-        assert!(p.genre.is_none());
     }
 
     #[test]
@@ -925,32 +851,6 @@ mod tests {
     }
 
     #[test]
-    fn test_default_personas_categories_and_genres() {
-        let personas = default_personas();
-        let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
-
-        assert_eq!(by_id("normal").category, "normal");
-        assert_eq!(by_id("dev").category, "coding");
-        assert_eq!(by_id("review").category, "coding");
-        assert_eq!(by_id("research").category, "research");
-        assert_eq!(by_id("architect").category, "general");
-        assert_eq!(by_id("mentor").category, "general");
-        assert_eq!(by_id("planner").category, "general");
-        assert_eq!(by_id("ops").category, "operations");
-        assert_eq!(by_id("security").category, "operations");
-        assert_eq!(by_id("writer").category, "writing");
-        assert_eq!(by_id("writer").genre, None);
-
-        assert_eq!(by_id("novelist").genre.as_deref(), Some("novel"));
-        assert_eq!(by_id("scenarist").genre.as_deref(), Some("scenario"));
-        assert_eq!(by_id("essayist").genre.as_deref(), Some("essay"));
-        assert_eq!(by_id("blogger").genre.as_deref(), Some("blog"));
-        for id in ["novelist", "scenarist", "essayist", "blogger"] {
-            assert_eq!(by_id(id).category, "writing");
-        }
-    }
-
-    #[test]
     fn test_default_personas_tool_profiles() {
         let personas = default_personas();
         let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
@@ -958,7 +858,6 @@ mod tests {
         // Only the base assistant controls Oxios itself.
         assert_eq!(by_id("normal").tool_profile, ToolProfile::Base);
         assert_eq!(by_id("oxios").tool_profile, ToolProfile::Control);
-        assert_eq!(by_id("oxios").category, "normal");
         for id in [
             "dev",
             "review",

@@ -1,18 +1,18 @@
+import type { SurfaceId } from '@/types/surfaces'
 import type { PaletteItem, QueryContext, Verb } from './types'
 
 /**
- * Mode-primary verb: what a bare-text (no prefix) query resolves to per mode.
- * console → go (navigate), knowledge → capture (memo), brain → search, chat → run.
+ * Surface-primary verb: what a bare-text (no prefix) query resolves to per
+ * surface. operate → go (navigate), knowledge → capture (memo), studio → run
+ * (send as a message).
  */
-export function modePrimaryVerb(mode: QueryContext['mode']): Verb {
-  switch (mode) {
+export function surfacePrimaryVerb(surface: SurfaceId): Verb {
+  switch (surface) {
     case 'knowledge':
       return 'capture'
-    case 'brain':
-      return 'search'
-    case 'chat':
+    case 'studio':
       return 'run'
-    default:
+    case 'operate':
       return 'go'
   }
 }
@@ -23,7 +23,7 @@ const RECENCY_BOOST_MAX = 25
 /**
  * Recency log: tracks the last N selected item ids and yields a decay-weighted
  * score boost (most recent → max, oldest → ~0). Persisted by the host to
- * localStorage; the log itself is mode-agnostic.
+ * localStorage; the log itself is surface-agnostic.
  */
 export class RecencyLog {
   private ids: string[] = []
@@ -44,16 +44,16 @@ export class RecencyLog {
 }
 
 /**
- * Sort items by final score = base + modeBoost + recencyBoost, descending.
+ * Sort items by final score = base + surfaceBoost + recencyBoost, descending.
  * Call this AFTER providers have already filtered to matching items and
  * computed their own base score (incl. prefix/verb/entity/fuzzy match terms).
  */
 export function rank(items: PaletteItem[], ctx: QueryContext, recency: RecencyLog): PaletteItem[] {
-  const primary = modePrimaryVerb(ctx.mode)
+  const primary = surfacePrimaryVerb(ctx.surface)
   return items
     .map((it) => {
-      const modeBoost = it.verb === primary ? 15 : 0
-      return { it, final: it.score + modeBoost + recency.boost(it.id) }
+      const surfaceBoost = it.verb === primary ? 15 : 0
+      return { it, final: it.score + surfaceBoost + recency.boost(it.id) }
     })
     .sort((a, b) => b.final - a.final)
     .map((x) => x.it)

@@ -1,17 +1,19 @@
 import { useRouter } from '@tanstack/react-router'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { consoleNavGroups } from '@/components/layout/sidebar'
+import { SURFACE_TABS } from '@/components/layout/surface-switcher'
+import { SURFACE_HREFS } from '@/types/surfaces'
 import { matchScore } from './ranker'
 import type { CommandProvider, PaletteItem, QueryContext } from './types'
 
 /**
  * Navigation provider — verb `go`.
  *
- * Matches sidebar destinations by translated label on bare-text queries, and
- * returns the full destination list on an empty query (empty-state surface).
- * Only contributes when no explicit verb prefix was typed (bare text), since
- * `go` has no prefix of its own.
+ * Matches the surface destinations by translated label on bare-text queries,
+ * and returns the full destination list on an empty query (empty-state
+ * surface). Only contributes when no explicit verb prefix was typed (bare
+ * text), since `go` has no prefix of its own. Deeper destinations appear as
+ * their owning workers add them; the palette never links legacy routes.
  */
 export function useNavProvider(): CommandProvider {
   const router = useRouter()
@@ -19,7 +21,11 @@ export function useNavProvider(): CommandProvider {
 
   const flatNav = useMemo(
     () =>
-      consoleNavGroups.flatMap((g) => g.items.map((i) => ({ ...i, groupLabelKey: g.labelKey }))),
+      SURFACE_TABS.map(({ key, icon: Icon, labelKey }) => ({
+        href: SURFACE_HREFS[key],
+        labelKey,
+        icon: <Icon className="h-4 w-4" />,
+      })),
     [],
   )
 

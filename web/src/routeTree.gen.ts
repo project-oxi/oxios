@@ -33,10 +33,12 @@ import { Route as BrainOperationsRouteImport } from './routes/brain/operations'
 import { Route as BrainSearchRouteImport } from './routes/brain/search'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
 import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
+import { Route as OperateIndexRouteImport } from './routes/operate/index'
 import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
 import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
+import { Route as StudioIndexRouteImport } from './routes/studio/index'
 import { Route as StudioAutomationsRouteImport } from './routes/studio/automations'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
 import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
@@ -163,6 +165,11 @@ const KnowledgeGraphRoute = KnowledgeGraphRouteImport.update({
   path: '/knowledge/graph',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OperateIndexRoute = OperateIndexRouteImport.update({
+  id: '/operate/',
+  path: '/operate/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -181,6 +188,11 @@ const SessionsIndexRoute = SessionsIndexRouteImport.update({
 const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   id: '/sessions/$sessionId',
   path: '/sessions/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioIndexRoute = StudioIndexRouteImport.update({
+  id: '/studio/',
+  path: '/studio/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StudioAutomationsRoute = StudioAutomationsRouteImport.update({
@@ -237,8 +249,10 @@ export interface FileRoutesByFullPath {
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
+  '/operate/': typeof OperateIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
@@ -272,8 +286,10 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsIndexRoute
   '/brain': typeof BrainIndexRoute
   '/knowledge': typeof KnowledgeIndexRoute
+  '/operate': typeof OperateIndexRoute
   '/projects': typeof ProjectsIndexRoute
   '/sessions': typeof SessionsIndexRoute
+  '/studio': typeof StudioIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
@@ -308,8 +324,10 @@ export interface FileRoutesById {
   '/agents/': typeof AgentsIndexRoute
   '/brain/': typeof BrainIndexRoute
   '/knowledge/': typeof KnowledgeIndexRoute
+  '/operate/': typeof OperateIndexRoute
   '/projects/': typeof ProjectsIndexRoute
   '/sessions/': typeof SessionsIndexRoute
+  '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
   '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
   '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
@@ -345,8 +363,10 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
+    | '/operate/'
     | '/projects/'
     | '/sessions/'
+    | '/studio/'
     | '/workspace/'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
@@ -380,8 +400,10 @@ export interface FileRouteTypes {
     | '/agents'
     | '/brain'
     | '/knowledge'
+    | '/operate'
     | '/projects'
     | '/sessions'
+    | '/studio'
     | '/workspace'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
@@ -415,8 +437,10 @@ export interface FileRouteTypes {
     | '/agents/'
     | '/brain/'
     | '/knowledge/'
+    | '/operate/'
     | '/projects/'
     | '/sessions/'
+    | '/studio/'
     | '/workspace/'
     | '/agents/$agentId/trace'
     | '/brain/knowledge/graph'
@@ -451,8 +475,10 @@ export interface RootRouteChildren {
   AgentsIndexRoute: typeof AgentsIndexRoute
   BrainIndexRoute: typeof BrainIndexRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
+  OperateIndexRoute: typeof OperateIndexRoute
   ProjectsIndexRoute: typeof ProjectsIndexRoute
   SessionsIndexRoute: typeof SessionsIndexRoute
+  StudioIndexRoute: typeof StudioIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   BrainKnowledgeGraphRoute: typeof BrainKnowledgeGraphRoute
   BrainKnowledgeIndexRoute: typeof BrainKnowledgeIndexRoute
@@ -628,6 +654,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KnowledgeGraphRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/operate/': {
+      id: '/operate/'
+      path: '/operate'
+      fullPath: '/operate/'
+      preLoaderRoute: typeof OperateIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/': {
       id: '/projects/'
       path: '/projects'
@@ -654,6 +687,13 @@ declare module '@tanstack/react-router' {
       path: '/sessions/$sessionId'
       fullPath: '/sessions/$sessionId'
       preLoaderRoute: typeof SessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/': {
+      id: '/studio/'
+      path: '/studio'
+      fullPath: '/studio/'
+      preLoaderRoute: typeof StudioIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/studio/automations': {
@@ -734,8 +774,10 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsIndexRoute: AgentsIndexRoute,
   BrainIndexRoute: BrainIndexRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
+  OperateIndexRoute: OperateIndexRoute,
   ProjectsIndexRoute: ProjectsIndexRoute,
   SessionsIndexRoute: SessionsIndexRoute,
+  StudioIndexRoute: StudioIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   BrainKnowledgeGraphRoute: BrainKnowledgeGraphRoute,
   BrainKnowledgeIndexRoute: BrainKnowledgeIndexRoute,

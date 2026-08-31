@@ -18,16 +18,25 @@ import { cn } from '@/lib/utils'
 import { useEventStore } from '@/stores/events'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useSidebarStore } from '@/stores/sidebar'
+import { deriveSurface } from '@/types/surfaces'
 import { BottomNav } from './bottom-nav'
 import { Header } from './header'
 import { NotificationCenter } from './notification-center'
 import { Sidebar } from './sidebar'
 
 /**
- * AppLayout — single sidebar, mode-adaptive.
+ * AppLayout — single sidebar, surface-aware.
  *
- * The Sidebar component internally switches between Console/Knowledge/Chat
- * nav content based on the current route. No sidebar replacement needed.
+ * Route-level layout contract:
+ * - Studio occupies a full-height outlet (conversation-first, no page scroll).
+ * - Knowledge opts into its reader/inspector layout (InfoPanel on the
+ *   Knowledge home, search/move modals mounted for the surface).
+ * - Operate (and any unknown path during router error rendering) is
+ *   scrollable page content.
+ *
+ * Global SSE, notifications, command palette, shortcuts, and the shared
+ * sidebar mount exactly once here — nothing remounts when the surface
+ * changes.
  */
 export function AppLayout() {
   const { t } = useTranslation()
@@ -35,10 +44,9 @@ export function AppLayout() {
 
   const router = useRouterState()
   const pathname = router.location.pathname
-  const isKnowledge = pathname.startsWith('/brain/knowledge')
-  const isKnowledgeSubRoute =
-    isKnowledge && pathname !== '/brain/knowledge' && pathname !== '/brain/knowledge/'
-  const isChat = pathname === '/chat'
+  const surface = deriveSurface(pathname)
+  const isKnowledgeHome =
+    surface === 'knowledge' && (pathname === '/knowledge' || pathname === '/knowledge/')
   const { infoPanelOpen } = useKnowledgeStore()
 
   useKnowledgeShortcuts()
@@ -101,16 +109,16 @@ export function AppLayout() {
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         <Header />
 
-        {isKnowledge ? (
+        {surface === 'knowledge' ? (
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <div className="flex flex-1 min-w-0 overflow-hidden">
               <Outlet />
             </div>
-            {/* InfoPanel only on main knowledge route, not sub-routes */}
-            {!isKnowledgeSubRoute && infoPanelOpen && <InfoPanel />}
+            {/* InfoPanel only on the Knowledge home, not sub-routes */}
+            {isKnowledgeHome && infoPanelOpen && <InfoPanel />}
           </div>
-        ) : isChat ? (
-          /* Chat: no padding, full height */
+        ) : surface === 'studio' ? (
+          /* Studio: full-height outlet — conversation-first, no page scroll */
           <main className="flex-1 min-h-0 overflow-hidden">
             <Outlet />
           </main>
@@ -120,11 +128,11 @@ export function AppLayout() {
           </main>
         )}
 
-        {/* Mobile mode switcher — Console/Knowledge/Chat, thumb-reachable */}
+        {/* Mobile surface switcher — Operate/Knowledge/Studio, thumb-reachable */}
         <BottomNav />
       </div>
 
-      {isKnowledge && (
+      {surface === 'knowledge' && (
         <>
           <SearchModal />
           <MoveModal />

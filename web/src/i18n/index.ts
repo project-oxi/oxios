@@ -9,8 +9,8 @@ import ko from './locales/ko.json'
  *
  * All translation keys live in a single flat JSON per language, registered
  * under the `common` namespace. The `keySeparator: '.'` (i18next default)
- * lets call-sites write `t('sidebar.console')` which resolves to
- * `common.sidebar.console` — every top-level JSON key is a dot-path root.
+ * lets call-sites write `t('sidebar.operate')` which resolves to
+ * `common.sidebar.operate` — every top-level JSON key is a dot-path root.
  *
  * The `i18next.config.schema.json` lists aspirational namespaces for
  * tooling (i18n-ally, extractors); they are NOT used at runtime.

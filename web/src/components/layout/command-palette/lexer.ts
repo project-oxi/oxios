@@ -1,4 +1,4 @@
-import type { SidebarMode } from '@/stores/sidebar'
+import type { SurfaceId } from '@/types/surfaces'
 import type { PaletteEntity, QueryContext, Verb } from './types'
 
 /** Map of leading prefix character → verb. */
@@ -11,7 +11,7 @@ const VERB_PREFIXES: Record<string, Verb> = {
 }
 
 /** Inline action tokens valid only after a `!` control entity. */
-const ACTIONS = new Set(['enable', 'disable', 'start', 'stop'])
+const ACTIONS: Record<string, true> = { enable: true, disable: true, start: true, stop: true }
 
 export interface LexResult {
   verb: Verb | null
@@ -56,7 +56,7 @@ export function lex(raw: string): LexResult {
   let text = rest.trim()
   if (verb === 'control') {
     const toks = text.split(/\s+/)
-    if (toks[0] && ACTIONS.has(toks[0].toLowerCase())) {
+    if (toks[0] && ACTIONS[toks[0].toLowerCase()]) {
       action = toks[0].toLowerCase()
       text = toks.slice(1).join(' ').trim()
     }
@@ -65,8 +65,8 @@ export function lex(raw: string): LexResult {
   return { verb, entity, action, text }
 }
 
-/** Build a full `QueryContext` from raw input + current mode. */
-export function buildContext(raw: string, mode: SidebarMode): QueryContext {
+/** Build a full `QueryContext` from raw input + current surface. */
+export function buildContext(raw: string, surface: SurfaceId): QueryContext {
   const { verb, entity, action, text } = lex(raw)
-  return { raw, verb, entity, action, text, mode }
+  return { raw, verb, entity, action, text, surface }
 }

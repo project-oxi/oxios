@@ -1,10 +1,10 @@
 import { useRouter } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { SIDEBAR_MODES } from '@/components/layout/mode-tabs'
+import { SURFACE_TABS } from '@/components/layout/surface-switcher'
 
 /**
  * Registers global ⌃1 / ⌃2 / ⌃3 shortcuts for switching between the three
- * top-level surfaces (Console / Brain / Chat).
+ * top-level surfaces (Operate / Knowledge / Studio).
  *
  * Uses Control+number (not ⌘+number) because every major browser binds
  * ⌘1-⌘9 to browser-tab switching — a menu-level shortcut that fires
@@ -17,8 +17,8 @@ import { SIDEBAR_MODES } from '@/components/layout/mode-tabs'
  * pattern as OxiosCopilotDialog) instead of useNavigate() for reliability
  * in event-handler context.
  *
- * Routes are derived from SIDEBAR_MODES (mode-tabs.tsx) so the hook,
- * the kbd hints in ModeTabs, and the sidebar all share one source of
+ * Routes are derived from SURFACE_TABS (surface-switcher.tsx) so the hook,
+ * the kbd hints in SurfaceSwitcher, and the sidebar all share one source of
  * truth. If the array is reordered, shortcuts and hints stay in sync.
  */
 export function useTabShortcuts(): void {
@@ -27,11 +27,11 @@ export function useTabShortcuts(): void {
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
       const idx = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code)
-      if (idx === -1 || idx >= SIDEBAR_MODES.length) return
-      const mode = SIDEBAR_MODES[idx]
-      if (!mode) return
+      if (idx === -1 || idx >= SURFACE_TABS.length) return
+      const surface = SURFACE_TABS[idx]
+      if (!surface) return
       e.preventDefault()
-      router.history.push(mode.href)
+      router.history.push(`/${surface.key}`)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)

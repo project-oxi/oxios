@@ -1,59 +1,49 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { Brain, LayoutDashboard, MessageSquare } from 'lucide-react'
+import { BookOpen, LayoutDashboard, MessageSquare } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { deriveSidebarMode, type SidebarMode } from '@/stores/sidebar'
+import { deriveSurface, SURFACE_HREFS, type SurfaceId } from '@/types/surfaces'
 
 /**
- * The three top-level surfaces of Oxios: Console / Brain / Chat. Shared by
- * the Sidebar `ModeTabs` (desktop) and the mobile `BottomNav` so the mode set
- * stays in sync. `knowledge` lives nested under `/brain/knowledge`; the top
- * tab still highlights `brain` so a single tap drops the user back into the
- * Brain surface and the KnowledgeNav sub-section stays accessible.
+ * The three top-level surfaces shared by the desktop `SurfaceSwitcher` and
+ * the mobile `BottomNav` so the surface set stays in sync.
  */
-export const SIDEBAR_MODES: {
-  key: SidebarMode
+export const SURFACE_TABS: {
+  key: SurfaceId
   icon: typeof LayoutDashboard
   labelKey: string
-  href: string
 }[] = [
-  { key: 'console', icon: LayoutDashboard, labelKey: 'sidebar.console', href: '/' },
-  { key: 'brain', icon: Brain, labelKey: 'sidebar.brain', href: '/brain' },
-  { key: 'chat', icon: MessageSquare, labelKey: 'sidebar.chat', href: '/chat' },
+  { key: 'operate', icon: LayoutDashboard, labelKey: 'sidebar.operate' },
+  { key: 'knowledge', icon: BookOpen, labelKey: 'sidebar.knowledge' },
+  { key: 'studio', icon: MessageSquare, labelKey: 'sidebar.studio' },
 ]
 
 /**
- * Desktop mode switcher — lives at the top of the Sidebar and is the single
- * source of truth for switching Console / Brain / Chat on desktop.
- *
- * The header no longer carries mode tabs (removed to eliminate the
- * sidebar↔header duplication); on mobile, mode switching lives in the
- * `BottomNav` bar instead.
+ * The one shared surface switcher — lives immediately beneath the Oxios
+ * identity in the `Sidebar` and is the single source of truth for switching
+ * Operate / Knowledge / Studio on desktop. On mobile, the `BottomNav` mirrors
+ * the same `SURFACE_TABS`.
  *
  * - Expanded: horizontal icon + label tabs.
  * - Collapsed (icon rail): vertical icon-only stack with right-side tooltips,
- *   mirroring `NavItemLink` so the collapsed sidebar stays consistent
- *   (VS Code Activity Bar pattern).
- *
- * `knowledge` is a sub-mode: routes nested under `/brain/knowledge` highlight
- * the Brain tab so a single tap drops the user back into the Brain surface.
+ *   mirroring `NavItemLink` (VS Code Activity Bar pattern).
  */
-export function ModeTabs({ collapsed = false }: { collapsed?: boolean }) {
+export function SurfaceSwitcher({ collapsed = false }: { collapsed?: boolean }) {
   const { t } = useTranslation()
   const router = useRouterState()
-  const currentMode = deriveSidebarMode(router.location.pathname)
-  const activeKey = currentMode === 'knowledge' ? 'brain' : currentMode
+  const active = deriveSurface(router.location.pathname)
 
   if (collapsed) {
     return (
-      <nav aria-label={t('common.modeNavigation')} className="flex flex-col items-center gap-1">
-        {SIDEBAR_MODES.map(({ key, icon: Icon, labelKey, href }, idx) => {
-          const isActive = activeKey === key
+      <nav aria-label={t('common.surfaceNavigation')} className="flex flex-col items-center gap-1">
+        {SURFACE_TABS.map(({ key, icon: Icon, labelKey }, idx) => {
+          const isActive = active === key
           const link = (
             <Link
-              to={href}
+              to={SURFACE_HREFS[key]}
               aria-current={isActive ? 'page' : undefined}
+              aria-label={t(labelKey)}
               className={cn(
                 'flex items-center justify-center rounded-md p-2 select-none transition-all',
                 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
@@ -82,13 +72,13 @@ export function ModeTabs({ collapsed = false }: { collapsed?: boolean }) {
   }
 
   return (
-    <nav aria-label={t('common.modeNavigation')} className="flex items-center gap-0.5">
-      {SIDEBAR_MODES.map(({ key, icon: Icon, labelKey, href }, idx) => {
-        const isActive = activeKey === key
+    <nav aria-label={t('common.surfaceNavigation')} className="flex items-center gap-0.5">
+      {SURFACE_TABS.map(({ key, icon: Icon, labelKey }, idx) => {
+        const isActive = active === key
         return (
           <Link
             key={key}
-            to={href}
+            to={SURFACE_HREFS[key]}
             aria-current={isActive ? 'page' : undefined}
             title={`${t(labelKey)} (⌃${idx + 1})`}
             className={cn(

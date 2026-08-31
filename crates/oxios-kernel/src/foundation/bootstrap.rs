@@ -60,7 +60,7 @@ pub struct BootstrapConfig {
     pub may_install: bool,
     /// Installer consulted to resolve — and, when `may_install` is set,
     /// fetch — the `oxibrain` binary. `None` (default) probes only the
-    /// managed `~/.oxi/bin/oxibrain` location.
+    /// managed `~/.oxi/oxibrain/bin/oxibrain` launcher location.
     pub installer: Option<Arc<BrainInstaller>>,
 }
 
@@ -133,13 +133,23 @@ pub async fn bootstrap(cfg: &BootstrapConfig) -> Result<BootstrapReport> {
 }
 
 /// Resolve the `oxibrain` executable for probes: installer resolution
-/// (explicit config → managed root → `PATH`) with the managed
-/// `~/.oxi/bin/oxibrain` location as the fallback, so a post-install retry
-/// can succeed.
+/// (explicit config → managed launcher → legacy location → `PATH`) with
+/// the managed `~/.oxi/oxibrain/bin/oxibrain` location as the fallback, so
+/// a post-install retry can succeed. The pre-standard
+/// `~/.oxi/bin/oxibrain` still resolves when the launcher is absent.
 pub fn brain_executable(home: &Path, installer: Option<&BrainInstaller>) -> PathBuf {
-    installer
-        .and_then(|i| i.locate_binary())
-        .unwrap_or_else(|| home.join(".oxi").join("bin").join("oxibrain"))
+    if let Some(found) = installer.and_then(|i| i.locate_binary()) {
+        return found;
+    }
+    let managed = home.join(".oxi").join("oxibrain").join("bin").join("oxibrain");
+    if managed.is_file() {
+        return managed;
+    }
+    let legacy = home.join(".oxi").join("bin").join("oxibrain");
+    if legacy.is_file() {
+        return legacy;
+    }
+    managed
 }
 
 /// Run one `describe` probe and classify. A failed attempt (spawn error or

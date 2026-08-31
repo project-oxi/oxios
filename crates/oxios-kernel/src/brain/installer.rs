@@ -1,8 +1,14 @@
 //! Brain binary installer — the surviving half of the RFC-049 supervisor.
 //!
-//! oxibrain 0.8 has no daemon, so there is nothing to keep alive: this module
+//! oxibrain has no daemon, so there is nothing to keep alive: this module
 //! only puts the `oxibrain` binary on disk (GitHub Releases, sha256-verified)
 //! and cleans up daemon-era leftovers once.
+//!
+//! The managed layout follows the ecosystem binary standard — each app owns
+//! `~/.oxi/<app>/bin/<app>` (launcher symlink → `../versions/<v>/<app>`),
+//! mirroring oxios's own managed channel (`src/managed_install.rs`). The
+//! pre-standard shared location `~/.oxi/bin/oxibrain` still resolves as a
+//! fallback and is retired by the next successful install.
 
 use anyhow::{Context, Result};
 use futures::future::BoxFuture;
@@ -97,17 +103,166 @@ pub fn extract_single_binary(archive: &[u8]) -> Result<Vec<u8>> {
     anyhow::bail!("no `oxibrain` entry in archive")
 }
 
-/// Install the oxibrain binary into `install_root`.
+/// Release tag → sanitized version directory name (`v1.2.3` → `1.2.3`).
+///
+/// Rejects empty tags, path separators, and `.`/`..` so a hostile release
+/// payload cannot escape the versions directory.
+pub(crate) fn version_dir_name(tag: &str) -> Result<String> {
+    let v = tag.trim().trim_start_matches('v');
+    anyhow::ensure!(
+        !v.is_empty() && v != "." && v != "..",
+        "unusable release tag {tag:?}"
+    );
+    anyhow::ensure!(
+        !v.contains('/') && !v.contains('\\') && !v.contains('\0'),
+        "release tag {tag:?} contains path separators"
+    );
+    Ok(v.to_owned())
+}
+
+/// `tag_name` out of a GitHub release payload, sanitized for a version dir.
+pub(crate) fn release_version(release: &serde_json::Value) -> Result<String> {
+    version_dir_name(release["tag_name"].as_str().unwrap_or_default())
+}
+
+/// Strict SemVer triple for version-dir names — no leading `v`, no
+/// pre-release/build metadata (mirrors oxios `managed_install`).
+fn parse_version_dir(name: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = name.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    parts.next().is_none().then_some((major, minor, patch))
+}
+
+/// Place a verified, extracted binary at `<versions_dir>/<version>/oxibrain`
+/// (temp file + rename, so a partial extract never clobbers a version) and
+/// atomically flip the `launcher` symlink at it. Shared by the GitHub
+/// pipeline and the layout tests.
+pub(crate) fn place_binary(
+    versions_dir: &Path,
+    launcher: &Path,
+    version: &str,
+    binary: &[u8],
+) -> Result<()> {
+    let version_dir = versions_dir.join(version);
+    std::fs::create_dir_all(&version_dir)
+        .with_context(|| format!("create version dir {}", version_dir.display()))?;
+    let target = version_dir.join("oxibrain");
+    let tmp = version_dir.join(".oxibrain.tmp");
+    std::fs::write(&tmp, binary)
+        .with_context(|| format!("write staged binary to {}", tmp.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tmp)
+            .with_context(|| format!("stat {}", tmp.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tmp, perms)
+            .with_context(|| format!("chmod 0755 {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, &target).with_context(|| {
+        format!(
+            "atomic install of {} → {} (same volume required)",
+            tmp.display(),
+            target.display()
+        )
+    })?;
+    flip_launcher(launcher, version)
+}
+
+/// Atomically point `launcher` at `../versions/<version>/oxibrain` — build
+/// a temp symlink, then `rename` it over the real launcher, so every
+/// `execve` observes either the old or the new target, never a missing
+/// file.
+pub(crate) fn flip_launcher(launcher: &Path, version: &str) -> Result<()> {
+    let bin_dir = launcher
+        .parent()
+        .context("launcher path has no parent directory")?;
+    std::fs::create_dir_all(bin_dir)
+        .with_context(|| format!("create bin dir {}", bin_dir.display()))?;
+    let tmp_link = bin_dir.join(".oxibrain.link.tmp");
+    let _ = std::fs::remove_file(&tmp_link);
+    #[cfg(unix)]
+    {
+        let rel_target = PathBuf::from("../versions").join(version).join("oxibrain");
+        std::os::unix::fs::symlink(&rel_target, &tmp_link).with_context(|| {
+            format!("symlink {} → {}", tmp_link.display(), rel_target.display())
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        // No symlinks: fall back to an atomic copy of the version binary.
+        let source = launcher
+            .parent()
+            .and_then(|bin| bin.parent())
+            .context("launcher is not two levels below the app root")?
+            .join("versions")
+            .join(version)
+            .join("oxibrain");
+        std::fs::copy(&source, &tmp_link)
+            .with_context(|| format!("copy {} → {}", source.display(), tmp_link.display()))?;
+    }
+    std::fs::rename(&tmp_link, launcher).with_context(|| {
+        format!(
+            "atomic launcher flip {} → {}",
+            tmp_link.display(),
+            launcher.display()
+        )
+    })?;
+    Ok(())
+}
+
+/// Delete version dirs beyond the newest `keep`, never touching `current`.
+/// Non-SemVer directories are left alone — not ours to judge.
+pub(crate) fn prune_versions(
+    versions_dir: &Path,
+    current: &str,
+    keep: usize,
+) -> Result<Vec<String>> {
+    let mut installed: Vec<((u64, u64, u64), String)> = Vec::new();
+    let entries = std::fs::read_dir(versions_dir)
+        .with_context(|| format!("read_dir {}", versions_dir.display()))?;
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("read_dir entry in {}", versions_dir.display()))?;
+        if !entry.file_type().map_or(false, |t| t.is_dir()) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == current {
+            continue;
+        }
+        if let Some(v) = parse_version_dir(&name) {
+            installed.push((v, name));
+        }
+    }
+    installed.sort();
+    let mut removed = Vec::new();
+    while installed.len() >= keep {
+        let (_, name) = installed.remove(0);
+        std::fs::remove_dir_all(versions_dir.join(&name))
+            .with_context(|| format!("prune version dir {}", name))?;
+        removed.push(name);
+    }
+    Ok(removed)
+}
+
+/// Install the oxibrain release: place the binary under `versions_dir` and
+/// flip the `launcher` symlink.
 ///
 /// Implementations are responsible for the full pipeline: locate the
-/// artifact, verify its integrity, and place an executable binary at
-/// `<install_root>/oxibrain`. The trait is `async`-aware (returns a
-/// boxed future) so callers can plug in either a real GitHub fetcher or
-/// a fake without monomorphising its call sites.
+/// artifact, verify its integrity, place an executable at
+/// `<versions_dir>/<version>/oxibrain`, and atomically point `launcher` at
+/// it. The trait is `async`-aware (returns a boxed future) so callers can
+/// plug in either a real GitHub fetcher or a fake without monomorphising
+/// its call sites.
 pub(crate) trait Installer: Send + Sync {
-    /// Download + verify + extract + atomically install the binary.
-    /// Returns the absolute path of the installed executable.
-    fn install(&self, install_root: &Path) -> BoxFuture<'static, Result<PathBuf>>;
+    /// Download + verify + extract + install into the managed layout.
+    /// Returns the absolute path of the installed launcher.
+    fn install(&self, versions_dir: &Path, launcher: &Path)
+    -> BoxFuture<'static, Result<PathBuf>>;
 }
 
 /// Default [`Installer`]: fetch the latest GitHub release for oxibrain.
@@ -127,12 +282,13 @@ impl Default for GithubInstaller {
 }
 
 impl Installer for GithubInstaller {
-    fn install(&self, install_root: &Path) -> BoxFuture<'static, Result<PathBuf>> {
+    fn install(&self, versions_dir: &Path, launcher: &Path) -> BoxFuture<'static, Result<PathBuf>> {
         let url = self.releases_url.clone();
-        let root = install_root.to_path_buf();
+        let versions_dir = versions_dir.to_path_buf();
+        let launcher = launcher.to_path_buf();
         Box::pin(async move {
-            std::fs::create_dir_all(&root)
-                .with_context(|| format!("create install root {}", root.display()))?;
+            std::fs::create_dir_all(&versions_dir)
+                .with_context(|| format!("create versions dir {}", versions_dir.display()))?;
             let client = Client::builder()
                 .user_agent("oxios-brain-supervisor")
                 .timeout(Duration::from_secs(180))
@@ -154,6 +310,8 @@ impl Installer for GithubInstaller {
             let (tar_url, sha_url) = asset_urls(&release).with_context(|| {
                 format!("release has no {ASSET_TAR} asset (pre-artifact release?)")
             })?;
+            let version = release_version(&release)
+                .with_context(|| format!("release at {url} carries no usable tag_name"))?;
             let tar_bytes = client
                 .get(&tar_url)
                 .send()
@@ -180,29 +338,14 @@ impl Installer for GithubInstaller {
             );
             let binary = extract_single_binary(&tar_bytes)
                 .with_context(|| format!("{tar_url} did not contain an `oxibrain` binary entry"))?;
-            let target = root.join("oxibrain");
-            let tmp = root.join(".oxibrain.tmp");
-            std::fs::write(&tmp, &binary)
-                .with_context(|| format!("write staged binary to {}", tmp.display()))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&tmp)
-                    .with_context(|| format!("stat {}", tmp.display()))?
-                    .permissions();
-                perms.set_mode(0o755);
-                std::fs::set_permissions(&tmp, perms)
-                    .with_context(|| format!("chmod 0755 {}", tmp.display()))?;
-            }
-            std::fs::rename(&tmp, &target).with_context(|| {
-                format!(
-                    "atomic install of {} → {} (same volume required)",
-                    tmp.display(),
-                    target.display()
-                )
-            })?;
-            tracing::info!(path = %target.display(), "installed oxibrain binary");
-            Ok(target)
+            place_binary(&versions_dir, &launcher, &version, &binary)?;
+            prune_versions(&versions_dir, &version, 2)?;
+            tracing::info!(
+                launcher = %launcher.display(),
+                version,
+                "installed oxibrain release"
+            );
+            Ok(launcher)
         })
     }
 }
@@ -210,7 +353,14 @@ impl Installer for GithubInstaller {
 #[derive(Debug)]
 pub struct BrainInstaller {
     binary_path: Option<PathBuf>,
-    install_root: PathBuf,
+    /// `~/.oxi/oxibrain/bin` — launcher directory of the managed layout.
+    bin_dir: PathBuf,
+    /// `~/.oxi/oxibrain/versions` — per-release binaries.
+    versions_dir: PathBuf,
+    /// Pre-standard managed location `~/.oxi/bin/oxibrain`: still resolved
+    /// by [`locate_binary`](Self::locate_binary), retired by the next
+    /// successful [`install`](Self::install).
+    legacy_binary: PathBuf,
     plist_path: PathBuf,
     /// Memoized `<binary> --version` probe. Outer `None` = dirty (must probe);
     /// inner `Some(s)` = cached `Ok(Some(s))`; inner `None` = cached
@@ -222,10 +372,13 @@ pub struct BrainInstaller {
 impl BrainInstaller {
     /// Build from the `[brain]` section. `home` anchors the `~/.oxi` layout.
     pub fn from_brain_section(home: &Path, section: &BrainSection) -> Self {
+        let oxi = home.join(".oxi");
         Self {
             binary_path: (!section.binary_path.is_empty())
                 .then(|| PathBuf::from(&section.binary_path)),
-            install_root: home.join(".oxi").join("bin"),
+            bin_dir: oxi.join("oxibrain").join("bin"),
+            versions_dir: oxi.join("oxibrain").join("versions"),
+            legacy_binary: oxi.join("bin").join("oxibrain"),
             plist_path: home
                 .join("Library")
                 .join("LaunchAgents")
@@ -234,27 +387,59 @@ impl BrainInstaller {
         }
     }
 
-    /// Explicit config wins, then the managed install root, then PATH.
+    /// Explicit config wins, then the managed launcher, then the
+    /// pre-standard shared location, then `PATH`.
     pub fn locate_binary(&self) -> Option<PathBuf> {
         if let Some(explicit) = &self.binary_path
             && explicit.is_file()
         {
             return Some(explicit.clone());
         }
-        let managed = self.install_root.join("oxibrain");
+        let managed = self.bin_dir.join("oxibrain");
         if managed.is_file() {
             return Some(managed);
+        }
+        if self.legacy_binary.is_file() {
+            return Some(self.legacy_binary.clone());
         }
         which::which("oxibrain").ok()
     }
 
-    /// Force a fresh download regardless of presence.
+    /// Force a fresh download regardless of presence. Installs into the
+    /// managed versions layout, flips the launcher, prunes old versions,
+    /// and retires the pre-standard `~/.oxi/bin/oxibrain`.
     pub async fn install(&self) -> Result<PathBuf> {
         // Binary on disk is about to be replaced — drop the cached
         // version probe so the next `version_of_cached` re-reads.
         *self.version_cache.write().expect("version_cache poisoned") = None;
         let installer = GithubInstaller::default();
-        installer.install(&self.install_root).await
+        let launcher = installer
+            .install(&self.versions_dir, &self.bin_dir.join("oxibrain"))
+            .await?;
+        self.retire_legacy();
+        Ok(launcher)
+    }
+
+    /// Remove the pre-standard `~/.oxi/bin/oxibrain` once the managed
+    /// layout serves the binary. Best-effort: the legacy directory is
+    /// dropped too when this leaves it empty.
+    fn retire_legacy(&self) {
+        if self.legacy_binary.exists() {
+            match std::fs::remove_file(&self.legacy_binary) {
+                Ok(()) => tracing::info!(
+                    path = %self.legacy_binary.display(),
+                    "retired pre-standard oxibrain binary"
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    path = %self.legacy_binary.display(),
+                    "could not retire pre-standard oxibrain binary"
+                ),
+            }
+        }
+        if let Some(dir) = self.legacy_binary.parent() {
+            let _ = std::fs::remove_dir(dir); // only succeeds when empty
+        }
     }
 
     /// Locate the binary, installing when absent and `auto_install` is set.
@@ -274,12 +459,25 @@ impl BrainInstaller {
         }
     }
 
-    /// Remove the managed binary (explicit/PATH binaries are not ours).
+    /// Remove the managed install — launcher symlink, version dirs, and the
+    /// pre-standard managed binary. Explicit and `PATH` binaries are not
+    /// ours.
     pub fn remove_managed(&self) -> Result<()> {
-        let managed = self.install_root.join("oxibrain");
-        if managed.exists() {
+        let managed = self.bin_dir.join("oxibrain");
+        if managed.symlink_metadata().is_ok() {
             std::fs::remove_file(&managed)
                 .with_context(|| format!("remove {}", managed.display()))?;
+        }
+        if self.versions_dir.exists() {
+            std::fs::remove_dir_all(&self.versions_dir)
+                .with_context(|| format!("remove {}", self.versions_dir.display()))?;
+        }
+        if self.legacy_binary.symlink_metadata().is_ok() {
+            std::fs::remove_file(&self.legacy_binary)
+                .with_context(|| format!("remove {}", self.legacy_binary.display()))?;
+            if let Some(dir) = self.legacy_binary.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
         }
         *self.version_cache.write().expect("version_cache poisoned") = None;
         Ok(())
@@ -415,7 +613,8 @@ mod tests {
             assert_eq!(inst.locate_binary(), Some(explicit));
         }
 
-        // No explicit → managed root wins over PATH.
+        // No explicit → managed launcher wins over the legacy location and
+        // PATH; the pre-standard shared location resolves as a fallback.
         let section = crate::config::BrainSection {
             binary_path: String::new(),
             ..crate::config::BrainSection::default()
@@ -425,7 +624,11 @@ mod tests {
             let _path_guard = EmptyPathGuard::install();
             assert_eq!(inst.locate_binary(), None);
             std::fs::create_dir_all(tmp.path().join(".oxi/bin")).unwrap();
-            let managed = tmp.path().join(".oxi/bin/oxibrain");
+            let legacy = tmp.path().join(".oxi/bin/oxibrain");
+            std::fs::write(&legacy, b"#!/bin/sh\n").unwrap();
+            assert_eq!(inst.locate_binary(), Some(legacy));
+            std::fs::create_dir_all(tmp.path().join(".oxi/oxibrain/bin")).unwrap();
+            let managed = tmp.path().join(".oxi/oxibrain/bin/oxibrain");
             std::fs::write(&managed, b"#!/bin/sh\n").unwrap();
             assert_eq!(inst.locate_binary(), Some(managed));
         }
@@ -457,6 +660,59 @@ mod tests {
         ] {
             assert!(!brain_dir.join(f).exists(), "{f} should be removed");
         }
+    }
+
+    #[test]
+    fn version_dir_name_sanitizes_tags() {
+        assert_eq!(version_dir_name("v1.2.3").unwrap(), "1.2.3");
+        assert_eq!(version_dir_name("0.12.1").unwrap(), "0.12.1");
+        assert_eq!(version_dir_name(" v0.9.0 ").unwrap(), "0.9.0");
+        assert!(version_dir_name("").is_err());
+        assert!(version_dir_name("v").is_err());
+        assert!(version_dir_name("..").is_err());
+        assert!(version_dir_name("a/b").is_err());
+    }
+
+    #[test]
+    fn place_binary_builds_versions_layout_and_flips_launcher() {
+        let tmp = tempfile::tempdir().unwrap();
+        let versions = tmp.path().join(".oxi/oxibrain/versions");
+        let launcher = tmp.path().join(".oxi/oxibrain/bin/oxibrain");
+        place_binary(&versions, &launcher, "1.2.3", b"#!/bin/sh\n").unwrap();
+        assert!(versions.join("1.2.3/oxibrain").is_file());
+        assert_eq!(
+            std::fs::read_link(&launcher).unwrap(),
+            std::path::Path::new("../versions/1.2.3/oxibrain")
+        );
+        assert!(launcher.is_file(), "launcher must resolve through the symlink");
+
+        // A second release flips the launcher; pruning keeps two versions.
+        place_binary(&versions, &launcher, "1.3.0", b"#!/bin/sh\n").unwrap();
+        assert_eq!(
+            std::fs::read_link(&launcher).unwrap(),
+            std::path::Path::new("../versions/1.3.0/oxibrain")
+        );
+        place_binary(&versions, &launcher, "1.4.0", b"#!/bin/sh\n").unwrap();
+        let removed = prune_versions(&versions, "1.4.0", 2).unwrap();
+        assert_eq!(removed, vec!["1.2.3".to_string()]);
+        assert!(!versions.join("1.2.3").exists());
+        assert!(versions.join("1.3.0").exists());
+        assert!(versions.join("1.4.0").exists());
+    }
+
+    #[test]
+    fn retire_legacy_drops_the_pre_standard_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let legacy_dir = tmp.path().join(".oxi/bin");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy = legacy_dir.join("oxibrain");
+        std::fs::write(&legacy, b"#!/bin/sh\n").unwrap();
+        let inst =
+            BrainInstaller::from_brain_section(tmp.path(), &crate::config::BrainSection::default());
+        assert_eq!(inst.legacy_binary, legacy);
+        inst.retire_legacy();
+        assert!(!legacy.exists());
+        assert!(!legacy_dir.exists(), "empty legacy bin dir is dropped");
     }
 
     #[test]

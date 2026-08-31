@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Brain binary managed layout** (ecosystem binary-path standard).
+  `BrainInstaller` now installs oxibrain per-app —
+  `~/.oxi/oxibrain/versions/<v>/oxibrain` with an atomically flipped
+  launcher symlink at `~/.oxi/oxibrain/bin/oxibrain` and keep-2 pruning —
+  instead of the shared `~/.oxi/bin/oxibrain`. Resolution order:
+  `[brain].binary_path` → managed launcher → pre-standard
+  `~/.oxi/bin/oxibrain` → `PATH`; a successful install retires the
+  pre-standard copy.
+
 ## [1.45.0] - 2026-08-31
 
 ### Added

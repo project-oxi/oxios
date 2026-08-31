@@ -694,10 +694,13 @@ consumes the binary through **three lanes** —
    the `admin` namespace runs as short-lived `oxibrain` invocations that
    exit: `admin index --documents [--embed]`, `admin extract --pending`,
    `describe` probes, `--version` probes. The installer resolves the binary
-   as `[brain].binary_path` → managed `~/.oxi/bin/oxibrain` →
+   as `[brain].binary_path` → managed launcher `~/.oxi/oxibrain/bin/oxibrain`
+   (→ pre-standard `~/.oxi/bin/oxibrain` during migration) →
    `which("oxibrain")`, and downloads the GitHub Releases tarball
-   (sha256-verified, atomic rename) when `auto_install` (one attempt per
-   30 s). Foundation bootstrap probes via one-shot `describe` (exit 0 +
+   (sha256-verified) into the managed versions layout
+   (`~/.oxi/oxibrain/versions/<v>/`, launcher symlink flip, prune keep-2)
+   when `auto_install` (one attempt per 30 s). Foundation bootstrap probes
+   via one-shot `describe` (exit 0 +
    envelope → `Compatible`); there is no handshake child.
 3. **Skill + CLI for agents** — the `memory_{write,read,search}` kernel tools
    are gone. Agents get the first-party `brain` skill

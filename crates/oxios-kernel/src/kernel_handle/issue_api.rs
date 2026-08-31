@@ -228,14 +228,20 @@ impl IssueApi {
     pub fn claim_identity(&self, project: ProjectId, session: &str) -> Result<String> {
         let id = Self::ownership_id(session);
         let key = (project, id.clone());
-        if self.guards.lock().contains_key(&key) {
-            return Ok(id);
-        }
         let dir = project_issues_dir(project);
         std::fs::create_dir_all(&dir).context("failed to create project issues directory")?;
+        // Held across the flock attempt: flock locks are per open file
+        // description, so two concurrent claims for one identity racing
+        // between the map check and `acquire` would have the loser's
+        // non-blocking attempt fail outright. `acquire` uses LOCK_NB (it
+        // errors rather than waits), so this critical section is bounded.
+        let mut guards = self.guards.lock();
+        if guards.contains_key(&key) {
+            return Ok(id);
+        }
         let guard = liveness::acquire(&dir, &id)
             .with_context(|| format!("failed to acquire liveness lock for {id}"))?;
-        self.guards.lock().entry(key).or_insert(guard);
+        guards.entry(key).or_insert(guard);
         Ok(id)
     }
 

@@ -22,7 +22,7 @@ export function LiveTimelinePanel({ selectedAgentId }: { selectedAgentId?: strin
           {t('commandCenter.timeline.title')}
         </CardTitle>
         <Link
-          to="/events"
+          to="/operate/events"
           className="inline-flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           {t('commandCenter.timeline.viewFull')}

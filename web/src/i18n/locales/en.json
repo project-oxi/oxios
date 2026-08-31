@@ -1515,7 +1515,55 @@
     "statusCursor": "Ln {{line}}, Col {{col}}",
     "clickForDiff": "Click to view diff",
     "noDiff": "No changes from current version",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "surface": {
+      "memory": "Memory",
+      "library": "Library",
+      "timeline": "Timeline",
+      "journal": "Journal",
+      "assets": "Assets",
+      "memorySubtitle": "Oxibrain daemon — episodes, entities, statements, contradictions",
+      "librarySubtitle": "Notes, captures, journal, and assets in your knowledge base"
+    },
+    "workspace": {
+      "title": "Knowledge Workspace",
+      "subtitle": "Memory and library sources side by side",
+      "contextList": "Sources",
+      "contextListMemory": "Memory sources",
+      "contextListLibrary": "Library sources",
+      "reader": "Reader",
+      "inspector": "Inspector",
+      "emptyReader": "Select a source to inspect",
+      "emptyLibrary": "No library documents yet",
+      "emptyMemory": "No memory sources yet",
+      "noSources": "No sources available",
+      "brainNotConnected": "Brain not connected",
+      "brainNotConnectedHint": "Bind a brain space to see memory sources here.",
+      "kindBadge": {
+        "memory": "Memory / Brain",
+        "library": "Library / Knowledge"
+      },
+      "preview": "Preview",
+      "excerpt": "Excerpt",
+      "score": "Score",
+      "missingMeta": "(metadata unavailable)",
+      "unavailableChip": "Unavailable — backing record not found",
+      "removeUnavailable": "Remove unavailable source",
+      "addToStudio": "Add to Studio",
+      "handoff": {
+        "title": "Add to Studio",
+        "subtitle": "Choose where this content lands in Studio",
+        "projectless": "Start without a project",
+        "projectlessHint": "Open Studio with the selected sources and no project bound.",
+        "currentSession": "Add to current Studio conversation",
+        "currentSessionHint": "Append to the session currently open in the chat tab.",
+        "chooseProject": "Choose project",
+        "chooseProjectHint": "Bind these sources to an existing project.",
+        "noProject": "No project",
+        "submit": "Open Studio",
+        "cancel": "Cancel"
+      }
+    }
   },
   "marketplace": {
     "title": "Marketplace",
@@ -2245,7 +2293,74 @@
     "attention": "Attention",
     "groupProjects": "Projects",
     "groupRuns": "Runs",
-    "groupSystem": "System"
+    "groupSystem": "System",
+    "attentionSubtitle": "Approvals, failed runs, and live activity",
+    "attentionUnavailable": "Attention feed unavailable",
+    "attentionEmpty": "Nothing needs your attention right now.",
+    "groupWaitingInput": "Waiting for input",
+    "groupFailedRun": "Failed runs",
+    "recentActivity": "Recent activity",
+    "allProjects": "All projects",
+    "runCenter": "Run center",
+    "runCenterSubtitle": "Active work and recent runs",
+    "events": "Events",
+    "capabilities": "Capabilities",
+    "capabilitiesSubtitle": "Everything this system can actually do",
+    "family": {
+      "mcp": "MCP",
+      "skill": "Skills",
+      "engine": "Engine",
+      "security": "Security",
+      "channel": "Channels"
+    },
+    "connections": "Connections",
+    "skillsAndMcp": "Skills & MCP",
+    "mcp": "MCP",
+    "resourcesAndCost": "Resources and cost",
+    "resourcesAndCostSubtitle": "System load, spend, and budget",
+    "actions": {
+      "openRun": "Open run",
+      "openAgent": "Open agent",
+      "openAutomation": "Open automation"
+    },
+    "origin": {
+      "automation": "Automation",
+      "automationId": "Automation ID",
+      "project": "Project"
+    },
+    "sections": {
+      "state": "State",
+      "origin": "Origin",
+      "scope": "Scope",
+      "impact": "Rationale & impact",
+      "actions": "Actions",
+      "details": "Details"
+    },
+    "runs": {
+      "automation": "Automation runs",
+      "agents": "Agent runs",
+      "name": "Name",
+      "status": "Status",
+      "started": "Started",
+      "completed": "Completed",
+      "duration": "Duration",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "empty": "No runs recorded yet.",
+      "count": "{{count}} runs",
+      "trigger": {
+        "manual": "Manual",
+        "schedule": "Schedule",
+        "heartbeat": "Heartbeat"
+      }
+    },
+    "project": {
+      "statusLine": "{{issues}} open issues · {{milestones}} milestones · {{runs}} active runs",
+      "roots": "Roots",
+      "activeRuns": "Active runs",
+      "dirty": "modified",
+      "clean": "clean"
+    }
   },
   "sidebar": {
     "operate": "Operate",
@@ -2885,5 +3000,10 @@
       "pickProject": "Pick a project…",
       "apply": "Open in Studio"
     }
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "This page doesn't exist or has moved. The Operate console is now the home for system oversight.",
+    "backToOperate": "Go to Operate"
   }
 }

@@ -227,7 +227,9 @@ function ScheduleWidget() {
           variant="link"
           size="sm"
           className="mt-1 h-auto p-0 text-xs"
-          onClick={() => navigate({ to: '/settings', search: { section: 'calendar' } })}
+          onClick={() =>
+            navigate({ to: '/operate/system/settings', search: { section: 'calendar' } })
+          }
         >
           {t('notificationCenter.enableCalendar')}
         </Button>

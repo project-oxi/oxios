@@ -1,8 +1,19 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import { KnowledgeWorkspace } from '@/components/knowledge/knowledge-workspace'
 
-/** Legacy deep link — permanent redirect into the Brain tab (2026-08-19). */
 export const Route = createFileRoute('/knowledge/')({
-  beforeLoad: ({ search }) => {
-    throw redirect({ to: '/brain/knowledge', search: search as never })
-  },
+  component: KnowledgeHomeRoute,
+  validateSearch: (search: Record<string, unknown>) => ({
+    space: (search.space as string) ?? '',
+  }),
 })
+
+/**
+ * Knowledge home (design §7.3): the unified memory+library workspace.
+ * Three responsive panes spanning BOTH domains; the inspector's
+ * "Add to Studio" action is wired internally to the StudioHandoffSheet.
+ */
+function KnowledgeHomeRoute() {
+  const { space } = Route.useSearch()
+  return <KnowledgeWorkspace space={space} />
+}

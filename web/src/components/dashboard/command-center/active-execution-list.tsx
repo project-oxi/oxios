@@ -14,7 +14,6 @@ import { ErrorState } from '@/components/shared/error-state'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { defaultAgentSearch } from '@/routes/agents'
 import type { AgentListItem } from '@/types/agent'
 import {
   formatElapsed,
@@ -25,7 +24,7 @@ import {
   statusRank,
 } from './runs'
 
-/** The dashboard is a triage surface, not the full inventory — /agents owns the rest. */
+/** The dashboard is a triage surface, not the full inventory — /operate/runs owns the rest. */
 const MAX_ROWS = 8
 
 const ICON_BY_NAME: Record<string, LucideIcon> = {
@@ -118,8 +117,7 @@ export function ActiveExecutionList({
             )}
             {runs && runs.length > MAX_ROWS && (
               <Link
-                to="/agents"
-                search={{ ...defaultAgentSearch }}
+                to="/operate/runs"
                 className="block pt-1 text-center text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 {t('dashboard.viewAllCount', { count: runs.length })}

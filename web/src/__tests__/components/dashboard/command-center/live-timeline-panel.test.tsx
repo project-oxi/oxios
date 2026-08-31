@@ -32,7 +32,7 @@ describe('LiveTimelinePanel', () => {
     renderPanel()
     expect(screen.getByRole('log')).toBeInTheDocument()
     const link = screen.getByRole('link', { name: 'commandCenter.timeline.viewFull' })
-    expect(link).toHaveAttribute('href', '/events')
+    expect(link).toHaveAttribute('href', '/operate/events')
   })
 
   it('adds a "This run" filter that keeps only the selected agent events', () => {

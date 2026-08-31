@@ -1515,7 +1515,55 @@
     "statusCursor": "{{line}}줄 {{col}}열",
     "clickForDiff": "차이를 보려면 클릭",
     "noDiff": "현재 버전과 차이 없음",
-    "saveFailed": "저장 실패"
+    "saveFailed": "저장 실패",
+    "surface": {
+      "memory": "메모리",
+      "library": "라이브러리",
+      "timeline": "타임라인",
+      "journal": "저널",
+      "assets": "에셋",
+      "memorySubtitle": "Oxibrain 데몬 — 에피소드, 엔티티, 구문, 모순",
+      "librarySubtitle": "지식 베이스의 노트, 캡처, 저널, 에셋"
+    },
+    "workspace": {
+      "title": "지식 작업 공간",
+      "subtitle": "메모리 및 라이브러리 소스를 나란히",
+      "contextList": "소스",
+      "contextListMemory": "메모리 소스",
+      "contextListLibrary": "라이브러리 소스",
+      "reader": "뷰어",
+      "inspector": "인스펙터",
+      "emptyReader": "소스를 선택해 자세히 보기",
+      "emptyLibrary": "라이브러리 문서가 아직 없습니다",
+      "emptyMemory": "메모리 소스가 아직 없습니다",
+      "noSources": "사용 가능한 소스가 없습니다",
+      "brainNotConnected": "브레인이 연결되지 않음",
+      "brainNotConnectedHint": "메모리 소스를 보려면 브레인 스페이스를 연결하세요.",
+      "kindBadge": {
+        "memory": "메모리 / 브레인",
+        "library": "라이브러리 / 지식"
+      },
+      "preview": "미리보기",
+      "excerpt": "발췌",
+      "score": "점수",
+      "missingMeta": "(메타데이터 없음)",
+      "unavailableChip": "사용 불가 — 백킹 레코드를 찾을 수 없습니다",
+      "removeUnavailable": "사용 불가 소스 제거",
+      "addToStudio": "스튜디오로 추가",
+      "handoff": {
+        "title": "스튜디오로 추가",
+        "subtitle": "스튜디오에서 이 콘텐츠가 어디로 갈지 선택",
+        "projectless": "프로젝트 없이 시작",
+        "projectlessHint": "선택한 소스와 함께 프로젝트 미연결 상태로 스튜디오 열기.",
+        "currentSession": "현재 스튜디오 대화에 추가",
+        "currentSessionHint": "현재 채팅 탭에 열려 있는 세션에 이어 붙이기.",
+        "chooseProject": "프로젝트 선택",
+        "chooseProjectHint": "기존 프로젝트에 이 소스들을 연결합니다.",
+        "noProject": "프로젝트 없음",
+        "submit": "스튜디오 열기",
+        "cancel": "취소"
+      }
+    }
   },
   "marketplace": {
     "title": "마켓플레이스",
@@ -2242,10 +2290,77 @@
   },
   "operate": {
     "groupNow": "지금",
-    "attention": "주의",
+    "attention": "주의 필요",
     "groupProjects": "프로젝트",
     "groupRuns": "실행",
-    "groupSystem": "시스템"
+    "groupSystem": "시스템",
+    "attentionSubtitle": "승인, 실패한 실행, 실시간 활동",
+    "attentionUnavailable": "주의 필요 항목을 불러올 수 없습니다",
+    "attentionEmpty": "지금은 주의가 필요한 항목이 없습니다.",
+    "groupWaitingInput": "입력 대기 중",
+    "groupFailedRun": "실패한 실행",
+    "recentActivity": "최근 활동",
+    "allProjects": "모든 프로젝트",
+    "runCenter": "실행 센터",
+    "runCenterSubtitle": "실행 중인 작업과 최근 실행",
+    "events": "이벤트",
+    "capabilities": "역량",
+    "capabilitiesSubtitle": "이 시스템이 실제로 할 수 있는 모든 것",
+    "family": {
+      "mcp": "MCP",
+      "skill": "스킬",
+      "engine": "엔진",
+      "security": "보안",
+      "channel": "채널"
+    },
+    "connections": "연결",
+    "skillsAndMcp": "스킬 및 MCP",
+    "mcp": "MCP",
+    "resourcesAndCost": "리소스와 비용",
+    "resourcesAndCostSubtitle": "시스템 부하, 비용, 예산",
+    "actions": {
+      "openRun": "실행 열기",
+      "openAgent": "에이전트 열기",
+      "openAutomation": "자동화 열기"
+    },
+    "origin": {
+      "automation": "자동화",
+      "automationId": "자동화 ID",
+      "project": "프로젝트"
+    },
+    "sections": {
+      "state": "상태",
+      "origin": "출처",
+      "scope": "범위",
+      "impact": "근거와 영향",
+      "actions": "작업",
+      "details": "상세"
+    },
+    "runs": {
+      "automation": "자동화 실행",
+      "agents": "에이전트 실행",
+      "name": "이름",
+      "status": "상태",
+      "started": "시작",
+      "completed": "완료",
+      "duration": "소요 시간",
+      "tokens": "토큰",
+      "cost": "비용",
+      "empty": "아직 기록된 실행이 없습니다.",
+      "count": "실행 {{count}}개",
+      "trigger": {
+        "manual": "수동",
+        "schedule": "스케줄",
+        "heartbeat": "하트비트"
+      }
+    },
+    "project": {
+      "statusLine": "열린 이슈 {{issues}}개 · 마일스톤 {{milestones}}개 · 실행 중 {{runs}}개",
+      "roots": "루트",
+      "activeRuns": "실행 중인 작업",
+      "dirty": "변경됨",
+      "clean": "깨끗함"
+    }
   },
   "sidebar": {
     "operate": "운영",
@@ -2885,5 +3000,10 @@
       "pickProject": "프로젝트 선택…",
       "apply": "Studio에서 열기"
     }
+  },
+  "notFound": {
+    "title": "페이지를 찾을 수 없습니다",
+    "description": "이 페이지는 존재하지 않거나 이동했습니다. 시스템 운영은 이제 운영 화면에서 처리하세요.",
+    "backToOperate": "운영 화면으로 이동"
   }
 }

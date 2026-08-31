@@ -540,6 +540,19 @@ pub fn register_from_resolved_profile(
             "kernel.project.update" => {
                 registry.register(ProjectTool::from_kernel(kernel));
             }
+            // `IssueTool` is turn-scoped: it needs the per-run project
+            // binding (`ExecEnv.project_id`) that only the CSpace walk
+            // (`register_tools_from_cspace_gated`) receives. A profile
+            // selecting this id cannot arm it — warn specifically so the
+            // catalog/profile mismatch stays observable, mirroring
+            // `kernel.knowledge.write`.
+            "kernel.issue.manage" => {
+                tracing::warn!(
+                    id = id,
+                    "issue tool is turn-scoped (per-run project binding); \
+                     it only arms via register_tools_from_cspace_gated"
+                );
+            }
             "kernel.agent.update" => {
                 registry.register(KernelAgentTool::from_kernel(kernel));
             }

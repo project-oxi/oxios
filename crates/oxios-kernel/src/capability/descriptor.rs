@@ -573,6 +573,29 @@ fn build_catalog() -> Vec<ToolDescriptor> {
             activation_class: ActivationClass::ApprovalOnly,
             registered_name: "project",
         },
+        // Issues ride the project domain but carry their own descriptor so
+        // profile selectors can address them. Arming is turn-path-only:
+        // `IssueTool` needs the per-turn project binding
+        // (`ExecEnv.project_id`) that `register_tools_from_cspace_gated`
+        // receives and the resolved-profile path does not, so a profile
+        // selecting this id falls through to the warn+skip catch-all by
+        // design.
+        ToolDescriptor {
+            id: ToolId::new("kernel.issue.manage"),
+            provider: provider("kernel.kernel"),
+            contract_version: V1,
+            description: "Manage a project's issues and milestones.",
+            tags: leak_slice(&[tag("kernel-mutate")]),
+            required_capabilities: leak_slice(&[CapabilityRequirement {
+                resource: ResourceRef::KernelDomain {
+                    domain: "project".into(),
+                },
+                rights: Rights::WRITE,
+            }]),
+            ui_affordances: leak_slice(&[tag("ui.kernel")]),
+            activation_class: ActivationClass::ApprovalOnly,
+            registered_name: "issue",
+        },
         ToolDescriptor {
             id: ToolId::new("kernel.agent.update"),
             provider: provider("kernel.kernel"),

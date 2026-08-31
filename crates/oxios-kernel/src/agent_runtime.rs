@@ -1128,8 +1128,11 @@ async fn run_agent(
         // RFC-035 Phase C: wire the in-process sub-agent runner so the
         // `subagent` tool delegates in-process (no CLI subprocess).
         subagent_runner: Some(
-            crate::subagent_runner::OxiosSubagentRunner::new(engine.oxi().clone())
-                .into_trait_object(),
+            crate::subagent_runner::OxiosSubagentRunner::new(
+                engine.oxi().clone(),
+                Some(config.model_id.clone()),
+            )
+            .into_trait_object(),
         ),
         ..Default::default()
     };

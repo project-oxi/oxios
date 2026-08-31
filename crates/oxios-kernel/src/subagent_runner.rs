@@ -42,24 +42,33 @@ use oxicode_sdk::SdkSubagentRunner;
 #[derive(Clone)]
 pub struct OxiosSubagentRunner {
     inner: SdkSubagentRunner,
+    /// Parent's resolved chat model (e.g. `zai/glm-5.3-flash`). The SDK's
+    /// reference runner keeps `AgentConfig::default()`'s hardcoded Anthropic
+    /// model when the `model` argument is `None`; that provider usually has
+    /// no credential in the Oxios auth store, so the fork fails its first
+    /// stream call with `MissingApiKey`. We fall back to this instead.
+    default_model: Option<String>,
 }
 
 impl std::fmt::Debug for OxiosSubagentRunner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OxiosSubagentRunner")
             .field("inner", &"<SdkSubagentRunner>")
+            .field("default_model", &self.default_model)
             .finish()
     }
 }
 
 impl OxiosSubagentRunner {
-    /// Create from an [`oxicode_sdk::Oxicode`] engine instance.
+    /// Create from an [`oxicode_sdk::Oxicode`] engine instance and the
+    /// parent's resolved chat model.
     ///
     /// The `Oxicode` instance is `Arc`-backed, so this is clone-cheap and
     /// safe to share across concurrent tasks.
-    pub fn new(oxi: oxicode_sdk::Oxicode) -> Self {
+    pub fn new(oxi: oxicode_sdk::Oxicode, default_model: Option<String>) -> Self {
         Self {
             inner: SdkSubagentRunner::new(oxi),
+            default_model,
         }
     }
 
@@ -82,6 +91,13 @@ impl oxicode_agent::SubagentRunner for OxiosSubagentRunner {
         cwd: &std::path::Path,
         depth: u8,
     ) -> anyhow::Result<oxicode_agent::ForkResult> {
+        // Fall back to the parent's resolved model when the caller passes
+        // none: the SDK keeps `AgentConfig::default()`'s hardcoded Anthropic
+        // id otherwise, and that provider has no credential in the Oxios
+        // auth store (MissingApiKey on the first stream call). Inheriting
+        // the parent's model also gives the fork the same provider/key the
+        // parent turn already resolved.
+        let model = model.or(self.default_model.as_deref());
         // Delegate to the SDK's reference implementation. The sub-agent
         // is tool-less (see Security model above), so no sandbox escape.
         self.inner

@@ -196,6 +196,15 @@ impl AutomationStore {
                     .optional()?
                     .with_context(|| format!("automation {id} not found"))?
             };
+            if automation.is_exhausted() {
+                // Re-arming a spent definition would produce a due-but-
+                // forever-skipped row: reactivation requires raising or
+                // resetting `max_executions` via `set_trigger`.
+                anyhow::bail!(
+                    "automation {id} is exhausted; raise or reset max_executions \
+                     via set_trigger to reactivate"
+                );
+            }
             let next_run = next_run_after(&automation, &now);
             tx.execute(
                 "UPDATE automations SET status = ?1, next_run_at = ?2, updated_at = ?3 \
@@ -502,9 +511,19 @@ impl AutomationStore {
     /// Finalize a run: the run row gets its terminal status + payload +
     /// `completed_at`; the definition records the outcome. Success keeps the
     /// definition `Active` (its `next_run_at` was already advanced at
-    /// `begin_run`); failure marks the definition `Failed`, stores
-    /// `last_error`, and clears `next_run_at` (halted until reactivated).
-    /// An `Exhausted` definition stays `Exhausted` either way.
+    /// `begin_run`) and clears `last_error`.
+    ///
+    /// Failure policy is trigger-aware: a failed SCHEDULED run (cron or
+    /// heartbeat) — or any failure of a manual-triggered definition — marks
+    /// the definition `Failed`, stores `last_error`, and clears
+    /// `next_run_at` (halted until reactivated). A failed MANUAL run of a
+    /// scheduled (cron/heartbeat) automation only records `last_error`; the
+    /// recurring schedule (status + `next_run_at`) stays intact so one bad
+    /// on-demand attempt can never kill it. An `Exhausted` definition stays
+    /// `Exhausted` either way.
+    ///
+    /// The run's trigger is read from the run row inside the same
+    /// transaction — the caller cannot misreport it.
     pub async fn finish_run(
         &self,
         automation_id: &str,
@@ -537,17 +556,26 @@ impl AutomationStore {
             ],
         )?;
 
-        // 2. Definition outcome (read under the same write lock).
-        let current: String = tx
+        // 2. Definition outcome (read under the same write lock). Both the
+        //    definition's trigger and the run's own trigger come from their
+        //    rows: manual and scheduled failures are policy-distinct.
+        let (current, def_trigger, run_trigger): (String, String, String) = tx
             .query_row(
-                "SELECT status FROM automations WHERE id = ?1",
-                params![automation_id],
-                |r| r.get(0),
+                "SELECT a.status, a.\"trigger\", r.\"trigger\" FROM automations a \
+                 JOIN automation_runs r ON r.id = ?2 WHERE a.id = ?1",
+                params![automation_id, run_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?
             .with_context(|| format!("automation {automation_id} not found"))?;
         let current = AutomationStatus::from_str(&current)
             .map_err(|e| anyhow::anyhow!("corrupt automation status '{current}': {e}"))?;
+        let def_trigger = AutomationTrigger::from_str(&def_trigger)
+            .map_err(|e| anyhow::anyhow!("corrupt automation trigger '{def_trigger}': {e}"))?;
+        let run_trigger = AutomationRunTrigger::from_str(&run_trigger)
+            .map_err(|e| anyhow::anyhow!("corrupt run trigger '{run_trigger}': {e}"))?;
+        let manual_run_on_scheduled =
+            run_trigger == AutomationRunTrigger::Manual && def_trigger != AutomationTrigger::Manual;
         if current == AutomationStatus::Exhausted {
             // Ceiling is terminal either way; just record/clear the error.
             let last_error = if success { None } else { error };
@@ -560,6 +588,14 @@ impl AutomationStore {
                 "UPDATE automations SET status = ?1, last_error = NULL, updated_at = ?2 \
                  WHERE id = ?3",
                 params![AutomationStatus::Active.to_string(), now_rfc, automation_id],
+            )?;
+        } else if manual_run_on_scheduled {
+            // A manual attempt at a scheduled automation failed: record the
+            // error but leave the recurring schedule (status + next_run_at)
+            // untouched.
+            tx.execute(
+                "UPDATE automations SET last_error = ?1, updated_at = ?2 WHERE id = ?3",
+                params![error, now_rfc, automation_id],
             )?;
         } else {
             tx.execute(
@@ -1313,6 +1349,101 @@ mod tests {
             .unwrap();
         let revived = store.get_automation(&bad.id).await.unwrap();
         assert!(revived.next_run_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn manual_failure_keeps_scheduled_automation_running() {
+        let store = AutomationStore::in_memory().unwrap();
+        let a = store
+            .create_automation(cron_params("manual-victim"))
+            .await
+            .unwrap();
+        // Snapshot the create-time slot. begin_run's monotonic advance
+        // leaves a future slot alone, so any CHANGE after the failed manual
+        // run would be attributable to finish_run.
+        let scheduled_slot = a.next_run_at.clone();
+
+        // A MANUAL run fails (e.g. provider blip while a user poked the
+        // button). The error is recorded, but the recurring schedule must
+        // survive untouched.
+        let run = store
+            .begin_run(&a.id, AutomationRunTrigger::Manual, None)
+            .await
+            .unwrap();
+        store
+            .finish_run(
+                &a.id,
+                &run.id,
+                false,
+                Some("blew up".into()),
+                None,
+                Some("provider exploded".into()),
+            )
+            .await
+            .unwrap();
+
+        let failed_run = store.latest_run(&a.id).await.unwrap().unwrap();
+        assert_eq!(failed_run.status, AutomationRunStatus::Failed);
+        assert_eq!(failed_run.error.as_deref(), Some("provider exploded"));
+
+        let def = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(
+            def.status,
+            AutomationStatus::Active,
+            "manual failure must not halt a scheduled automation"
+        );
+        assert_eq!(
+            def.last_error.as_deref(),
+            Some("provider exploded"),
+            "the failure is still recorded for visibility"
+        );
+        assert_eq!(
+            def.next_run_at, scheduled_slot,
+            "next_run_at must be untouched by the failed manual run"
+        );
+
+        // The definition is still schedulable: forcing the slot due puts it
+        // straight back on the tick's list.
+        let past = (Utc::now() - chrono::Duration::minutes(1)).to_rfc3339();
+        store.set_next_run(&a.id, Some(&past)).await.unwrap();
+        let due = store.list_due_automations().await.unwrap();
+        assert!(due.iter().any(|x| x.id == a.id), "schedule still fires");
+    }
+
+    #[tokio::test]
+    async fn reactivating_exhausted_automation_is_rejected() {
+        let store = AutomationStore::in_memory().unwrap();
+        let mut params = cron_params("spent");
+        params.max_executions = Some(1);
+        let a = store.create_automation(params).await.unwrap();
+        store
+            .begin_run(&a.id, AutomationRunTrigger::Cron, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_automation(&a.id).await.unwrap().status,
+            AutomationStatus::Exhausted
+        );
+
+        // update_status(Active) must NOT re-arm a spent definition into a
+        // due-but-forever-skipped row: raising/resetting max_executions via
+        // set_trigger is the reactivation path.
+        assert!(
+            store
+                .update_status(&a.id, &AutomationStatus::Active)
+                .await
+                .is_err()
+        );
+        let still = store.get_automation(&a.id).await.unwrap();
+        assert_eq!(still.status, AutomationStatus::Exhausted);
+        assert!(
+            !store
+                .list_due_automations()
+                .await
+                .unwrap()
+                .iter()
+                .any(|x| x.id == a.id)
+        );
     }
 
     // ── Required: crash recovery ──

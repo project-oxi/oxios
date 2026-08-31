@@ -9,7 +9,6 @@
 //! by [`AutomationStore::begin_run`]; a later edit to the automation
 //! definition is never observed mid-run.
 
-use std::str::FromStr;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -124,36 +123,6 @@ pub async fn execute_automation_run(
     }
 
     (run.id, result.success, result.summary)
-}
-
-/// Compute the next cron fire time after `after` as an RFC3339 string.
-/// Normalizes 5-field (Linux cron) expressions by prepending a seconds
-/// field, matching `CronScheduler::normalize_expr`. Re-exported so the
-/// auto-run tick can defer gated automations without reaching into the
-/// store's private helpers.
-///
-/// Used by the binary crate's auto-run tick (`src/api/plugin.rs`); rustc's
-/// standalone-lib dead_code check can't see that caller.
-#[allow(dead_code)]
-pub fn cron_next_after(
-    pattern: &str,
-    after: &chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<String> {
-    let normalized = {
-        let fields: Vec<&str> = pattern.split_whitespace().collect();
-        if fields.len() == 5 {
-            format!("0 {pattern}")
-        } else {
-            pattern.to_string()
-        }
-    };
-    let schedule = cron::Schedule::from_str(&normalized)
-        .map_err(|e| anyhow::anyhow!("Invalid cron expression '{pattern}': {e}"))?;
-    let next = schedule
-        .after(after)
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No future fire time for cron '{pattern}'"))?;
-    Ok(next.to_rfc3339())
 }
 
 /// Run one goal bounded by the remaining budget. Timeout produces a failed

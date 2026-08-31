@@ -10,7 +10,5 @@ pub mod runner;
 pub mod store;
 
 pub use model::*;
-pub use runner::{
-    cron_next_after, execute_automation_run, parse_verdict, repair_prompt, verifier_prompt,
-};
+pub use runner::{execute_automation_run, parse_verdict, repair_prompt, verifier_prompt};
 pub use store::AutomationStore;

@@ -24,6 +24,12 @@ pub enum AutomationStatus {
     /// `max_executions` reached; excluded from scheduling.
     Exhausted,
     /// Last run failed; excluded from scheduling until reactivated.
+    ///
+    /// Policy is trigger-aware: only a failed SCHEDULED run (cron/heartbeat)
+    /// — or a failure of a manual-triggered automation — sets this state and
+    /// clears `next_run_at`. A failed MANUAL run of a scheduled automation
+    /// records `last_error` but leaves the status and schedule intact, so an
+    /// on-demand attempt can never kill a recurring schedule.
     Failed,
 }
 

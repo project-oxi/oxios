@@ -8,7 +8,7 @@
 //!   failed/canceled automation runs (`AppState.task_store`).
 //! - `/api/operate/runs` — automation runs (task store) merged with the recent
 //!   agent page (agents facade), running first then most-recent activity.
-//! - `/api/operate/projects/{id}/context` — project record, root liveness,
+//! - `/api/operate/projects/{id}/context` — project record, stored root paths,
 //!   open issues, milestone counts (derived from labelled-issue listing only),
 //!   and running agent runs bound to the project.
 //! - `/api/operate/capabilities` — one row per real MCP server, skill, engine
@@ -143,7 +143,8 @@ pub(crate) struct OperateAttentionItem {
     detail_route: Option<String>,
 }
 
-/// GET /api/operate/attention — items needing attention, newest source first.
+/// GET /api/operate/attention — pending approvals first, then failed/canceled
+/// runs newest-first within their block (blocks are not globally sorted).
 pub(crate) async fn handle_operate_attention(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AttentionResponse>, AppError> {
@@ -557,8 +558,8 @@ fn agent_run_row(agent: &AgentInfo) -> OperateRun {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OperateProjectContext {
     project: OperateProjectSummary,
-    /// Root liveness from the same source `/api/projects/{id}/roots/status`
-    /// reads; `None` when the project has no roots.
+    /// The project's stored root paths; no liveness (`exists`/`is_dir`) is
+    /// read. `None` when the project has no roots.
     #[serde(skip_serializing_if = "Option::is_none")]
     roots: Option<Vec<OperateProjectRoot>>,
     issues_open: Vec<OperateIssueRef>,
@@ -624,7 +625,8 @@ pub(crate) async fn handle_operate_project_context(
     let api = state.kernel.projects.as_ref().ok_or_else(not_found)?;
     let project = api.get_project(&id).ok_or_else(not_found)?;
 
-    // Root liveness — same source `/api/projects/{id}/roots/status` reads.
+    // Roots are the project's stored root_paths (the record behind
+    // `/api/projects/{id}/roots/status`); no exists/is_dir liveness read.
     let roots = if project.root_paths.is_empty() {
         None
     } else {

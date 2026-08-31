@@ -1,5 +1,5 @@
 // AutomationTemplateGallery — gallery of pre-built recurring automation templates.
-// Ported from LobeHub's RecommendTaskTemplates pattern.
+// Ported from LobeHub's RecommendAutomationTemplates pattern.
 // Shows cards for each template with "Add Automation" button.
 
 import {
@@ -20,11 +20,11 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import {
-  TASK_TEMPLATE_CATEGORIES,
-  TASK_TEMPLATES,
-  type TaskTemplate,
-  type TaskTemplateCategory,
-} from '@/types/task-templates'
+  AUTOMATION_TEMPLATE_CATEGORIES,
+  AUTOMATION_TEMPLATES,
+  type AutomationTemplate,
+  type AutomationTemplateCategory,
+} from '@/types/automation-templates'
 
 // ── Icon map ──
 
@@ -43,7 +43,7 @@ const ICONS: Record<string, LucideIcon> = {
 // ── Props ──
 
 interface AutomationTemplateGalleryProps {
-  onSelectTemplate?: (template: TaskTemplate) => void
+  onSelectTemplate?: (template: AutomationTemplate) => void
   className?: string
 }
 
@@ -53,12 +53,12 @@ export function AutomationTemplateGallery({
   onSelectTemplate,
   className,
 }: AutomationTemplateGalleryProps) {
-  const [activeCategory, setActiveCategory] = useState<TaskTemplateCategory | 'all'>('all')
+  const [activeCategory, setActiveCategory] = useState<AutomationTemplateCategory | 'all'>('all')
   const { t } = useTranslation()
 
   const filtered = useMemo(() => {
-    if (activeCategory === 'all') return TASK_TEMPLATES
-    return TASK_TEMPLATES.filter((t) => t.category === activeCategory)
+    if (activeCategory === 'all') return AUTOMATION_TEMPLATES
+    return AUTOMATION_TEMPLATES.filter((t) => t.category === activeCategory)
   }, [activeCategory])
 
   return (
@@ -67,12 +67,12 @@ export function AutomationTemplateGallery({
       <div className="flex items-center gap-1 mb-4 overflow-x-auto pb-1">
         <CategoryChip
           label={t('cronJobs.templates.all')}
-          count={TASK_TEMPLATES.length}
+          count={AUTOMATION_TEMPLATES.length}
           active={activeCategory === 'all'}
           onClick={() => setActiveCategory('all')}
         />
-        {TASK_TEMPLATE_CATEGORIES.map((cat) => {
-          const count = TASK_TEMPLATES.filter((t) => t.category === cat.id).length
+        {AUTOMATION_TEMPLATE_CATEGORIES.map((cat) => {
+          const count = AUTOMATION_TEMPLATES.filter((t) => t.category === cat.id).length
           if (count === 0) return null
           const Icon = ICONS[cat.icon] ?? Palette
           return (
@@ -148,7 +148,7 @@ function AutomationTemplateCard({
   template,
   onSelect,
 }: {
-  template: TaskTemplate
+  template: AutomationTemplate
   onSelect: () => void
 }) {
   const { t } = useTranslation()

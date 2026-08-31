@@ -7,7 +7,7 @@
 
 import { useMutation } from '@tanstack/react-query'
 import { CalendarClock, Clock, History, LayoutGrid, Pencil, Play, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
@@ -57,7 +57,7 @@ import {
   type AutomationRun,
   type AutomationStatus,
 } from '@/types/automation'
-import type { TaskTemplate } from '@/types/task-templates'
+import type { AutomationTemplate } from '@/types/automation-templates'
 
 function relativeTime(iso: string | undefined | null): string | null {
   if (!iso) return null
@@ -96,7 +96,7 @@ export function AutomationsPage() {
       : allAutomations.filter((a) => a.status === statusFilter)
   const scheduled = allAutomations.filter((a) => a.trigger !== 'manual' && a.status === 'active')
 
-  const handleTemplate = (tmpl: TaskTemplate) => {
+  const handleTemplate = (tmpl: AutomationTemplate) => {
     setCreateInitial({
       name: tmpl.title,
       description: tmpl.description,
@@ -503,6 +503,15 @@ function AutomationFormDialog({
   const [name, setName] = useState('')
   const [instruction, setInstruction] = useState('')
   const [description, setDescription] = useState('')
+  // Trigger config as loaded from the definition. If the user did not touch
+  // any trigger field, the save must NOT send PUT /:id/trigger — the server
+  // keeps status/next_run coherent, and an unconditional re-send would
+  // un-pause a paused automation's schedule (review finding F2).
+  const loadedTriggerRef = useRef<{
+    trigger: Automation['trigger']
+    cronPattern: string
+    heartbeatIntervalSecs: number
+  } | null>(null)
   const [trigger, setTrigger] = useState<Automation['trigger']>('manual')
   const [cronPattern, setCronPattern] = useState<string>(DEFAULT_CRON)
   const [heartbeatIntervalSecs, setHeartbeatIntervalSecs] = useState<number>(1800)
@@ -513,8 +522,6 @@ function AutomationFormDialog({
 
   // Prefill on open: edit → existing fields; create → template initial.
   useEffect(() => {
-    if (!open) return
-    setSuggestions([])
     if (editAutomation) {
       setName(editAutomation.name)
       setInstruction(editAutomation.instruction)
@@ -525,6 +532,11 @@ function AutomationFormDialog({
       setProjectId(editAutomation.projectId ?? null)
       setPersonaId(editAutomation.personaId ?? null)
       setBrainSpace(editAutomation.brainSpace ?? null)
+      loadedTriggerRef.current = {
+        trigger: editAutomation.trigger,
+        cronPattern: editAutomation.cronPattern ?? DEFAULT_CRON,
+        heartbeatIntervalSecs: editAutomation.heartbeatIntervalSecs ?? 1800,
+      }
     } else if (initial) {
       setName(initial.name ?? '')
       setInstruction(initial.instruction ?? '')
@@ -534,6 +546,8 @@ function AutomationFormDialog({
       setProjectId(null)
       setPersonaId(null)
       setBrainSpace(null)
+      loadedTriggerRef.current = null
+      setHeartbeatIntervalSecs(1800)
     } else {
       setName('')
       setInstruction('')
@@ -566,6 +580,12 @@ function AutomationFormDialog({
     if (!name.trim() || !instruction.trim()) return
 
     if (isEdit && editAutomation) {
+      const loaded = loadedTriggerRef.current
+      const triggerChanged =
+        !loaded ||
+        loaded.trigger !== trigger ||
+        (trigger === 'cron' && loaded.cronPattern !== cronPattern) ||
+        (trigger === 'heartbeat' && loaded.heartbeatIntervalSecs !== heartbeatIntervalSecs)
       updateMutation.mutate(
         {
           id: editAutomation.id,
@@ -578,15 +598,22 @@ function AutomationFormDialog({
         },
         {
           onSuccess: () => {
-            triggerMutation.mutate(
-              {
-                id: editAutomation.id,
-                trigger,
-                cronPattern: trigger === 'cron' ? cronPattern : null,
-                heartbeatIntervalSecs: trigger === 'heartbeat' ? heartbeatIntervalSecs : null,
-              },
-              { onSuccess: () => onClose() },
-            )
+            // Only re-send the trigger config when the user actually changed
+            // it. The server preserves status; an unconditional re-send would
+            // silently re-arm a paused definition's schedule.
+            if (triggerChanged) {
+              triggerMutation.mutate(
+                {
+                  id: editAutomation.id,
+                  trigger,
+                  cronPattern: trigger === 'cron' ? cronPattern : null,
+                  heartbeatIntervalSecs: trigger === 'heartbeat' ? heartbeatIntervalSecs : null,
+                },
+                { onSuccess: () => onClose() },
+              )
+            } else {
+              onClose()
+            }
           },
         },
       )

@@ -454,4 +454,85 @@ describe('<AutomationsPage> — automation domain (MSW)', () => {
     const tasksRequests = log.filter((r) => r.path.startsWith('/api/tasks'))
     expect(tasksRequests).toEqual([])
   })
+
+  // ── Fix round 2: edit flow (double-option clears + non-disruptive trigger) ──
+
+  it('clears the project binding via an explicit null and shows No project after', async () => {
+    const bound = { ...automationCron, projectId: 'proj-1' }
+    let currentList = [automationProjectless, bound]
+    const putBodies: Record<string, unknown>[] = []
+    server.use(
+      http.get('/api/projects', () =>
+        HttpResponse.json({ projects: [{ id: 'proj-1', name: 'Alpha' }], count: 1 }),
+      ),
+      http.get('/api/automations', () =>
+        HttpResponse.json({ automations: currentList, count: currentList.length }),
+      ),
+      http.put('/api/automations/:id', async ({ request, params }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        putBodies.push(body)
+        const id = params.id
+        currentList = currentList.map((a) => (a.id === id ? { ...a, ...body } : a))
+        return HttpResponse.json({ ...bound, ...body })
+      }),
+    )
+
+    renderPage()
+    const card = await screen.findByTestId(`automation-card-${automationCron.id}`)
+    fireEvent.click(within(card).getByRole('button', { name: 'common.edit' }))
+    // The dialog preloads the bound project.
+    const pill = await screen.findByTestId('automation-project-picker')
+    expect(pill).toHaveTextContent('Alpha')
+    // Pick "No project" and save.
+    fireEvent.click(pill)
+    fireEvent.click(await screen.findByTestId('automation-project-picker-none'))
+    fireEvent.click(screen.getByTestId('automation-form-submit'))
+
+    await waitFor(() => expect(putBodies.length).toBeGreaterThan(0))
+    const firstPut = putBodies[0] ?? {}
+    expect(firstPut.projectId).toBeNull()
+
+    // Reopen: the picker reflects the cleared binding.
+    fireEvent.click(await screen.findByTestId(`automation-card-${automationCron.id}`))
+    const card2 = await screen.findByTestId(`automation-card-${automationCron.id}`)
+    fireEvent.click(within(card2).getByRole('button', { name: 'common.edit' }))
+    expect(await screen.findByTestId('automation-project-picker')).toHaveTextContent(
+      'automations.noProject',
+    )
+  })
+
+  it('does not fire PUT /trigger when editing only the name of a paused automation', async () => {
+    const { log, watchers } = makeRequestLog()
+    const paused = { ...automationCron, status: 'paused' }
+    const triggerPuts: string[] = []
+    server.use(
+      ...watchers,
+      http.get('/api/automations', () =>
+        HttpResponse.json({ automations: [automationProjectless, paused], count: 2 }),
+      ),
+      http.put('/api/automations/:id/trigger', async ({ request }) => {
+        triggerPuts.push(new URL(request.url).pathname)
+        return HttpResponse.json({ id: paused.id, trigger: 'cron' })
+      }),
+      http.put('/api/automations/:id', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...paused, ...body })
+      }),
+    )
+
+    renderPage()
+    const card = await screen.findByTestId(`automation-card-${automationCron.id}`)
+    fireEvent.click(within(card).getByRole('button', { name: 'common.edit' }))
+    const nameInput = await screen.findByTestId('automation-form-name')
+    fireEvent.change(nameInput, { target: { value: 'Renamed while paused' } })
+    fireEvent.click(screen.getByTestId('automation-form-submit'))
+
+    await waitFor(() =>
+      expect(log.some((r) => r.method === 'PUT' && !r.path.endsWith('/trigger'))).toBe(true),
+    )
+    // The definition PUT went through; the trigger config was NOT re-sent.
+    expect(triggerPuts).toEqual([])
+    // And the paused state is untouched on the card.
+    expect((await screen.findAllByText('automations.status.paused')).length).toBeGreaterThan(0)
+  })
 })

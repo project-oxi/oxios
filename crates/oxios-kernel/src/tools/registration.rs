@@ -14,12 +14,17 @@
 //!
 //! # Registration paths
 //!
-//! * [`register_from_resolved_profile`] (Task 6) — the new single
-//!   trusted path. Consumes a [`ResolvedExecutionProfile`] and registers
-//!   every tool whose status is `Active` or `AvailableOnDemand`. This is
-//!   the path the agent runtime switches to in Task 8.
-//! * [`register_tools_from_cspace`] / [`register_tools_from_cspace_gated`]
-//!   — legacy paths kept for backward compatibility during the cutover.
+//! * [`register_tools_from_cspace_gated`] — the production path. Walks the
+//!   turn's [`CSpace`] and registers exactly the authorised set; this is
+//!   what `AgentRuntime::execute_inner` calls for every run (chat,
+//!   token-maxing, A2A).
+//! * [`register_from_resolved_profile`] (Task 6) — consumes a
+//!   [`ResolvedExecutionProfile`] and registers every tool whose status is
+//!   `Active` or `AvailableOnDemand`. Exported and tested, but has no
+//!   production caller yet; a profile-driven cutover would retire the
+//!   gated path.
+//! * [`register_tools_from_cspace`] — legacy, kept for backward
+//!   compatibility during the cutover.
 
 use std::sync::Arc;
 

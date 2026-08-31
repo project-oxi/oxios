@@ -10,8 +10,7 @@
 //! path for agent OS control. The runtime:
 //!
 //! 1. Resolves the agent's CSpace from persona/role/hint
-//! 2. Resolves the persona execution profile against that CSpace and
-//!    registers tools via `register_from_resolved_profile()`
+//! 2. Registers that CSpace's tools via `register_tools_from_cspace_gated()`
 //! 3. Optionally queries `ToolRetriever` for semantic capability hints
 //! 4. Builds an `Agent` via `AgentBuilder` with middleware pipeline
 //! 5. Runs via `Agent::run_streaming()` for real-time event processing

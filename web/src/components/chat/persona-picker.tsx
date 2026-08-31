@@ -112,9 +112,7 @@ export function PersonaPicker({
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{p.name}</span>
                   {p.description && (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {p.description}
-                    </span>
+                    <span className="truncate text-xs text-muted-foreground">{p.description}</span>
                   )}
                 </span>
                 {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
@@ -132,7 +130,6 @@ export function PersonaPicker({
     </Popover>
   )
 }
-
 
 interface ActivePersonaName {
   id: string

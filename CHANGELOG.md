@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.45.0] - 2026-08-31
+
 ### Added
+
+- **Real chat slash commands.** The composer's `/` menu now executes
+  instead of decorating: client-local commands (`/clear`, `/model`,
+  `/export`, `/help`) run in the page; `/compact` and `/persona` execute
+  server-side over a new `command` WS frame and reply with a
+  `command_result` notice pill (no LLM turn); `/search` and
+  `/skill <name> [args]` ride the normal turn as explicit Ouroboros
+  directives — `/search` forces a grounded web-search turn and
+  `/skill` validates the name server-side and inlines the skill's
+  SKILL.md for that turn. Terminal-style input history (ArrowUp/Down
+  through past prompts) rounds out the composer.
 
 - **Project issues and milestones.** Every Project gets a GitHub-shaped
   issue tracker: project-scoped numbers (`#12`), status, priority, labels,

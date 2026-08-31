@@ -37,6 +37,7 @@ pub(crate) use integrations_routes::{
 };
 mod knowledge_routes;
 mod marketplace;
+mod operate_routes;
 mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
@@ -159,6 +160,10 @@ pub(crate) use marketplace::{
 };
 #[cfg(feature = "memo")]
 pub(crate) use memo_routes::{handle_memo_disable, handle_memo_enable, handle_memo_status};
+pub(crate) use operate_routes::{
+    handle_operate_attention, handle_operate_capabilities, handle_operate_project_context,
+    handle_operate_runs,
+};
 pub(crate) use project_routes::{
     handle_project_create, handle_project_delete, handle_project_get, handle_project_roots_status,
     handle_project_update, handle_projects_list,
@@ -708,6 +713,17 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{id}/milestones/{slug}",
             delete(handle_milestone_delete),
+        )
+        // Operate — read-only projections over existing sources (web IA Task 4.1)
+        .route("/api/operate/attention", get(handle_operate_attention))
+        .route("/api/operate/runs", get(handle_operate_runs))
+        .route(
+            "/api/operate/projects/{id}/context",
+            get(handle_operate_project_context),
+        )
+        .route(
+            "/api/operate/capabilities",
+            get(handle_operate_capabilities),
         )
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))

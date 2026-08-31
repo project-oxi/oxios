@@ -364,10 +364,19 @@ pub(crate) async fn handle_operate_runs(
             .await
             .map_err(|e| AppError::Internal(format!("Failed to list tasks: {e}")))?;
         for task in &tasks {
-            let runs = store
-                .list_runs(&task.id)
-                .await
-                .map_err(|e| AppError::Internal(format!("Failed to list runs: {e}")))?;
+            let runs = match store.list_runs(&task.id).await {
+                Ok(runs) => runs,
+                Err(e) => {
+                    // One unreadable history must not blank the whole
+                    // projection — degrade like the attention handler does.
+                    tracing::warn!(
+                        task = %task.id,
+                        error = %e,
+                        "Skipping unreadable task run history"
+                    );
+                    continue;
+                }
+            };
             automation_total += runs.len() as u64;
             for run in &runs {
                 let activity = run.completed_at.as_deref().unwrap_or(&run.started_at);
@@ -379,9 +388,43 @@ pub(crate) async fn handle_operate_runs(
             }
         }
     }
-
     // Agent rows — same recent-first filter defaults as `/api/agents`.
-    let filter = AgentListFilter {
+    let agents = state
+        .kernel
+        .agents
+        .query(&recent_first_filter(limit))
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to list agents: {e}")))?;
+    let agent_total = agents.total;
+
+    // A live running agent can fall outside the recent page once more than
+    // `limit` agents exist. A second running-only page (running agents are
+    // prepended on its first page) guarantees visibility; ids are deduped.
+    let running = state
+        .kernel
+        .agents
+        .query(&running_filter(None, limit))
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to list running agents: {e}")))?;
+
+    for agent in &merge_running_agents(&agents.items, &running.items) {
+        rows.push(agent_sort_row(agent));
+    }
+
+    // Running first, then most-recent-activity first.
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    rows.truncate(limit as usize);
+
+    Ok(Json(RunsResponse {
+        runs: rows.into_iter().map(|(_, _, run)| run).collect(),
+        total: automation_total + agent_total,
+    }))
+}
+
+/// Recent-first page filter — the same defaults the existing `/api/agents`
+/// handler uses for an unfiltered recent-first page.
+fn recent_first_filter(per_page: u32) -> AgentListFilter {
+    AgentListFilter {
         q: None,
         search_field: SearchField::All,
         status: None,
@@ -401,27 +444,31 @@ pub(crate) async fn handle_operate_runs(
         sort_by: SortBy::CreatedAt,
         sort_dir: SortDir::Desc,
         page: 1,
-        per_page: limit,
-    };
-    let agents = state
-        .kernel
-        .agents
-        .query(&filter)
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to list agents: {e}")))?;
-    let agent_total = agents.total;
-    for agent in &agents.items {
-        rows.push(agent_sort_row(agent));
+        per_page,
     }
+}
 
-    // Running first, then most-recent-activity first.
-    rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-    rows.truncate(limit as usize);
+/// The recent-first page constrained to running agents, optionally bound to
+/// one project.
+fn running_filter(project_id: Option<String>, per_page: u32) -> AgentListFilter {
+    let mut filter = recent_first_filter(per_page);
+    filter.status = Some(AgentStatusFilter::Running);
+    filter.project_id = project_id;
+    filter
+}
 
-    Ok(Json(RunsResponse {
-        runs: rows.into_iter().map(|(_, _, run)| run).collect(),
-        total: automation_total + agent_total,
-    }))
+/// Union of the recent page and the running-only page, deduped by agent id.
+/// Running agents missing from the recent page (possible once more than
+/// `limit` agents exist) are appended so the running-first sort surfaces
+/// them ahead of older completed rows.
+fn merge_running_agents(recent: &[AgentInfo], running: &[AgentInfo]) -> Vec<AgentInfo> {
+    let mut merged = recent.to_vec();
+    for agent in running {
+        if !merged.iter().any(|existing| existing.id == agent.id) {
+            merged.push(agent.clone());
+        }
+    }
+    merged
 }
 
 /// Sort key + row for an agent run.
@@ -633,28 +680,7 @@ pub(crate) async fn handle_operate_project_context(
         .collect();
 
     // Running agent runs bound to this project, capped.
-    let filter = AgentListFilter {
-        q: None,
-        search_field: SearchField::All,
-        status: Some(AgentStatusFilter::Running),
-        session_id: None,
-        project_id: Some(project.id.clone()),
-        model_id: None,
-        tool: None,
-        has_error: None,
-        date_from: None,
-        date_to: None,
-        cost_min: None,
-        cost_max: None,
-        tokens_min: None,
-        tokens_max: None,
-        duration_min: None,
-        duration_max: None,
-        sort_by: SortBy::CreatedAt,
-        sort_dir: SortDir::Desc,
-        page: 1,
-        per_page: ACTIVE_RUNS_CAP as u32,
-    };
+    let filter = running_filter(Some(project.id.clone()), ACTIVE_RUNS_CAP as u32);
     let active_runs = state
         .kernel
         .agents
@@ -869,6 +895,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use oxios_kernel::McpServer;
+    use oxios_kernel::types::AgentStatus;
     use tower::Service;
 
     fn router(app: &test_support::TestApp) -> Router {
@@ -1162,5 +1189,53 @@ mod tests {
         let unicode = "한글테스트".repeat(100);
         let capped = truncate_chars(&unicode, 10);
         assert_eq!(capped.chars().count(), 10);
+    }
+
+    /// Minimal agent for merge-logic tests.
+    fn sample_agent(name: &str, status: AgentStatus) -> AgentInfo {
+        AgentInfo {
+            id: uuid::Uuid::new_v4(),
+            name: name.to_string(),
+            status,
+            created_at: Utc::now(),
+            project_id: None,
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            error: None,
+            steps_completed: 0,
+            steps_total: None,
+            tool_calls: Vec::new(),
+            tokens_input: 0,
+            tokens_output: 0,
+            cost_usd: 0.0,
+            model_id: String::new(),
+            session_id: None,
+        }
+    }
+
+    /// Finding-1 coverage (fixture cannot seed a populated agent log db):
+    /// a running agent absent from the overflowing recent page is merged
+    /// in, and an agent present on both pages is not duplicated.
+    #[test]
+    fn running_agents_beyond_recent_page_are_merged_and_deduped() {
+        let live = sample_agent("live-runner", AgentStatus::Running);
+        let old_completed = sample_agent("old-run", AgentStatus::Completed);
+
+        // Simulate a recent page that overflowed past `limit`: it holds only
+        // older completed agents, while the running-only page still carries
+        // the live agent (and re-lists the completed one).
+        let recent = vec![old_completed.clone()];
+        let running_page = vec![live, old_completed];
+
+        let merged = merge_running_agents(&recent, &running_page);
+        assert_eq!(merged.len(), 2, "no duplicates: {merged:?}");
+        assert!(merged.iter().any(|agent| agent.name == "live-runner"));
+        assert_eq!(
+            merged
+                .iter()
+                .filter(|agent| agent.name == "old-run")
+                .count(),
+            1
+        );
     }
 }

@@ -96,13 +96,13 @@ pub mod backup;
 pub mod compression;
 pub mod config;
 pub use oxi_vault_git as git_layer;
+pub mod automation;
 pub mod home_migrate;
 pub mod kernel_db;
 pub mod project;
 pub mod resource_monitor;
 pub mod session_context;
 pub mod state_store;
-pub mod task;
 
 // ─── Infrastructure ─────────────────────────────────────────────────
 // 엔진, 에러, 타입, 메트릭, 텔레메트리, 옵저버빌리티.
@@ -137,7 +137,6 @@ pub use budget::{
 };
 // Circuit breaker — delegates to oxicode-sdk
 pub use orchestrator::{AgentRole, OrchestrationResult, Orchestrator, SubTask};
-pub use task::{CronJob, JobSource};
 // CircuitBreaker removed — use oxicode_sdk::ProviderCircuitBreaker directly (#11).
 pub use types::Priority;
 

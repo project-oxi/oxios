@@ -1,6 +1,8 @@
-//! API routes for task management (RFC-043).
+//! API routes for automation management.
 //!
-//! CRUD + scheduling + verify + comments for the task lifecycle.
+//! CRUD + trigger scheduling + verify + run history for the automation
+//! lifecycle. Mechanical cutover note (web IA major version): the route
+//! paths keep their `/api/tasks` prefix until the HTTP-rename task lands.
 
 use std::sync::Arc;
 
@@ -8,14 +10,14 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
-use oxios_kernel::task::{
-    CreateTaskParams, ListTasksParams, SetScheduleParams, SetVerifyParams, TaskRunTrigger,
-    TaskStatus, UpdateTaskParams, execute_task_run,
+use oxios_kernel::automation::{
+    AutomationRunTrigger, AutomationStatus, CreateAutomationParams, ListAutomationsParams,
+    SetTriggerParams, SetVerifyParams, UpdateAutomationParams, execute_automation_run,
 };
 
-/// Ceiling for a synchronous manual task run (`POST /api/tasks/:id/run`).
-/// Longer-running work belongs on a schedule (cron/heartbeat), whose jobs use
-/// the scheduler's longer timeout.
+/// Ceiling for a synchronous manual run (`POST /api/tasks/:id/run`).
+/// Longer-running work belongs on a schedule (cron/heartbeat), whose jobs
+/// use the longer tick timeout.
 const TASK_RUN_TIMEOUT: u64 = 300;
 
 use crate::api::error::AppError;
@@ -24,10 +26,8 @@ use crate::api::server::AppState;
 // ── List ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct ListTasksQuery {
-    pub statuses: Option<String>,
-    pub assignee: Option<String>,
-    pub parent: Option<String>,
+pub struct ListAutomationsQuery {
+    pub status: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -35,28 +35,22 @@ pub struct ListTasksQuery {
 /// GET /api/tasks
 pub(crate) async fn handle_tasks_list(
     state: State<Arc<AppState>>,
-    Query(q): Query<ListTasksQuery>,
+    Query(q): Query<ListAutomationsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let statuses = q
-        .statuses
-        .map(|s| s.split(',').map(|s| s.trim().to_string()).collect());
-
-    let params = ListTasksParams {
-        statuses,
-        assignee_agent_id: q.assignee,
-        parent_task_id: q.parent,
+    let params = ListAutomationsParams {
+        status: q.status,
         limit: q.limit,
         offset: q.offset,
     };
 
-    let store = state.task_store.lock().await;
-    match store.list_tasks(params).await {
-        Ok(tasks) => Ok(Json(
-            serde_json::json!({ "tasks": tasks, "count": tasks.len() }),
+    let store = state.automation_store.lock().await;
+    match store.list_automations(params).await {
+        Ok(list) => Ok(Json(
+            serde_json::json!({ "tasks": list, "count": list.len() }),
         )),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list tasks");
-            Err(AppError::Internal(format!("Failed to list tasks: {e}")))
+            Err(AppError::BadRequest(format!("Failed to list tasks: {e}")))
         }
     }
 }
@@ -66,7 +60,7 @@ pub(crate) async fn handle_tasks_list(
 /// POST /api/tasks
 pub(crate) async fn handle_task_create(
     state: State<Arc<AppState>>,
-    Json(params): Json<CreateTaskParams>,
+    Json(params): Json<CreateAutomationParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if params.name.trim().is_empty() || params.instruction.trim().is_empty() {
         return Err(AppError::BadRequest(
@@ -74,12 +68,12 @@ pub(crate) async fn handle_task_create(
         ));
     }
 
-    let store = state.task_store.lock().await;
-    match store.create_task(params).await {
-        Ok(task) => Ok(Json(serde_json::to_value(&task).unwrap_or_default())),
+    let store = state.automation_store.lock().await;
+    match store.create_automation(params).await {
+        Ok(automation) => Ok(Json(serde_json::to_value(&automation).unwrap_or_default())),
         Err(e) => {
             tracing::error!(error = %e, "Failed to create task");
-            Err(AppError::Internal(format!("Failed to create task: {e}")))
+            Err(AppError::BadRequest(format!("Failed to create task: {e}")))
         }
     }
 }
@@ -91,9 +85,9 @@ pub(crate) async fn handle_task_get(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let store = state.task_store.lock().await;
-    match store.get_task_by_id(&id).await {
-        Ok(task) => Ok(Json(serde_json::to_value(&task).unwrap_or_default())),
+    let store = state.automation_store.lock().await;
+    match store.get_automation(&id).await {
+        Ok(automation) => Ok(Json(serde_json::to_value(&automation).unwrap_or_default())),
         Err(e) => {
             tracing::error!(error = %e, id = %id, "Failed to get task");
             Err(AppError::NotFound(format!("Task not found: {id}")))
@@ -108,8 +102,8 @@ pub(crate) async fn handle_task_delete(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let store = state.task_store.lock().await;
-    match store.delete_task(&id).await {
+    let store = state.automation_store.lock().await;
+    match store.delete_automation(&id).await {
         Ok(()) => Ok(Json(serde_json::json!({ "id": id, "deleted": true }))),
         Err(e) => {
             tracing::error!(error = %e, id = %id, "Failed to delete task");
@@ -131,12 +125,12 @@ pub(crate) async fn handle_task_update_status(
     Path(id): Path<String>,
     Json(req): Json<UpdateStatusRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let status: TaskStatus = req
+    let status: AutomationStatus = req
         .status
         .parse()
         .map_err(|e: String| AppError::BadRequest(e))?;
 
-    let store = state.task_store.lock().await;
+    let store = state.automation_store.lock().await;
     match store.update_status(&id, &status).await {
         Ok(()) => Ok(Json(
             serde_json::json!({ "id": id, "status": status.to_string() }),
@@ -148,34 +142,32 @@ pub(crate) async fn handle_task_update_status(
     }
 }
 
-// ── Set schedule ──────────────────────────────────────────────────
+// ── Set schedule (trigger) ────────────────────────────────────────
 
 /// PUT /api/tasks/:id/schedule
 pub(crate) async fn handle_task_set_schedule(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(params): Json<SetScheduleParams>,
+    Json(params): Json<SetTriggerParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // Persist automation fields + compute next_run + set status, all in one
-    // store call (replaces the previous buggy handler that only set
-    // next_run_at and dropped the automation fields).
+    // Validate + persist the trigger and re-arm scheduling in one store call.
     let result = {
-        let store = state.task_store.lock().await;
-        store.set_automation(&id, params).await
+        let store = state.automation_store.lock().await;
+        store.set_trigger(&id, params).await
     };
     match result {
         Ok(()) => {
             // Re-read to return the computed next_run/status.
-            let task = {
-                let store = state.task_store.lock().await;
-                store.get_task_by_id(&id).await
+            let automation = {
+                let store = state.automation_store.lock().await;
+                store.get_automation(&id).await
             };
-            match task {
+            match automation {
                 Ok(t) => Ok(Json(serde_json::json!({
                     "id": t.id,
-                    "automation_mode": t.automation_mode,
-                    "schedule_pattern": t.schedule_pattern,
-                    "schedule_timezone": t.schedule_timezone,
+                    "trigger": t.trigger,
+                    "cron_pattern": t.cron_pattern,
+                    "timezone": t.timezone,
                     "heartbeat_interval_secs": t.heartbeat_interval_secs,
                     "max_executions": t.max_executions,
                     "next_run_at": t.next_run_at,
@@ -186,7 +178,7 @@ pub(crate) async fn handle_task_set_schedule(
                 ))),
             }
         }
-        Err(e) => Err(AppError::Internal(format!("Failed to set schedule: {e}"))),
+        Err(e) => Err(AppError::BadRequest(format!("Failed to set schedule: {e}"))),
     }
 }
 
@@ -198,16 +190,16 @@ pub(crate) async fn handle_task_set_verify(
     Json(params): Json<SetVerifyParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let result = {
-        let store = state.task_store.lock().await;
+        let store = state.automation_store.lock().await;
         store.set_verify(&id, params).await
     };
     match result {
         Ok(()) => {
-            let task = {
-                let store = state.task_store.lock().await;
-                store.get_task_by_id(&id).await
+            let automation = {
+                let store = state.automation_store.lock().await;
+                store.get_automation(&id).await
             };
-            match task {
+            match automation {
                 Ok(t) => Ok(Json(serde_json::to_value(&t).unwrap_or_default())),
                 Err(e) => Err(AppError::Internal(format!(
                     "Verify config set, reload failed: {e}"
@@ -229,33 +221,31 @@ pub(crate) async fn handle_task_set_verify(
 
 /// POST /api/tasks/:id/run — trigger manual (synchronous) execution.
 ///
-/// Executes the task's `instruction` through the shared `run_goal` primitive
-/// (direct orchestrator path), bounded by `TASK_RUN_TIMEOUT` so a hung agent
-/// can't hold the HTTP connection forever. Records the run in `task_runs`
-/// and updates the task lifecycle (status, execution_count, etc.).
+/// Executes the automation's snapshot instruction through the shared
+/// `run_goal` primitive (direct orchestrator path), bounded by
+/// `TASK_RUN_TIMEOUT` so a hung agent can't hold the HTTP connection
+/// forever. The run row (with its context snapshot) is opened and the
+/// automation lifecycle updated by the shared runner.
 pub(crate) async fn handle_task_run(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // 1. Load + validate the task exists and isn't already running.
-    let task = {
-        let store = state.task_store.lock().await;
-        store.get_task_by_id(&id).await
-    }
-    .map_err(|e| AppError::NotFound(format!("Task not found: {id} ({e})")))?;
-    if task.status == TaskStatus::Running {
-        return Err(AppError::Conflict(format!(
-            "Task '{id}' is already running"
-        )));
+    // 1. Validate the automation exists.
+    {
+        let store = state.automation_store.lock().await;
+        store
+            .get_automation(&id)
+            .await
+            .map_err(|e| AppError::NotFound(format!("Task not found: {id} ({e})")))?;
     }
 
     // Execute + record the full lifecycle via the shared helper (also used by
     // the auto-run tick loop). Bounded by TASK_RUN_TIMEOUT for the HTTP path.
-    let (run_id, success, summary) = execute_task_run(
-        state.task_store.clone(),
+    let (run_id, success, summary) = execute_automation_run(
+        state.automation_store.clone(),
         state.kernel.clone(),
         &id,
-        TaskRunTrigger::Manual,
+        AutomationRunTrigger::Manual,
         TASK_RUN_TIMEOUT,
     )
     .await;
@@ -274,19 +264,19 @@ pub(crate) async fn handle_task_run(
 pub(crate) async fn handle_task_update(
     state: State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(params): Json<UpdateTaskParams>,
+    Json(params): Json<UpdateAutomationParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let result = {
-        let store = state.task_store.lock().await;
-        store.update_task(&id, params).await
+        let store = state.automation_store.lock().await;
+        store.update_automation(&id, params).await
     };
     match result {
         Ok(()) => {
-            let task = {
-                let store = state.task_store.lock().await;
-                store.get_task_by_id(&id).await
+            let automation = {
+                let store = state.automation_store.lock().await;
+                store.get_automation(&id).await
             };
-            match task {
+            match automation {
                 Ok(t) => Ok(Json(serde_json::to_value(&t).unwrap_or_default())),
                 Err(e) => Err(AppError::Internal(format!(
                     "Task updated, reload failed: {e}"
@@ -310,14 +300,14 @@ pub(crate) async fn handle_task_update(
 // ── Batch create ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct CreateTasksBatchRequest {
-    pub tasks: Vec<CreateTaskParams>,
+pub struct CreateAutomationsBatchRequest {
+    pub tasks: Vec<CreateAutomationParams>,
 }
 
-/// POST /api/tasks/batch — create several tasks in one call.
+/// POST /api/tasks/batch — create several automations in one call.
 pub(crate) async fn handle_task_create_batch(
     state: State<Arc<AppState>>,
-    Json(req): Json<CreateTasksBatchRequest>,
+    Json(req): Json<CreateAutomationsBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if req.tasks.is_empty() {
         return Err(AppError::BadRequest("'tasks' must not be empty".into()));
@@ -333,200 +323,18 @@ pub(crate) async fn handle_task_create_batch(
     }
     let mut created = Vec::with_capacity(req.tasks.len());
     {
-        let store = state.task_store.lock().await;
+        let store = state.automation_store.lock().await;
         for params in req.tasks {
-            let task = store
-                .create_task(params)
+            let automation = store
+                .create_automation(params)
                 .await
-                .map_err(|e| AppError::Internal(format!("Failed to create task: {e}")))?;
-            created.push(task);
+                .map_err(|e| AppError::BadRequest(format!("Failed to create task: {e}")))?;
+            created.push(automation);
         }
     }
     Ok(Json(
         serde_json::json!({ "tasks": created, "count": created.len() }),
     ))
-}
-
-// ── Comments ──────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddCommentRequest {
-    pub content: String,
-    pub author_agent_id: Option<String>,
-    pub author_session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateCommentRequest {
-    pub content: String,
-}
-
-/// GET /api/tasks/:id/comments — oldest first.
-pub(crate) async fn handle_task_comments_list(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let comments = {
-        let store = state.task_store.lock().await;
-        store
-            .list_comments(&id)
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to list comments: {e}")))?
-    };
-    Ok(Json(
-        serde_json::json!({ "comments": comments, "count": comments.len() }),
-    ))
-}
-
-/// POST /api/tasks/:id/comments
-pub(crate) async fn handle_task_comment_create(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<AddCommentRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    if req.content.trim().is_empty() {
-        return Err(AppError::BadRequest("'content' must not be empty".into()));
-    }
-    let comment = {
-        let store = state.task_store.lock().await;
-        store
-            .add_comment(
-                &id,
-                &req.content,
-                req.author_agent_id.as_deref(),
-                req.author_session_id.as_deref(),
-            )
-            .await
-    };
-    match comment {
-        Ok(c) => Ok(Json(serde_json::to_value(&c).unwrap_or_default())),
-        Err(e) => {
-            tracing::error!(error = %e, id = %id, "Failed to add comment");
-            Err(AppError::NotFound(format!("Task not found: {id} ({e})")))
-        }
-    }
-}
-
-/// PUT /api/tasks/:id/comments/:cid
-pub(crate) async fn handle_task_comment_update(
-    state: State<Arc<AppState>>,
-    Path((_id, cid)): Path<(String, String)>,
-    Json(req): Json<UpdateCommentRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = {
-        let store = state.task_store.lock().await;
-        store.update_comment(&cid, &req.content).await
-    };
-    match result {
-        Ok(()) => Ok(Json(serde_json::json!({ "id": cid, "updated": true }))),
-        Err(e) => {
-            tracing::error!(error = %e, cid, "Failed to update comment");
-            Err(AppError::NotFound(format!(
-                "Comment not found: {cid} ({e})"
-            )))
-        }
-    }
-}
-
-/// DELETE /api/tasks/:id/comments/:cid
-pub(crate) async fn handle_task_comment_delete(
-    state: State<Arc<AppState>>,
-    Path((_id, cid)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = {
-        let store = state.task_store.lock().await;
-        store.delete_comment(&cid).await
-    };
-    match result {
-        Ok(()) => Ok(Json(serde_json::json!({ "id": cid, "deleted": true }))),
-        Err(e) => {
-            tracing::error!(error = %e, cid, "Failed to delete comment");
-            Err(AppError::NotFound(format!(
-                "Comment not found: {cid} ({e})"
-            )))
-        }
-    }
-}
-
-// ── Dependencies ──────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddDependencyRequest {
-    pub depends_on_task_id: String,
-}
-
-/// GET /api/tasks/:id/dependencies — full dependency task objects.
-pub(crate) async fn handle_task_dependencies_list(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let deps = {
-        let store = state.task_store.lock().await;
-        let ids = store
-            .dependency_ids(&id)
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to list dependencies: {e}")))?;
-        let mut tasks = Vec::with_capacity(ids.len());
-        for dep_id in ids {
-            if let Ok(t) = store.get_task_by_id(&dep_id).await {
-                tasks.push(t);
-            }
-        }
-        tasks
-    };
-    Ok(Json(
-        serde_json::json!({ "dependencies": deps, "count": deps.len() }),
-    ))
-}
-
-/// POST /api/tasks/:id/dependencies — cycle/self-edge/duplicate are 400s.
-pub(crate) async fn handle_task_dependency_add(
-    state: State<Arc<AppState>>,
-    Path(id): Path<String>,
-    Json(req): Json<AddDependencyRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = {
-        let store = state.task_store.lock().await;
-        store.add_dependency(&id, &req.depends_on_task_id).await
-    };
-    match result {
-        Ok(()) => {
-            let task = {
-                let store = state.task_store.lock().await;
-                store.get_task_by_id(&id).await
-            };
-            match task {
-                Ok(t) => Ok(Json(serde_json::to_value(&t).unwrap_or_default())),
-                Err(e) => Err(AppError::Internal(format!(
-                    "Dependency added, reload failed: {e}"
-                ))),
-            }
-        }
-        Err(e) => Err(AppError::BadRequest(format!(
-            "Failed to add dependency: {e}"
-        ))),
-    }
-}
-
-/// DELETE /api/tasks/:id/dependencies/:dep_id
-pub(crate) async fn handle_task_dependency_remove(
-    state: State<Arc<AppState>>,
-    Path((id, dep_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let result = {
-        let store = state.task_store.lock().await;
-        store.remove_dependency(&id, &dep_id).await
-    };
-    match result {
-        Ok(()) => Ok(Json(
-            serde_json::json!({ "id": id, "removed": dep_id, "deleted": true }),
-        )),
-        Err(e) => Err(AppError::BadRequest(format!(
-            "Failed to remove dependency: {e}"
-        ))),
-    }
 }
 
 // ── Run history ───────────────────────────────────────────────────
@@ -537,7 +345,7 @@ pub(crate) async fn handle_task_runs(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let runs = {
-        let store = state.task_store.lock().await;
+        let store = state.automation_store.lock().await;
         store
             .list_runs(&id)
             .await

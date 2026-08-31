@@ -588,19 +588,19 @@ pub fn register_from_resolved_profile(
             // off, the descriptor stays in the catalog (so the selector
             // can still reason about it) but the arm warns and skips so
             // operators see the catalog/profile/feature mismatch.
-            // TaskTool is conditional on the assembler attaching a
-            // `task_store` — `from_kernel` returns `None` when no
+            // TaskTool is conditional on the assembler attaching an
+            // `automation_store` — `from_kernel` returns `None` when no
             // store is attached, matching the legacy path. The
             // constructor signature takes `&Arc<KernelHandle>`; the
             // resolved-profile path now also takes `&Arc<KernelHandle>`,
             // so the kernel Arc is reused without an extra clone.
             "kernel.task.manage" => {
-                if let Some(task_tool) = TaskTool::from_kernel(kernel, &agent_id.to_string()) {
+                if let Some(task_tool) = TaskTool::from_kernel(kernel) {
                     registry.register(task_tool);
                 } else {
                     tracing::warn!(
                         id = id,
-                        "task store unavailable; skipping kernel.task.manage"
+                        "automation store unavailable; skipping kernel.task.manage"
                     );
                 }
             }
@@ -958,8 +958,8 @@ pub fn register_tools_from_cspace_gated(
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
                 "knowledge" => registry.register(KnowledgeTool::from_kernel(kernel)),
                 "task" => {
-                    if let Some(store) = kernel.task_store.clone() {
-                        registry.register(TaskTool::for_store(store, Some(agent_id.to_string())));
+                    if let Some(store) = kernel.automation_store.clone() {
+                        registry.register(TaskTool::for_store(store));
                     }
                 }
                 "marketplace" => registry.register(MarketplaceTool::from_kernel(kernel)),

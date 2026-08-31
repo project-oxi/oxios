@@ -24,6 +24,7 @@ use oxios_kernel::access_manager::AccessManager;
 use oxios_kernel::agent_lifecycle::AgentLifecycleManager;
 use oxios_kernel::approval::ApprovalConfig;
 use oxios_kernel::auth::AuthManager;
+use oxios_kernel::automation::AutomationStore;
 use oxios_kernel::budget::BudgetManager;
 use oxios_kernel::event_bus::EventBus;
 use oxios_kernel::kernel_db::KernelDatabase;
@@ -39,7 +40,6 @@ use oxios_kernel::resource_monitor::ResourceMonitor;
 use oxios_kernel::skill::SkillManager;
 use oxios_kernel::state_store::{Session, StateStore};
 use oxios_kernel::supervisor::NoOpSupervisor;
-use oxios_kernel::task::TaskStore;
 use oxios_kernel::tools::{PendingAskUser, PendingPathAccess, PendingToolApprovals};
 use oxios_kernel::{ClawHubClient, ClawHubInstaller, OxiosConfig, OxiosEngine, ReadinessGate};
 use oxios_kernel::{ExecConfig, GitLayer, SkillsShClient, SkillsShInstaller};
@@ -172,7 +172,9 @@ pub(crate) fn test_app(tmp: &Path) -> TestApp {
         web_dist: ActiveWebDist::new(None),
         readiness,
         gateway: Arc::new(Gateway::new(Arc::new(dummy_orchestrator(tmp)))),
-        task_store: Arc::new(tokio::sync::Mutex::new(TaskStore::in_memory().unwrap())),
+        automation_store: Arc::new(tokio::sync::Mutex::new(
+            AutomationStore::in_memory().unwrap(),
+        )),
     });
 
     TestApp {

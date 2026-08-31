@@ -178,11 +178,9 @@ pub(crate) use system::{
     handle_update_run,
 };
 pub(crate) use task_routes::{
-    handle_task_comment_create, handle_task_comment_delete, handle_task_comment_update,
-    handle_task_comments_list, handle_task_create, handle_task_create_batch, handle_task_delete,
-    handle_task_dependencies_list, handle_task_dependency_add, handle_task_dependency_remove,
-    handle_task_get, handle_task_run, handle_task_runs, handle_task_set_schedule,
-    handle_task_set_verify, handle_task_update, handle_task_update_status, handle_tasks_list,
+    handle_task_create, handle_task_create_batch, handle_task_delete, handle_task_get,
+    handle_task_run, handle_task_runs, handle_task_set_schedule, handle_task_set_verify,
+    handle_task_update, handle_task_update_status, handle_tasks_list,
 };
 #[cfg(feature = "timeline")]
 pub(crate) use timeline_routes::{
@@ -581,7 +579,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/sessions/{id}/threads",
             post(handle_session_create_thread),
         )
-        // Tasks (RFC-043)
+        // Automations (major-version cutover of the RFC-043 task surface;
+        // route paths keep the /api/tasks prefix until the HTTP rename).
         .route("/api/tasks", get(handle_tasks_list))
         .route("/api/tasks", post(handle_task_create))
         .route("/api/tasks/batch", post(handle_task_create_batch))
@@ -593,28 +592,6 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/tasks/{id}/verify", put(handle_task_set_verify))
         .route("/api/tasks/{id}/run", post(handle_task_run))
         .route("/api/tasks/{id}/runs", get(handle_task_runs))
-        .route("/api/tasks/{id}/comments", get(handle_task_comments_list))
-        .route("/api/tasks/{id}/comments", post(handle_task_comment_create))
-        .route(
-            "/api/tasks/{id}/comments/{cid}",
-            put(handle_task_comment_update),
-        )
-        .route(
-            "/api/tasks/{id}/comments/{cid}",
-            delete(handle_task_comment_delete),
-        )
-        .route(
-            "/api/tasks/{id}/dependencies",
-            get(handle_task_dependencies_list),
-        )
-        .route(
-            "/api/tasks/{id}/dependencies",
-            post(handle_task_dependency_add),
-        )
-        .route(
-            "/api/tasks/{id}/dependencies/{dep_id}",
-            delete(handle_task_dependency_remove),
-        )
         // Calendar
         .route(
             "/api/calendar/events",

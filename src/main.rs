@@ -3419,11 +3419,6 @@ async fn cmd_serve(kernel: &Kernel, config_path: &Path) -> Result<()> {
     supervisor.track_critical("gateway", gateway_task);
     supervisor.track_critical("guardian", guardian_task);
     supervisor.track_critical("health", health_task);
-    // Retired CronScheduler → RFC-043 tasks: one-time migration of any
-    // legacy cron jobs (persisted state + config inline jobs) into scheduled
-    // tasks. Fire-and-forget — failures log and retry on the next boot, so
-    // this is not tracked as a critical task.
-    let _legacy_cron_migration = kernel.migrate_legacy_crons();
     for task in channel_tasks {
         supervisor.track_critical("channel", task);
     }

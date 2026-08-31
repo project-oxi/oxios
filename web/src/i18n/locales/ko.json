@@ -189,7 +189,16 @@
     "verifySaveFailed": "검증 설정 저장에 실패했습니다",
     "saving": "저장 중...",
     "lastRunContext": "최근 실행 컨텍스트",
-    "noRuns": "실행 기록이 없습니다"
+    "noRuns": "실행 기록이 없습니다",
+    "addFromTemplate": "자동화 추가",
+    "runHistory": "실행 기록",
+    "lastError": "마지막 오류",
+    "status": {
+      "active": "활성",
+      "paused": "일시중지",
+      "exhausted": "소진됨",
+      "failed": "실패"
+    }
   },
   "budget": {
     "title": "예산",

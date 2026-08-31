@@ -115,8 +115,11 @@ export function useAutomationBrainSpaces() {
       const res = await api.get<
         Array<{ id: string; name: string }> | { items: Array<{ id: string; name: string }> }
       >('/api/brain/spaces')
+      // The endpoint returns JSON `null` when the brain daemon is absent;
+      // dereferencing null would throw inside the queryFn and poison the
+      // shared ['brain','spaces'] cache for useBrainSpaces consumers.
       if (Array.isArray(res)) return res
-      return res.items ?? []
+      return res?.items ?? []
     },
     staleTime: 60_000,
   })

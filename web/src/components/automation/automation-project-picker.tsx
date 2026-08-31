@@ -117,7 +117,10 @@ export function AutomationProjectPicker({
  */
 export function useAutomationProjectRoster() {
   return useQuery({
-    queryKey: ['projects'],
+    // Namespaced so it never shares cache shape with the layout's
+    // ['projects'] ({items,total}) — React Query serves stale data on
+    // refetch failure, and a shape mix would crash projects.find.
+    queryKey: ['automations', 'roster', 'projects'],
     queryFn: async (): Promise<Array<{ id: string; name: string }>> => {
       const res = await api.get<
         | { projects: Array<{ id: string; name: string }> }

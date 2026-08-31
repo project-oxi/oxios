@@ -198,7 +198,7 @@ function AutomationTemplateCard({
         className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors"
       >
         <Plus className="w-3.5 h-3.5" />
-        {t('cronJobs.templates.addTask')}
+        {t('automations.addFromTemplate')}
       </button>
     </div>
   )

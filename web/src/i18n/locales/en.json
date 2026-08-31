@@ -189,7 +189,16 @@
     "verifySaveFailed": "Failed to save verify settings",
     "saving": "Saving...",
     "lastRunContext": "Last run context",
-    "noRuns": "No runs yet"
+    "noRuns": "No runs yet",
+    "addFromTemplate": "Add Automation",
+    "runHistory": "Run history",
+    "lastError": "Last error",
+    "status": {
+      "active": "Active",
+      "paused": "Paused",
+      "exhausted": "Exhausted",
+      "failed": "Failed"
+    }
   },
   "budget": {
     "title": "Budget",

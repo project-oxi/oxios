@@ -13,7 +13,7 @@
 // for the data layer — behavior is pinned at the HTTP + DOM boundary.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { server } from '@/__tests__/msw/server'
@@ -91,6 +91,29 @@ const runWithContext = {
   completedAt: '2026-08-31T09:02:00+00:00',
 }
 
+const runOlder = {
+  id: 'r-0',
+  automationId: 'a-2',
+  sessionId: null,
+  trigger: 'manual',
+  status: 'failed',
+  contextSnapshot: {
+    projectId: null,
+    personaId: 'persona-3',
+    brainSpace: null,
+    trigger: 'manual',
+    verify: { enabled: false, maxIterations: 3 },
+    instruction: 'write the brief',
+  },
+  summary: null,
+  resultContent: null,
+  error: 'provider timeout',
+  costUsd: null,
+  tokensUsed: 120,
+  startedAt: '2026-08-30T09:00:00+00:00',
+  completedAt: '2026-08-30T09:00:40+00:00',
+}
+
 // ── Request capture ──
 
 // Every request the page makes is recorded here so the "no /api/tasks"
@@ -107,15 +130,20 @@ function makeRequestLog() {
 
 // ── Harness ──
 
-function renderPage() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, refetchInterval: false } },
-  })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AutomationsPage />
-    </QueryClientProvider>,
-  )
+function renderPage(queryClient?: QueryClient) {
+  const qc =
+    queryClient ??
+    new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    })
+  return {
+    queryClient: qc,
+    ...render(
+      <QueryClientProvider client={qc}>
+        <AutomationsPage />
+      </QueryClientProvider>,
+    ),
+  }
 }
 
 /** Default MSW state: one cron automation, empty rosters, empty runs. */
@@ -331,6 +359,77 @@ describe('<AutomationsPage> — automation domain (MSW)', () => {
     expect(snap).toHaveTextContent('persona-3')
     expect(snap).toHaveTextContent('Work')
     expect(snap).toHaveTextContent('write the brief')
+  })
+
+  it('renders the full run-history list (newest first) plus lastError in detail', async () => {
+    server.use(
+      http.get('/api/automations', () =>
+        HttpResponse.json({
+          automations: [
+            automationProjectless,
+            { ...automationCron, lastError: 'provider timeout' },
+          ],
+          count: 2,
+        }),
+      ),
+      http.get('/api/automations/:id/runs', ({ request }) => {
+        const id = new URL(request.url).pathname.split('/')[3]
+        if (id === 'a-2') return HttpResponse.json({ runs: [runWithContext, runOlder], count: 2 })
+        return HttpResponse.json({ runs: [], count: 0 })
+      }),
+    )
+
+    renderPage()
+    fireEvent.click(await screen.findByTestId(`automation-detail-${automationCron.id}`))
+    const history = await screen.findByTestId('automation-run-history')
+    const rows = within(history).getAllByTestId('automation-run-history-row')
+    expect(rows).toHaveLength(2)
+    // Newest first: succeeded cron run, then the failed manual run.
+    expect(rows[0]).toHaveTextContent('succeeded')
+    expect(rows[0]).toHaveTextContent('Brief delivered')
+    expect(rows[1]).toHaveTextContent('failed')
+    expect(rows[1]).toHaveTextContent('provider timeout')
+    // The definition's lastError is surfaced in the detail dialog.
+    expect(await screen.findByTestId('automation-last-error')).toHaveTextContent('provider timeout')
+  })
+
+  it('shows the quiet empty state (no history rows) when runs are empty', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByTestId(`automation-detail-${automationCron.id}`))
+    await screen.findByTestId('automation-last-run-context')
+    expect(await screen.findByText('automations.noRuns')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-run-history')).not.toBeInTheDocument()
+  })
+
+  it('labels the template-gallery CTA with the automation copy, not the retired Task copy', async () => {
+    server.use(http.get('/api/automations', () => HttpResponse.json({ automations: [], count: 0 })))
+    renderPage()
+    const gallery = await screen.findByTestId('automation-template-gallery')
+    const ctas = within(gallery)
+      .getAllByRole('button')
+      .filter((b) => /addFromTemplate|addTask/.test(b.textContent ?? ''))
+    expect(ctas.length).toBeGreaterThan(0)
+    for (const cta of ctas) {
+      expect(cta).toHaveTextContent('automations.addFromTemplate')
+      expect(cta).not.toHaveTextContent('cronJobs.templates.addTask')
+    }
+  })
+  it('keeps the shared brain-spaces query successful when the daemon returns a null body', async () => {
+    server.use(http.get('/api/brain/spaces', () => HttpResponse.json(null)))
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchInterval: false } },
+    })
+    renderPage(qc)
+    fireEvent.click(await screen.findByTestId('automations-new'))
+    // The picker hides with an empty roster...
+    await waitFor(() =>
+      expect(screen.queryByTestId('automation-brain-picker')).not.toBeInTheDocument(),
+    )
+    // ...and the shared ['brain','spaces'] query must be a successful [] —
+    // not an error state that would poison useBrainSpaces consumers.
+    const state = qc.getQueryState(['brain', 'spaces'])
+    expect(state?.status).toBe('success')
+    expect(state?.data).toEqual([])
   })
 
   it('shows the no-runs copy when the automation has no run history', async () => {

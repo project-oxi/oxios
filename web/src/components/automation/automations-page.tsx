@@ -179,7 +179,7 @@ export function AutomationsPage() {
           return (
             <StatusChip
               key={status}
-              label={meta.label}
+              label={t(meta.label)}
               count={count}
               active={statusFilter === status}
               onClick={() => setStatusFilter(status)}
@@ -365,7 +365,7 @@ function AutomationCard({
             meta.color,
           )}
         >
-          {meta.label}
+          {t(meta.label)}
         </span>
       </div>
 
@@ -793,7 +793,7 @@ function AutomationDetailDialog({
                   variant="secondary"
                   className={AUTOMATION_STATUS_META[automation.status].color}
                 >
-                  {AUTOMATION_STATUS_META[automation.status].label}
+                  {t(AUTOMATION_STATUS_META[automation.status].label)}
                 </Badge>
               </DialogTitle>
             </DialogHeader>
@@ -802,7 +802,15 @@ function AutomationDetailDialog({
               {automation.description && (
                 <p className="text-sm text-muted-foreground">{automation.description}</p>
               )}
-
+              {/* Last failure — surfaced so a Failed automation explains itself */}
+              {automation.lastError && (
+                <p
+                  className="text-xs text-status-error-on-surface"
+                  data-testid="automation-last-error"
+                >
+                  {automation.lastError}
+                </p>
+              )}
               {/* Instruction */}
               <div>
                 <Label className="text-xs font-medium mb-1 block text-muted-foreground">
@@ -898,12 +906,12 @@ function AutomationDetailDialog({
   )
 }
 
-// ── Last-run context snapshot (the brief's "immutable run-context display") ──
+// ── Run context snapshot + run-history list ──
 
+// The latest run's immutable contextSnapshot is the header card; the full
+// history (newest first, kernel caps at 50) renders below as a compact list.
 function LastRunSnapshot({ automationId }: { automationId: string }) {
   const { t } = useTranslation()
-  // The brief requires "no run history"; only the most-recent run's context
-  // snapshot is shown — and only when one exists.
   const { data, isLoading } = useAutomationRuns(automationId)
   const runs: AutomationRun[] = data?.runs ?? []
   const latest = runs[0]
@@ -921,8 +929,64 @@ function LastRunSnapshot({ automationId }: { automationId: string }) {
       ) : !latest ? (
         <p className="text-xs text-muted-foreground/60">{t('automations.noRuns')}</p>
       ) : (
-        <RunContextCard run={latest} />
+        <>
+          <RunContextCard run={latest} />
+          {runs.length > 0 && (
+            <div className="mt-3" data-testid="automation-run-history">
+              <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                {t('automations.runHistory')}
+              </Label>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {runs.map((run) => (
+                  <RunHistoryRow key={run.id} run={run} />
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
+    </div>
+  )
+}
+
+// One compact history row: status, trigger, summary-or-error, relative time.
+function RunHistoryRow({ run }: { run: AutomationRun }) {
+  const ok = run.status === 'succeeded'
+  return (
+    <div
+      className="flex items-start gap-2 rounded-lg border p-2 text-xs"
+      data-testid="automation-run-history-row"
+    >
+      <span
+        className={cn(
+          'mt-0.5 h-1.5 w-1.5 rounded-full shrink-0',
+          ok
+            ? 'bg-status-success'
+            : run.status === 'running'
+              ? 'bg-status-warning'
+              : 'bg-status-error',
+        )}
+        aria-label={run.status}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium capitalize">{run.status}</span>
+          <Badge variant="outline" className="capitalize px-1.5 py-0 text-2xs">
+            {run.trigger}
+          </Badge>
+          <span className="text-muted-foreground/60">{relativeTime(run.startedAt)}</span>
+        </div>
+        {(run.summary || run.error) && (
+          <p
+            className={cn(
+              'mt-0.5 line-clamp-2',
+              run.error ? 'text-status-error-on-surface' : 'text-muted-foreground',
+            )}
+          >
+            {run.error ?? run.summary}
+          </p>
+        )}
+      </div>
     </div>
   )
 }

@@ -153,19 +153,33 @@ export interface SetVerifyParams {
 }
 
 // ── Status metadata ──
-
+// `label` holds an i18n KEY resolved via t() at render sites (the page and
+// dialogs translate it) so status copy is bilingual. relativeTime strings
+// stay hardcoded for now — same convention as the old TASK_STATUS_META.
 export const AUTOMATION_STATUS_META: Record<
   AutomationStatus,
   { label: string; color: string; bgColor: string }
 > = {
   active: {
-    label: 'Active',
+    label: 'automations.status.active',
     color: 'text-status-success-on-surface',
     bgColor: 'bg-status-success/10',
   },
-  paused: { label: 'Paused', color: 'text-hue-purple', bgColor: 'bg-hue-purple/10' },
-  exhausted: { label: 'Exhausted', color: 'text-muted-foreground', bgColor: 'bg-muted' },
-  failed: { label: 'Failed', color: 'text-status-error-on-surface', bgColor: 'bg-status-error/10' },
+  paused: {
+    label: 'automations.status.paused',
+    color: 'text-hue-purple',
+    bgColor: 'bg-hue-purple/10',
+  },
+  exhausted: {
+    label: 'automations.status.exhausted',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted',
+  },
+  failed: {
+    label: 'automations.status.failed',
+    color: 'text-status-error-on-surface',
+    bgColor: 'bg-status-error/10',
+  },
 }
 
 export const AUTOMATION_STATUSES: AutomationStatus[] = ['active', 'paused', 'exhausted', 'failed']

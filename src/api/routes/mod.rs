@@ -580,8 +580,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/sessions/{id}/threads",
             post(handle_session_create_thread),
         )
-        // Automations (web IA major-version cutover — replaces the RFC-043 task surface).
-        // No /api/tasks* route is registered; the router 404s the legacy prefix.
+        // Automations (web IA major-version cutover).
+        // No compatibility routes are registered; the router 404s retired prefixes.
         .route("/api/automations", get(handle_automations_list))
         .route("/api/automations", post(handle_automation_create))
         .route("/api/automations/{id}", get(handle_automation_get))

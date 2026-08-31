@@ -1,9 +1,8 @@
 //! API routes for automation management.
 //!
 //! CRUD + trigger scheduling + verify + run history for the automation
-//! lifecycle. The web IA major-version cutover renames the surface from
-//! `/api/tasks` (the RFC-043 prefix) to `/api/automations`; the `/api/tasks*`
-//! family is no longer registered (router 404s them).
+//! lifecycle. Only the `/api/automations` prefix is registered; any other
+//! prefix 404s.
 //!
 //! Endpoints (exact, exhaustive):
 //!
@@ -455,9 +454,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_legacy_tasks_endpoint_does_not_resolve() {
-        // The /api/tasks prefix is retired in this major-version cutover.
-        // No `/api/tasks*` route is registered, so the router must 404 the
-        // legacy surface instead of silently aliasing to automations.
+        // No compatibility routes are registered for the retired surface;
+        // the router must 404 these paths instead of aliasing to automations.
         let tmp = tempfile::tempdir().unwrap();
         let app = test_support::test_app(tmp.path());
         let mut svc = router(&app);

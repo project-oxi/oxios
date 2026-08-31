@@ -8,8 +8,6 @@ export type OperateAttentionKind = 'pending_approval' | 'waiting_input' | 'faile
 
 /** Safe follow-up actions the backend may offer for an attention item. */
 export type OperateAction = 'approve' | 'reject' | 'open_run' | 'open_agent' | 'open_automation'
-
-/** Where an attention item comes from. Unknown fields are absent entirely. */
 export interface OperateOrigin {
   agentId?: string
   sessionId?: string
@@ -61,8 +59,8 @@ export interface OperateRun {
   projectId?: string
   sessionId?: string
   error?: string
-  stepsCompleted?: number
-  stepsTotal?: number
+  stepsCompleted?: number | null
+  stepsTotal?: number | null
   tokensUsed?: number
   costUsd?: number
   modelId?: string
@@ -113,6 +111,9 @@ export interface OperateProjectContext {
   milestones: OperateMilestoneSummary[]
   activeRuns: OperateRun[]
 }
+
+/** Capability family — one row per real source record. */
+export type OperateCapabilityFamily = 'mcp' | 'skill' | 'engine' | 'security' | 'channel'
 
 /** Capability family — one row per real source record. */
 export interface OperateCapability {

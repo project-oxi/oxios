@@ -165,6 +165,9 @@ describe('useOperateCapabilities', () => {
     const { result } = renderHook(() => useOperateCapabilities(), { wrapper })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     const query = queryClient.getQueryCache().find({ queryKey: ['operate', 'capabilities'] })
-    expect(query?.options.staleTime).toBe(60_000)
+    // staleTime is read off the observer options in v5, not the bare
+    // QueryOptions — assert via the observer, which is what actually
+    // governs client caching.
+    expect(query?.observers[0]?.options.staleTime).toBe(60_000)
   })
 })

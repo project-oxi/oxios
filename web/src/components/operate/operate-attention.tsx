@@ -22,9 +22,9 @@ export function OperateAttention() {
   const attention = useOperateAttention()
   const pending = usePendingApprovals()
 
-  const items = attention.data?.items ?? []
-  const waitingInput = items.filter((i) => i.kind === 'waiting_input')
-  const failedRuns = items.filter((i) => i.kind === 'failed_run')
+  const items: OperateAttentionItem[] = attention.data?.items ?? []
+  const waitingInput = items.filter((i: OperateAttentionItem) => i.kind === 'waiting_input')
+  const failedRuns = items.filter((i: OperateAttentionItem) => i.kind === 'failed_run')
   const approvalsQuiet = !pending.isError && !pending.isLoading && pending.items.length === 0
   // Only the renderable categories count toward "nothing to show" —
   // endpoint approval rows are surfaced through the canonical AttentionQueue.

@@ -42,7 +42,9 @@ export function ProvidersSection() {
         </h3>
         <button
           type="button"
-          onClick={() => navigate({ to: '/settings', search: { section: 'engine' } })}
+          onClick={() =>
+            navigate({ to: '/operate/system/settings', search: { section: 'engine' } })
+          }
           className="text-muted-foreground hover:text-foreground transition-colors"
           title={t('dashboard.engineSettings')}
         >

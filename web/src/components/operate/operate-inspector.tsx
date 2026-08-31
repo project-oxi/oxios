@@ -38,10 +38,9 @@ export function OperateInspector({
   const { t } = useTranslation()
   const isAgent = run.kind === 'agent'
   const progress = progressOf({
-    steps_completed: run.stepsCompleted,
-    steps_total: run.stepsTotal,
+    steps_completed: run.stepsCompleted ?? 0,
+    steps_total: run.stepsTotal ?? null,
   })
-
   const body = (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4">
       <header className="flex items-start justify-between gap-2">
@@ -230,7 +229,8 @@ export function OperateInspector({
 function OriginSection({ run }: { run: OperateRun }) {
   const { t } = useTranslation()
   const rows: Array<[string, string]> = []
-  if (run.automationName) rows.push([t('operate.origin.automation'), run.automationName])
+  if (run.kind === 'automation' && run.automationId)
+    rows.push([t('operate.origin.automation'), run.name])
   if (run.automationId) rows.push([t('operate.origin.automationId'), run.automationId])
   if (run.projectId) rows.push([t('operate.origin.project'), run.projectId])
   if (run.sessionId) rows.push([t('commandCenter.inspector.session'), run.sessionId])

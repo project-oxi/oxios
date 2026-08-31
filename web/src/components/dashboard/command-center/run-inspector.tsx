@@ -58,13 +58,6 @@ export function RunInspector({
   const { data: detail } = useAgentDetail(run.id)
   const { data: trace } = useAgentTrace(run.id)
 
-  const steps = trace?.steps ?? []
-  const recentSteps = [...steps].slice(-MAX_STEPS).reverse()
-  const recentTools = [...steps]
-    .filter((s) => s.kind === 'tool')
-    .slice(-MAX_TOOLS)
-    .reverse()
-
   const body = (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <header className="flex items-start justify-between gap-2">

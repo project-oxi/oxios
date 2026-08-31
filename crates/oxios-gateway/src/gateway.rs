@@ -719,6 +719,14 @@ impl Gateway {
             // Chat-scoped brain binding (chat brain picker): validated at
             // the WS/HTTP ingress; carried through to ExecEnv::brain_space.
             let brain_space = msg.metadata.get("brain_space").map(String::as_str);
+            // Slash-command turn annotation (/search, /skill): the WS layer
+            // serializes an `oxios_ouroboros::TurnCommand` as JSON; parse it
+            // here so the orchestrator can inject the directive into the
+            // turn's system prompt. Absent/unparseable → None (normal turn).
+            let turn_command = msg
+                .metadata
+                .get("turn_command")
+                .and_then(|v| serde_json::from_str::<oxios_ouroboros::TurnCommand>(v).ok());
             // Parse optional per-message model params from metadata. Strings
             // are used so the WS layer doesn't need a structured payload
             // change — the gateway translates them to typed ModelParams here.
@@ -752,6 +760,7 @@ impl Gateway {
                     persona_id,
                     brain_space,
                     &request_id,
+                    turn_command,
                 ) => Some(res),
             };
 

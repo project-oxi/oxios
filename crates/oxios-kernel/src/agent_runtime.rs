@@ -341,6 +341,7 @@ impl AgentRuntime {
             env.persona_id.as_deref(),
             env.brain_space.as_deref(),
             env.restore_state.as_ref(),
+            env.turn_command.as_ref(),
         )
         .await
     }
@@ -376,6 +377,9 @@ impl AgentRuntime {
         persona_id: Option<&str>,
         brain_space: Option<&str>,
         restore_state: Option<&serde_json::Value>,
+        // Slash-command turn annotation (/search, /skill). `Some` injects an
+        // explicit directive block into the system prompt for this turn only.
+        turn_command: Option<&oxios_ouroboros::TurnCommand>,
     ) -> Result<ExecutionResult> {
         let prompt = build_user_prompt_inner(goal, acceptance_criteria);
 
@@ -464,6 +468,21 @@ impl AgentRuntime {
                 kernel_manifest.as_deref(),
                 brain_line.as_deref(),
             );
+        }
+
+        // Slash-command directive (/search, /skill): appended last so the
+        // explicit user invocation outranks the ambient capability index.
+        // `/skill` inlines the full SKILL.md body so the turn works even when
+        // path sandboxing would block a file read.
+        if let Some(cmd) = turn_command {
+            let skill_content = match cmd {
+                oxios_ouroboros::TurnCommand::Skill { name, .. } => {
+                    self.kernel_handle.extensions.get_skill_content(name).await
+                }
+                oxios_ouroboros::TurnCommand::WebSearch { .. } => None,
+            };
+            let section = turn_command_section(cmd, skill_content.as_deref());
+            system_prompt.push_str(&section);
         }
 
         // Blend relevant memories into system prompt (brain recall) — only
@@ -1930,6 +1949,93 @@ fn filter_brain_capabilities(
 /// `None` when unbound (bullet omitted entirely — the skill stays hidden).
 fn brain_space_line(brain_space: Option<&str>) -> Option<String> {
     brain_space.map(|space| format!("Connected brain space: `{space}`."))
+}
+
+/// Render the slash-command directive block appended to the system prompt.
+///
+/// `skill_content` is the SKILL.md body fetched by the caller (`None` when
+/// the skill vanished between WS validation and execution — the block then
+/// tells the model the invocation could not be resolved).
+fn turn_command_section(cmd: &oxios_ouroboros::TurnCommand, skill_content: Option<&str>) -> String {
+    match cmd {
+        oxios_ouroboros::TurnCommand::WebSearch { query } => format!(
+            "\n\n## Turn Command: Web Search\n\
+             The user explicitly invoked /search with the query \"{query}\".\n\
+             You MUST ground this answer in fresh web results: call the \
+             `web_search` tool now, then `get_search_results`, and cite the \
+             sources in your reply. Do not answer from memory alone.\n"
+        ),
+        oxios_ouroboros::TurnCommand::Skill { name, args } => {
+            let args_line = if args.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\nUser arguments for this invocation:\n\n{args}\n")
+            };
+            match skill_content {
+                Some(content) => format!(
+                    "\n\n## Invoked Skill: {name}\n\
+                     The user explicitly invoked the `{name}` skill via /skill. \
+                     Follow the skill instructions below exactly.\n\
+                     {args_line}\n<skill_content>\n{content}\n</skill_content>\n"
+                ),
+                None => format!(
+                    "\n\n## Invoked Skill: {name}\n\
+                     The user invoked the `{name}` skill via /skill, but it \
+                     could not be loaded. Say so briefly and continue with the \
+                     request using your own capabilities.\n{args_line}"
+                ),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod turn_command_tests {
+    use super::turn_command_section;
+    use oxios_ouroboros::TurnCommand;
+
+    #[test]
+    fn web_search_section_carries_query_and_tool_directive() {
+        let s = turn_command_section(
+            &TurnCommand::WebSearch {
+                query: "rust tokio cancel safety".into(),
+            },
+            None,
+        );
+        assert!(s.contains("## Turn Command: Web Search"));
+        assert!(s.contains("rust tokio cancel safety"));
+        assert!(s.contains("`web_search`"));
+        assert!(s.contains("get_search_results"));
+    }
+
+    #[test]
+    fn skill_section_inlines_content_and_args() {
+        let s = turn_command_section(
+            &TurnCommand::Skill {
+                name: "pdf".into(),
+                args: "extract page 3 of report.pdf".into(),
+            },
+            Some("Read the PDF with pdfsongs first."),
+        );
+        assert!(s.contains("## Invoked Skill: pdf"));
+        assert!(s.contains("extract page 3 of report.pdf"));
+        assert!(s.contains("<skill_content>"));
+        assert!(s.contains("pdfsongs"));
+    }
+
+    #[test]
+    fn skill_section_without_content_degrades_gracefully() {
+        let s = turn_command_section(
+            &TurnCommand::Skill {
+                name: "ghost".into(),
+                args: String::new(),
+            },
+            None,
+        );
+        assert!(s.contains("could not be loaded"));
+        // No empty args block for blank arguments.
+        assert!(!s.contains("User arguments"));
+    }
 }
 
 /// Shared system-prompt builder for the directive path.

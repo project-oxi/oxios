@@ -324,6 +324,7 @@ async fn test_orchestrator_happy_path() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -363,6 +364,7 @@ async fn test_orchestrator_events_published() {
                 None, // persona_id
                 None, // brain_space
                 "test-req",
+                None,
             )
             .await
     });
@@ -544,6 +546,7 @@ async fn test_orchestrator_routes_to_supervisor() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();

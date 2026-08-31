@@ -8,6 +8,7 @@
 import { memo } from 'react'
 import type { ChatMessage } from '@/types'
 import { AssistantMessage } from './AssistantMessage'
+import { CommandNotice } from './CommandNotice'
 import { MessageContextMenu } from './components/message-context-menu'
 import { ToolMessage } from './ToolMessage'
 import { UserMessage } from './UserMessage'
@@ -20,6 +21,11 @@ export interface MessageViewProps {
 }
 
 function MessageViewImpl({ message, sessionId, assistantIndex, onRetry }: MessageViewProps) {
+  // Command notices (slash-command feedback) render as a bare pill — no
+  // context menu, no bubble chrome.
+  if (message.role === 'system') {
+    return <CommandNotice message={message} />
+  }
   const content = (() => {
     switch (message.role) {
       case 'user':
@@ -27,7 +33,6 @@ function MessageViewImpl({ message, sessionId, assistantIndex, onRetry }: Messag
       case 'tool':
         return <ToolMessage message={message} />
       case 'assistant':
-      case 'system':
         return (
           <AssistantMessage
             message={message}
@@ -40,7 +45,6 @@ function MessageViewImpl({ message, sessionId, assistantIndex, onRetry }: Messag
         return null
     }
   })()
-
   return (
     <MessageContextMenu message={message} onRetry={onRetry}>
       {content}

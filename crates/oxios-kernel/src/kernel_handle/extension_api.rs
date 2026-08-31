@@ -30,6 +30,12 @@ impl ExtensionApi {
         self.skill_manager.get_skill(name).await
     }
 
+    /// Read an installed skill's full SKILL.md content (frontmatter included).
+    /// Used by the agent runtime to inline `/skill <name>` turn invocations.
+    pub async fn get_skill_content(&self, name: &str) -> Option<String> {
+        self.skill_manager.get_skill_content(name).await
+    }
+
     /// Enable a skill.
     pub async fn enable_skill(&self, name: &str) -> anyhow::Result<()> {
         self.skill_manager.set_enabled(name, true).await

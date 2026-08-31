@@ -2446,33 +2446,39 @@
     "noResults": "No results"
   },
   "slash": {
+    "noResults": "No matching command",
     "compact": {
-      "description": "Summarize the conversation to save context"
-    },
-    "new-topic": {
-      "description": "Start a new topic branch"
+      "description": "Summarize the conversation to free up context"
     },
     "clear": {
-      "description": "Clear the current input"
+      "description": "Start a fresh conversation"
     },
-    "search-on": {
-      "description": "Toggle web search for this message"
-    },
-    "web": {
-      "description": "Fetch a URL and use it as context"
+    "search": {
+      "description": "Ground the answer in a live web search"
     },
     "skill": {
-      "description": "Invoke a skill by name"
+      "description": "Invoke an installed skill for this turn"
     },
     "persona": {
-      "description": "Switch active persona"
+      "description": "List personas or set one for this session"
     },
-    "save": {
-      "description": "Save the current response to knowledge base"
+    "model": {
+      "description": "Switch the model for this session"
     },
     "export": {
-      "description": "Export the conversation"
+      "description": "Download this conversation as Markdown"
+    },
+    "help": {
+      "description": "List available commands"
     }
+  },
+  "command": {
+    "conversationReset": "Conversation reset — your next message starts a new session",
+    "modelUsage": "Usage: /model <provider/model> — e.g. /model anthropic/claude-sonnet-4",
+    "modelSet": "Model for this session set to {{model}}",
+    "exportNoSession": "Nothing to export yet — send a message first",
+    "exported": "Transcript exported to {{filename}}",
+    "exportFailed": "Export failed — the session could not be loaded"
   },
   "pathAccess": {
     "title": "Path Access",

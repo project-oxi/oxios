@@ -27,7 +27,9 @@ import { useEffectiveProfile } from '@/hooks/use-effective-profile'
 import { useRoles } from '@/hooks/use-engine'
 import { has } from '@/lib/affordances'
 import { buildChatRows } from '@/lib/chat-rows'
+import { exportTranscriptMarkdown } from '@/lib/export-transcript'
 import { addInputHistory } from '@/lib/input-history-storage'
+import { parseSlashInput, SLASH_COMMANDS, type SlashCommandDef } from '@/lib/slash-commands'
 import { getToken, useChatStore } from '@/stores/chat'
 import { useFanoutStore } from '@/stores/fanout'
 import { usePortalStore } from '@/stores/portal'
@@ -70,6 +72,8 @@ export function ChatPage() {
     retryLoadSession,
     connect,
     newSession,
+    sendCommandMessage,
+    pushSystemNotice,
   } = useChatStore(
     useShallow((s) => ({
       messages: s.messages,
@@ -96,6 +100,8 @@ export function ChatPage() {
       retryLoadSession: s.retryLoadSession,
       connect: s.connect,
       newSession: s.newSession,
+      sendCommandMessage: s.sendCommandMessage,
+      pushSystemNotice: s.pushSystemNotice,
     })),
   )
   const queuedCount = useChatStore((s) => s._pendingQueue.length)
@@ -253,6 +259,58 @@ export function ChatPage() {
     setUserScrolledUp((prev) => (prev === !atBottom ? prev : !atBottom))
   }
 
+  // Client-local slash commands (2026-08-31 design): executed entirely in
+  // the page — no WS traffic, no turn. Feedback goes through the same
+  // notice rows the server command path uses.
+  const runClientCommand = (cmd: SlashCommandDef, args: string) => {
+    switch (cmd.id) {
+      case 'clear':
+        newSession()
+        pushSystemNotice(t('command.conversationReset'), { command: 'clear', status: 'ok' })
+        break
+      case 'model': {
+        const modelId = args.trim()
+        if (!modelId) {
+          pushSystemNotice(t('command.modelUsage'), { command: 'model', status: 'error' })
+          break
+        }
+        setActiveModelId(modelId)
+        pushSystemNotice(t('command.modelSet', { model: modelId }), {
+          command: 'model',
+          status: 'ok',
+        })
+        break
+      }
+      case 'export': {
+        if (!activeSessionId) {
+          pushSystemNotice(t('command.exportNoSession'), { command: 'export', status: 'error' })
+          break
+        }
+        exportTranscriptMarkdown(activeSessionId)
+          .then((filename) =>
+            pushSystemNotice(t('command.exported', { filename }), {
+              command: 'export',
+              status: 'ok',
+            }),
+          )
+          .catch(() =>
+            pushSystemNotice(t('command.exportFailed'), { command: 'export', status: 'error' }),
+          )
+        break
+      }
+      case 'help': {
+        const list = SLASH_COMMANDS.map(
+          (c) =>
+            `${c.label}${c.argHint ? ` ${c.argHint}` : ''} — ${t(`slash.${c.id}.description`)}`,
+        ).join('\n')
+        pushSystemNotice(list, { command: 'help', status: 'ok' })
+        break
+      }
+      default:
+        break
+    }
+  }
+
   const handleMiniMapJump = (index: number) => {
     const el = messagesContainerRef.current?.querySelector(`[data-msg-index="${index}"]`)
     el?.scrollIntoView({ block: 'center' })
@@ -264,6 +322,24 @@ export function ChatPage() {
     files: AttachedFile[],
   ) => {
     if (!content.trim()) return
+
+    // Slash commands (2026-08-31 design): dispatched by execution class.
+    // client → local action; server → command frame (no turn); turn → sent
+    // verbatim, the WS layer strips the prefix and attaches the directive.
+    // Commands bypass context enrichment and input history.
+    const slash = parseSlashInput(content)
+    if (slash) {
+      setInput('')
+      if (slash.cmd.kind === 'client') {
+        runClientCommand(slash.cmd, slash.args)
+        return
+      }
+      if (slash.cmd.kind === 'server') {
+        sendCommandMessage(content)
+        setUserScrolledUp(false)
+        return
+      }
+    }
 
     let enrichedContent = content
 

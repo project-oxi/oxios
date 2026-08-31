@@ -367,6 +367,7 @@ impl Orchestrator {
         persona_id: Option<&str>,
         brain_space: Option<&str>,
         request_id: &str,
+        turn_command: Option<oxios_ouroboros::TurnCommand>,
     ) -> Result<OrchestrationResult> {
         // Get the IntentEngine (always wired by the kernel assembler).
         let engine = self
@@ -388,6 +389,7 @@ impl Orchestrator {
             brain_space: brain_space.map(String::from),
             user_id: user_id.to_string(),
             model_params,
+            turn_command,
         };
 
         // Call the unified path.
@@ -504,6 +506,7 @@ impl Orchestrator {
             session_id: Some(ctx.session_id.clone()),
             brain_space: ctx.brain_space.clone(),
             model_params: ctx.model_params.clone(),
+            turn_command: ctx.turn_command.clone(),
         }
     }
 

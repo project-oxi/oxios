@@ -189,6 +189,7 @@ async fn test_orchestrator_happy_path() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -225,6 +226,7 @@ async fn test_session_continuation() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -243,6 +245,7 @@ async fn test_session_continuation() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -267,6 +270,7 @@ async fn test_multiple_sessions_independent() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -282,6 +286,7 @@ async fn test_multiple_sessions_independent() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -312,6 +317,7 @@ async fn test_session_cleaned_after_completion() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -329,6 +335,7 @@ async fn test_session_cleaned_after_completion() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();
@@ -355,6 +362,7 @@ async fn test_phase_events_published() {
             None, // persona_id
             None, // brain_space
             "test-req",
+            None,
         )
         .await
         .unwrap();

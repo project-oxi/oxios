@@ -19,8 +19,10 @@ use crate::state_store::{Session, StateStore};
 
 /// Messages above this count trigger compression.
 const COLLAPSE_THRESHOLD: usize = 40;
-/// Recent messages never compressed (kept as raw context).
-const VISIBLE_TAIL: usize = 20;
+/// Recent messages never compressed (kept as raw context). Public so the
+/// WS `/compact` handler can reject invocations with too little history
+/// instead of silently no-oping.
+pub const VISIBLE_TAIL: usize = 20;
 
 /// System prompt for the compression LLM call (ported from LobeHub).
 const COMPRESSION_SYSTEM_PROMPT: &str = r#"You are a conversation context compressor. Your task is to create a structured summary that preserves essential information while significantly reducing token count.

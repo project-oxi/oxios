@@ -235,6 +235,14 @@ export interface ChatMessage {
     /// Socket dropped mid-stream on this turn; the partial answer is kept
     /// and rendered with the InterruptedNotice `reason="interrupted"` copy.
     interrupted?: boolean
+    /// Slash-command feedback row (`role: 'system'`): rendered as a compact
+    /// centered pill by CommandNotice instead of an assistant bubble. The
+    /// row is runtime-only — never persisted server-side.
+    notice?: boolean
+    /// Command id the notice belongs to (`/compact`, `/persona`, …).
+    command?: string
+    /// Execution outcome carried by `command_result` frames.
+    status?: 'ok' | 'error'
   }
   totalInputTokens?: number
   totalOutputTokens?: number
@@ -404,6 +412,8 @@ export interface StreamChunk {
     | 'compression_delta'
     | 'compression_done'
     | 'compression_failed'
+    // Slash commands executed server-side without a turn (`/compact`, `/persona`).
+    | 'command_result'
   content?: string
   model?: string
   tool_name?: string
@@ -426,7 +436,13 @@ export interface StreamChunk {
   /// Partial tool-call args fragment (oxi 0.58+ ToolCallDelta). Raw JSON
   /// fragment; the frontend accumulates per tool_call_id.
   args_delta?: string
-  status?: 'started' | 'completed'
+  status?: 'started' | 'completed' | 'ok' | 'error'
+  /// Slash command name carried by `command_result` frames.
+  command?: string
+  /// Human-readable result message (`command_result`).
+  message?: string
+  /// Optional structured payload (`command_result`, e.g. persona list).
+  data?: unknown
   summary?: string
   output_summary?: string
   /** Structured web-search results (RFC-015 Phase E): [{title,url,snippet,source}]. */

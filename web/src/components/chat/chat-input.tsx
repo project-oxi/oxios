@@ -24,6 +24,7 @@ import { has } from '@/lib/affordances'
 import { api } from '@/lib/api-client'
 import { resolveBrainSpace } from '@/lib/brain-binding'
 import { getInputHistory } from '@/lib/input-history-storage'
+import { SLASH_COMMANDS, type SlashCommandDef } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
 import { ApprovalModeSelector } from './approval-mode-selector'
@@ -82,76 +83,6 @@ interface ChatInputProps {
   setActiveModelId?: (id: string | null) => void
   placeholder?: string
 }
-
-// ── Slash commands ──
-
-interface SlashCommand {
-  id: string
-  label: string
-  icon: string
-  action: (editor: ReturnType<typeof useEditor>) => void
-}
-
-const SLASH_COMMANDS: SlashCommand[] = [
-  // ── Conversation control ──
-  {
-    id: 'compact',
-    label: '/compact',
-    icon: '📝',
-    action: (ed) => ed?.commands.insertContent('/compact '),
-  },
-  {
-    id: 'new-topic',
-    label: '/new-topic',
-    icon: '🆕',
-    action: (ed) => ed?.commands.insertContent('/new-topic '),
-  },
-  {
-    id: 'clear',
-    label: '/clear',
-    icon: '🗑️',
-    action: (ed) => ed?.commands.clearContent(),
-  },
-  // ── Search & web ──
-  {
-    id: 'search-on',
-    label: '/search',
-    icon: '🌐',
-    action: (ed) => ed?.commands.insertContent('/search '),
-  },
-  {
-    id: 'web',
-    label: '/web',
-    icon: '🔗',
-    action: (ed) => ed?.commands.insertContent('/web '),
-  },
-  // ── Skill invocation ──
-  {
-    id: 'skill',
-    label: '/skill',
-    icon: '⚡',
-    action: (ed) => ed?.commands.insertContent('/skill '),
-  },
-  {
-    id: 'persona',
-    label: '/persona',
-    icon: '🎭',
-    action: (ed) => ed?.commands.insertContent('/persona '),
-  },
-  // ── Session ──
-  {
-    id: 'save',
-    label: '/save',
-    icon: '📌',
-    action: (ed) => ed?.commands.insertContent('/save '),
-  },
-  {
-    id: 'export',
-    label: '/export',
-    icon: '📤',
-    action: (ed) => ed?.commands.insertContent('/export '),
-  },
-]
 
 // TipTap's setContent() and the `content:` option parse their argument as
 // HTML via DOMParser.parseFromString, which collapses newlines and swallows
@@ -296,7 +227,19 @@ export function ChatInput({
   // keymap, so the newline never lands in the doc). editorProps is bound once at
   // editor creation, so the changing values are mirrored into a ref and read fresh
   // on each keypress.
-  const sendGate = useRef({ isTouch, showSlashMenu, mentionQuery, handleSend: () => {} })
+  const sendGate = useRef({
+    isTouch,
+    showSlashMenu,
+    mentionQuery,
+    handleSend: () => {},
+    slashGate: {
+      open: false,
+      items: [] as SlashCommandDef[],
+      move: (_d: number) => {},
+      pick: () => {},
+      close: () => {},
+    },
+  })
   // Input history — terminal-style ArrowUp/Down navigation through past prompts.
   // Mirrors the sendGate ref pattern: the editorProps handler is bound once, so
   // mutable state is read fresh from a ref.
@@ -308,6 +251,8 @@ export function ChatInput({
     applyingHistory: false,
     apply: (_text: string) => {},
   })
+  // Slash menu keyboard selection — highlighted index across filteredCommands.
+  const [slashIndex, setSlashIndex] = useState(0)
   // Placeholder text depends on connection state and i18n. useEditor captures
   // its config once at mount (no deps array), so the resolved string is also
   // pushed to the Placeholder extension imperatively when it changes (below).
@@ -344,6 +289,32 @@ export function ChatInput({
         // Shift+Enter → newline; IME-composition Enter confirms a candidate
         // (Korean/CJK) instead of sending.
         const composing = event.isComposing || event.keyCode === 229
+        // Slash menu navigation — Enter/Tab pick the highlighted command,
+        // arrows move the highlight, Escape closes. Consumed before the
+        // Enter-to-send and history handlers.
+        const sg = sendGate.current.slashGate
+        if (sg.open) {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            sg.move(1)
+            return true
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            sg.move(-1)
+            return true
+          }
+          if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !composing) {
+            event.preventDefault()
+            sg.pick()
+            return true
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            sg.close()
+            return true
+          }
+        }
         if (
           event.key === 'Enter' &&
           !event.shiftKey &&
@@ -413,13 +384,16 @@ export function ChatInput({
       }
       const anchor = editor.state.selection.anchor
       const textBefore = text.slice(0, anchor)
-      // /commands
-      const slashMatch = textBefore.match(/(?:^|\n)\/(\w*)$/)
+      // /commands — suppressed in the copilot variant (locked persona, no
+      // command surface; same gate as @mentions below).
+      const slashMatch = isCopilotRef.current ? null : textBefore.match(/(?:^|\n)\/(\w*)$/)
       if (slashMatch) {
         setShowSlashMenu(true)
         setSlashFilter(slashMatch[1] || '')
+        setSlashIndex(0)
       } else {
         setShowSlashMenu(false)
+        setSlashIndex(0)
       }
       // @mentions — suppressed in the copilot variant: searchMentions
       // early-returns [] there, and letting mentionQuery go non-null would
@@ -602,13 +576,47 @@ export function ChatInput({
     setContextAttachments([])
     setAttachedFiles([])
   }, [getContent, connected, contextAttachments, attachedFiles, onSend, editor])
-  sendGate.current = { isTouch, showSlashMenu, mentionQuery, handleSend }
-
-  const canSend = editor?.getText().trim() && connected
-
   const filteredCommands = SLASH_COMMANDS.filter(
     (c) => c.id.includes(slashFilter) || c.label.includes(slashFilter),
   )
+  // Select a command from the menu: insert its label (plus a space) so the
+  // user can complete arguments, then close the menu. Execution happens on
+  // send — the chat page parses the prefix and dispatches by command class.
+  const selectSlashCommand = useCallback(
+    (cmd: SlashCommandDef) => {
+      editor?.commands.insertContent(`${cmd.label} `)
+      setShowSlashMenu(false)
+      setSlashIndex(0)
+      editor?.commands.focus()
+    },
+    [editor],
+  )
+  sendGate.current = {
+    isTouch,
+    showSlashMenu,
+    mentionQuery,
+    handleSend,
+    slashGate: {
+      open: showSlashMenu,
+      items: filteredCommands,
+      move: (delta) =>
+        setSlashIndex((i) =>
+          filteredCommands.length
+            ? (i + delta + filteredCommands.length) % filteredCommands.length
+            : 0,
+        ),
+      pick: () => {
+        const cmd = filteredCommands[slashIndex]
+        if (cmd) selectSlashCommand(cmd)
+      },
+      close: () => {
+        setShowSlashMenu(false)
+        setSlashIndex(0)
+      },
+    },
+  }
+
+  const canSend = editor?.getText().trim() && connected
 
   return (
     <div className="w-full max-w-3xl mx-auto px-4 pb-4 pt-2 relative">
@@ -731,25 +739,39 @@ export function ChatInput({
       {showSlashMenu && (
         <div className="absolute bottom-full left-4 z-50 mb-1 rounded-xl border bg-popover shadow-lg w-64">
           <div className="p-1.5">
-            {filteredCommands.map((cmd) => (
-              <button
-                key={cmd.id}
-                type="button"
-                onClick={() => {
-                  cmd.action(editor)
-                  setShowSlashMenu(false)
-                }}
-                className="flex items-center gap-2.5 w-full rounded-lg px-2.5 py-2 text-left hover:bg-accent/50 transition-colors"
-              >
-                <span className="text-sm">{cmd.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">{cmd.label}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {t(`slash.${cmd.id}.description`)}
-                  </p>
-                </div>
-              </button>
-            ))}
+            {filteredCommands.length === 0 ? (
+              <p className="px-2.5 py-3 text-xs text-muted-foreground text-center">
+                {t('slash.noResults')}
+              </p>
+            ) : (
+              filteredCommands.map((cmd, idx) => (
+                <button
+                  key={cmd.id}
+                  type="button"
+                  onClick={() => selectSlashCommand(cmd)}
+                  onMouseEnter={() => setSlashIndex(idx)}
+                  className={cn(
+                    'flex items-start gap-2.5 w-full rounded-lg px-2.5 py-2 text-left transition-colors',
+                    idx === slashIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+                  )}
+                >
+                  <span className="text-sm leading-5">{cmd.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">
+                      {cmd.label}
+                      {cmd.argHint && (
+                        <span className="ml-1.5 font-normal text-muted-foreground">
+                          {cmd.argHint}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t(`slash.${cmd.id}.description`)}
+                    </p>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}

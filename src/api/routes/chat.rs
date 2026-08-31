@@ -8,6 +8,7 @@ use axum::extract::{
     ws::{Message, WebSocket},
 };
 use axum::response::IntoResponse;
+use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +67,381 @@ pub(crate) fn default_user() -> String {
     "default".into()
 }
 
+// ---------------------------------------------------------------------------
+// Chat slash commands (2026-08-31 design)
+// ---------------------------------------------------------------------------
+
+/// Shared WS sink type (recv task, send task, keepalive task).
+type WsSink = std::sync::Arc<tokio::sync::Mutex<SplitSink<WebSocket, Message>>>;
+
+/// Server-interpreted chat slash commands.
+///
+/// The WS layer parses a leading `/command` prefix before the frame reaches
+/// the gateway: `/compact` and `/persona` execute inline (no LLM turn, reply
+/// via a `command_result` frame); `/search` and `/skill` ride the normal turn
+/// with an explicit [`oxios_ouroboros::TurnCommand`] directive. Client-local
+/// commands (`/clear`, `/export`, `/model`, `/help`) never reach the server
+/// from the Web chat; if another channel types one it passes through as plain
+/// text.
+#[derive(Debug, PartialEq, Eq)]
+enum SlashCommand {
+    /// `/compact` — force context compression for the active session.
+    Compact,
+    /// `/persona [id]` — list enabled personas / set the session persona.
+    Persona(Option<String>),
+    /// `/skill <name> [args]` — invoke an installed skill for this turn.
+    Skill { name: String, args: String },
+    /// `/search <query>` — force a grounded web-search turn.
+    Search(String),
+}
+
+impl SlashCommand {
+    /// Parse a leading `/cmd` prefix. Returns `None` for normal messages —
+    /// including anything that starts with `/` but does not name a
+    /// server-side command (those pass through untouched).
+    fn parse(content: &str) -> Option<Self> {
+        let rest = content.strip_prefix('/')?;
+        let (cmd, args) = match rest.split_once(char::is_whitespace) {
+            Some((c, a)) => (c, a.trim()),
+            None => (rest, ""),
+        };
+        match cmd {
+            "compact" => Some(Self::Compact),
+            "persona" => Some(Self::Persona((!args.is_empty()).then(|| args.to_string()))),
+            "search" if !args.is_empty() => Some(Self::Search(args.to_string())),
+            "skill" if !args.is_empty() => {
+                let (name, skill_args) = match args.split_once(char::is_whitespace) {
+                    Some((n, a)) => (n, a.trim()),
+                    None => (args, ""),
+                };
+                Some(Self::Skill {
+                    name: name.to_string(),
+                    args: skill_args.to_string(),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Outcome of resolving a leading slash command in an inbound chat frame.
+#[derive(Debug)]
+enum SlashResolution {
+    /// Proceed with the normal gateway turn: possibly-rewritten content plus
+    /// an optional turn directive for the system prompt.
+    Turn {
+        /// Content the agent sees (command prefix stripped).
+        content: String,
+        /// Turn directive (`/search`, `/skill`), `None` for plain messages.
+        turn_command: Option<oxios_ouroboros::TurnCommand>,
+    },
+    /// Command executed inline; a `command_result` frame was already sent.
+    Handled,
+}
+
+/// Send a `command_result` frame on the invoking connection.
+async fn send_command_result(
+    ws_tx: &WsSink,
+    command: &str,
+    status: &str,
+    message: String,
+    data: Option<serde_json::Value>,
+) {
+    let frame = serde_json::json!({
+        "type": "command_result",
+        "command": command,
+        "status": status,
+        "message": message,
+        "data": data.unwrap_or(serde_json::Value::Null),
+    });
+    let _ = ws_tx
+        .lock()
+        .await
+        .send(Message::Text(frame.to_string().into()))
+        .await;
+}
+
+/// Resolve a leading slash command in an inbound chat message.
+///
+/// Inline commands (`/compact`, `/persona`) act on the kernel directly and
+/// return [`SlashResolution::Handled`]. Turn commands (`/search`, `/skill`)
+/// return the stripped content plus a [`oxios_ouroboros::TurnCommand`] the
+/// gateway threads into `ExecEnv::turn_command`.
+async fn resolve_slash_command(
+    content: &str,
+    kernel: &oxios_kernel::KernelHandle,
+    session_id: Option<&str>,
+    ws_tx: &WsSink,
+) -> SlashResolution {
+    let Some(cmd) = SlashCommand::parse(content) else {
+        return SlashResolution::Turn {
+            content: content.to_string(),
+            turn_command: None,
+        };
+    };
+    match cmd {
+        SlashCommand::Compact => {
+            let Some(compression) = kernel.compression.as_ref() else {
+                send_command_result(
+                    ws_tx,
+                    "compact",
+                    "error",
+                    "Compression is not available on this server.".into(),
+                    None,
+                )
+                .await;
+                return SlashResolution::Handled;
+            };
+            let Some(sid) = session_id else {
+                send_command_result(
+                    ws_tx,
+                    "compact",
+                    "error",
+                    "No active session to compact — send a message first.".into(),
+                    None,
+                )
+                .await;
+                return SlashResolution::Handled;
+            };
+            let sid = oxios_kernel::state_store::SessionId(sid.to_string());
+            match kernel.state.load_session(&sid).await {
+                Ok(Some(session)) => {
+                    let compactable = session
+                        .exchange_count()
+                        .saturating_sub(oxios_kernel::compression::VISIBLE_TAIL);
+                    if compactable == 0 {
+                        send_command_result(
+                            ws_tx,
+                            "compact",
+                            "ok",
+                            "Not enough history to compact yet — the latest messages are kept raw."
+                                .into(),
+                            None,
+                        )
+                        .await;
+                    } else {
+                        compression.spawn_compress(sid.0.clone());
+                        send_command_result(
+                            ws_tx,
+                            "compact",
+                            "ok",
+                            "Compaction started — the summary appears here when ready.".into(),
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                Ok(None) => {
+                    send_command_result(
+                        ws_tx,
+                        "compact",
+                        "error",
+                        format!("Session '{sid}' was not found."),
+                        None,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_command_result(
+                        ws_tx,
+                        "compact",
+                        "error",
+                        format!("Failed to load session: {e}"),
+                        None,
+                    )
+                    .await;
+                }
+            }
+            SlashResolution::Handled
+        }
+        SlashCommand::Persona(None) => {
+            let personas: Vec<serde_json::Value> = kernel
+                .persona
+                .list_enabled()
+                .iter()
+                .map(|p| serde_json::json!({ "id": p.id, "name": p.name }))
+                .collect();
+            send_command_result(
+                ws_tx,
+                "persona",
+                "ok",
+                "Available personas — usage: /persona <id>".into(),
+                Some(serde_json::json!({ "personas": personas })),
+            )
+            .await;
+            SlashResolution::Handled
+        }
+        SlashCommand::Persona(Some(id)) => {
+            let invalid = match kernel.persona.get(&id) {
+                Some(p) if p.enabled => None,
+                Some(_) => Some(format!("Persona '{id}' is disabled.")),
+                None => Some(format!(
+                    "Unknown persona '{id}'. Type /persona to list available personas."
+                )),
+            };
+            if let Some(message) = invalid {
+                send_command_result(ws_tx, "persona", "error", message, None).await;
+                return SlashResolution::Handled;
+            }
+            let Some(sid) = session_id else {
+                send_command_result(
+                    ws_tx,
+                    "persona",
+                    "error",
+                    "No active session — send a message first, then set the persona.".into(),
+                    None,
+                )
+                .await;
+                return SlashResolution::Handled;
+            };
+            let sid = oxios_kernel::state_store::SessionId(sid.to_string());
+            match kernel.state.load_session(&sid).await {
+                Ok(Some(mut session)) => {
+                    session.active_persona_id = Some(id.clone());
+                    match kernel.state.save_session(&session).await {
+                        Ok(()) => {
+                            send_command_result(
+                                ws_tx,
+                                "persona",
+                                "ok",
+                                format!("Persona set to '{id}' for this session."),
+                                Some(serde_json::json!({ "persona_id": id })),
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            send_command_result(
+                                ws_tx,
+                                "persona",
+                                "error",
+                                format!("Failed to persist persona: {e}"),
+                                None,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    send_command_result(
+                        ws_tx,
+                        "persona",
+                        "error",
+                        "No active session — send a message first, then set the persona.".into(),
+                        None,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    send_command_result(
+                        ws_tx,
+                        "persona",
+                        "error",
+                        format!("Failed to load session: {e}"),
+                        None,
+                    )
+                    .await;
+                }
+            }
+            SlashResolution::Handled
+        }
+        SlashCommand::Skill { name, args } => {
+            // Validate before spending a turn: an unknown skill would only
+            // surface as a degraded system-prompt note mid-stream.
+            if kernel.extensions.get_skill_entry(&name).await.is_none() {
+                send_command_result(
+                    ws_tx,
+                    "skill",
+                    "error",
+                    format!("Unknown skill '{name}'. Type /skill to list installed skills."),
+                    None,
+                )
+                .await;
+                return SlashResolution::Handled;
+            }
+            // The agent still needs a user message — bare `/skill <name>`
+            // gets an explicit instruction; args pass through verbatim.
+            let content = if args.is_empty() {
+                format!("Invoke the `{name}` skill.")
+            } else {
+                args.clone()
+            };
+            SlashResolution::Turn {
+                content,
+                turn_command: Some(oxios_ouroboros::TurnCommand::Skill { name, args }),
+            }
+        }
+        SlashCommand::Search(query) => SlashResolution::Turn {
+            content: query.clone(),
+            turn_command: Some(oxios_ouroboros::TurnCommand::WebSearch { query }),
+        },
+    }
+}
+
+#[cfg(test)]
+mod slash_command_tests {
+    use super::SlashCommand;
+
+    #[test]
+    fn parse_compact_with_or_without_args() {
+        assert_eq!(SlashCommand::parse("/compact"), Some(SlashCommand::Compact));
+        assert_eq!(
+            SlashCommand::parse("/compact   "),
+            Some(SlashCommand::Compact)
+        );
+    }
+
+    #[test]
+    fn parse_persona_with_and_without_id() {
+        assert_eq!(
+            SlashCommand::parse("/persona"),
+            Some(SlashCommand::Persona(None))
+        );
+        assert_eq!(
+            SlashCommand::parse("/persona dev"),
+            Some(SlashCommand::Persona(Some("dev".into())))
+        );
+    }
+
+    #[test]
+    fn parse_search_requires_query() {
+        assert_eq!(
+            SlashCommand::parse("/search rust tokio cancellation"),
+            Some(SlashCommand::Search("rust tokio cancellation".into()))
+        );
+        // Bare /search is not a command — passes through as text.
+        assert_eq!(SlashCommand::parse("/search"), None);
+    }
+
+    #[test]
+    fn parse_skill_splits_name_and_args() {
+        assert_eq!(
+            SlashCommand::parse("/skill pdf"),
+            Some(SlashCommand::Skill {
+                name: "pdf".into(),
+                args: String::new(),
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/skill pdf extract page 3"),
+            Some(SlashCommand::Skill {
+                name: "pdf".into(),
+                args: "extract page 3".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn non_commands_pass_through() {
+        // Client-local commands are not server-side commands.
+        assert_eq!(SlashCommand::parse("/clear"), None);
+        assert_eq!(SlashCommand::parse("/export"), None);
+        assert_eq!(SlashCommand::parse("/help"), None);
+        // Slash in the middle of text is not a command.
+        assert_eq!(SlashCommand::parse("what does /compact do?"), None);
+        // Unknown command passes through.
+        assert_eq!(SlashCommand::parse("/nonexistent foo"), None);
+    }
+}
 /// Match a chat brain binding against a spaces payload by NAME. The
 /// kernel forwards the binding verbatim as the ops' `space`, and oxibrain
 /// ops address spaces by name (`Brain::lookup_space(name)`, ADR-013) —
@@ -1510,8 +1886,40 @@ pub(crate) async fn handle_chat_websocket(socket: WebSocket, state: Arc<AppState
                                     continue;
                                 }
 
+                                // Slash commands: `/compact` and `/persona`
+                                // execute inline and reply with a
+                                // `command_result` frame (no turn); `/search`
+                                // and `/skill` rewrite the content and attach
+                                // a turn directive. Raw text is preserved for
+                                // persistence — the cleaned content is what
+                                // the agent sees.
+                                let sid_for_command = incoming_session_id.clone().or({
+                                    let guard = active_session_shared.lock().await;
+                                    guard.clone()
+                                });
+                                let (turn_content, turn_command) = match resolve_slash_command(
+                                    &content,
+                                    &state.kernel,
+                                    sid_for_command.as_deref(),
+                                    &ws_tx,
+                                )
+                                .await
+                                {
+                                    SlashResolution::Handled => continue,
+                                    SlashResolution::Turn {
+                                        content,
+                                        turn_command,
+                                    } => (content, turn_command),
+                                };
+
                                 let mut incoming =
-                                    IncomingMessage::new("web", "default", content.clone());
+                                    IncomingMessage::new("web", "default", turn_content);
+
+                                if let Some(tc) = turn_command
+                                    && let Ok(json) = serde_json::to_string(&tc)
+                                {
+                                    incoming.metadata.insert("turn_command".into(), json);
+                                }
 
                                 // RFC-049: honour a client-supplied request_id
                                 // (first message, no session yet) so the turn

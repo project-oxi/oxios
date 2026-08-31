@@ -20,7 +20,7 @@ pub mod model_resolver;
 pub mod prompts;
 pub mod types;
 
-pub use directive::{Directive, Exchange, ExecEnv, ModelParams, MsgCtx, Verdict};
+pub use directive::{Directive, Exchange, ExecEnv, ModelParams, MsgCtx, TurnCommand, Verdict};
 pub use engine::{IntentEngine, IntentEngineOps};
 pub use model_resolver::{ModelResolver, ResolvedModel, StaticModelResolver};
 pub use prompts::REVIEW_SYSTEM_PROMPT;

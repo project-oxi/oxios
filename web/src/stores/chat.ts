@@ -191,6 +191,14 @@ interface ChatActions {
   setTemperature: (temperature: number | null) => void
   /** Set the per-message max output tokens (null = provider default). */
   setMaxTokens: (maxTokens: number | null) => void
+  /** Send a server-executed slash command frame (`/compact`, `/persona`).
+   *  Unlike sendMessage: no optimistic user bubble, no streaming state, no
+   *  queue — the server replies with a `command_result` frame instead of a
+   *  turn. */
+  sendCommandMessage: (content: string) => void
+  /** Append a runtime-only command notice row (`role: 'system'`). Never
+   *  persisted — the server does not store command frames. */
+  pushSystemNotice: (content: string, meta?: { command?: string; status?: 'ok' | 'error' }) => void
   /** Remove a single message by id. Used by the inline error retry flow (RFC-032). */
   removeMessage: (id: string) => void
   /** Clear persisted state (e.g. on logout). */
@@ -1223,6 +1231,57 @@ export const useChatStore = create<ChatStore>()(
         _ws.send(JSON.stringify(payload))
       },
 
+      sendCommandMessage(content: string) {
+        const {
+          activeSessionId,
+          activeProjectId,
+          activeRole,
+          activePersonaId,
+          activeBrainSpace,
+          activeModelId,
+          connected,
+          connect,
+          _ws,
+          brainDefaults,
+        } = get()
+        // Commands need a live socket — there is no queue/turn machinery to
+        // replay them through. The caller guards `connected` before reaching
+        // here; the check keeps a race harmless.
+        if (!connected || !_ws || _ws.readyState !== WebSocket.OPEN) {
+          connect()
+          return
+        }
+        // Same context fields as sendMessage so the WS layer resolves the
+        // session/persona overrides identically. The server's command
+        // resolver intercepts the leading `/command` before the gateway and
+        // replies with `command_result` — no turn, no persistence.
+        _ws.send(
+          JSON.stringify({
+            type: 'message',
+            content,
+            session_id: activeSessionId ?? '',
+            project_id: activeProjectId ?? '',
+            role: activeRole ?? '',
+            persona_id: activePersonaId ?? '',
+            brain_space:
+              resolveBrainSpace(activeBrainSpace, brainDefaults.project, brainDefaults.global) ??
+              '',
+            model: activeModelId ?? '',
+          }),
+        )
+      },
+
+      pushSystemNotice(content, meta) {
+        const notice: ChatMessage = {
+          id: uuid(),
+          role: 'system',
+          content,
+          timestamp: new Date().toISOString(),
+          metadata: { notice: true, command: meta?.command, status: meta?.status },
+        }
+        set((s) => ({ messages: [...s.messages, notice] }))
+      },
+
       _drainPendingQueue() {
         const { _pendingQueue } = get()
         if (_pendingQueue.length === 0) return
@@ -2019,6 +2078,33 @@ export const useChatStore = create<ChatStore>()(
                 ? { ...s.compression, status: 'failed' as const, error: chunk.error }
                 : { summary: '', status: 'failed' as const, error: chunk.error },
             }))
+            break
+          }
+          // Slash-command feedback (2026-08-31 design): `/compact` and
+          // `/persona` never create a turn — the server answers inline with
+          // this frame and the notice row renders as a compact pill. The
+          // server message is structural output (English by convention);
+          // `data` may carry payloads (persona list) for richer rendering.
+          case 'command_result': {
+            const command = typeof chunk.command === 'string' ? chunk.command : ''
+            const status = chunk.status === 'error' ? ('error' as const) : ('ok' as const)
+            const message = typeof chunk.message === 'string' ? chunk.message : ''
+            get().pushSystemNotice(message, { command, status })
+            // Keep the session-scoped persona picker in sync with the
+            // server-validated `/persona <id>` write.
+            const data: unknown = chunk.data
+            if (
+              status === 'ok' &&
+              command === 'persona' &&
+              data !== null &&
+              typeof data === 'object' &&
+              'persona_id' in data
+            ) {
+              const personaId: unknown = data.persona_id
+              if (typeof personaId === 'string') {
+                set({ activePersonaId: personaId })
+              }
+            }
             break
           }
         }

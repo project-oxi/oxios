@@ -110,6 +110,12 @@ pub struct ExecEnv {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brain_space: Option<String>,
 
+    /// Slash-command turn annotation (`/search`, `/skill`). `Some` when the
+    /// chat client invoked a slash command that rides an LLM turn; the agent
+    /// runtime injects the corresponding directive into the system prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_command: Option<TurnCommand>,
+
     /// Agent conversation state to restore on retry (RFC-029 P2b).
     ///
     /// When `Some`, the recovery coordinator captured the previous run's
@@ -206,6 +212,34 @@ pub struct MsgCtx {
     /// Per-message model params. Carried into ExecEnv::model_params.
     /// Populated by the gateway from the WS payload.
     pub model_params: Option<ModelParams>,
+    /// Slash-command turn annotation (`/search`, `/skill`). Carried into
+    /// [`ExecEnv::turn_command`] so the agent runtime injects the explicit
+    /// directive into the system prompt. `None` for normal messages.
+    pub turn_command: Option<TurnCommand>,
+}
+
+/// Slash-command turn annotation (chat slash commands, 2026-08-31 design).
+///
+/// When the chat client sends `/search <query>` or `/skill <name> <args>`, the
+/// WS layer strips the prefix, attaches this enum to the message frame, and
+/// the gateway threads it through [`MsgCtx`] → [`ExecEnv`] into the agent
+/// runtime, which injects the corresponding directive into the system prompt.
+/// `None` for every normal message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnCommand {
+    /// `/search <query>` — the turn MUST ground its answer in web search.
+    WebSearch {
+        /// The search query (text after the command prefix).
+        query: String,
+    },
+    /// `/skill <name> [args]` — invoke an installed skill for this turn.
+    Skill {
+        /// Installed skill name (validated by the WS layer before dispatch).
+        name: String,
+        /// Free-form arguments after the skill name (may be empty).
+        args: String,
+    },
 }
 
 /// Per-message model generation params. Wired from WS payload through
@@ -418,5 +452,39 @@ mod tests {
             Some("anthropic/claude-sonnet-4".to_string())
         );
         assert_eq!(back.role, Some("researcher".to_string()));
+    }
+
+    #[test]
+    fn turn_command_serde_round_trip() {
+        let ws = TurnCommand::WebSearch {
+            query: "tokio cancellation".into(),
+        };
+        let json = serde_json::to_string(&ws).unwrap();
+        assert!(json.contains(r#""kind":"web_search""#));
+        assert_eq!(serde_json::from_str::<TurnCommand>(&json).unwrap(), ws);
+
+        let skill = TurnCommand::Skill {
+            name: "pdf".into(),
+            args: "page 3".into(),
+        };
+        let json = serde_json::to_string(&skill).unwrap();
+        assert!(json.contains(r#""kind":"skill""#));
+        assert_eq!(serde_json::from_str::<TurnCommand>(&json).unwrap(), skill);
+    }
+
+    #[test]
+    fn exec_env_turn_command_survives_serialization() {
+        let env = ExecEnv {
+            turn_command: Some(TurnCommand::WebSearch { query: "x".into() }),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let back: ExecEnv = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.turn_command, env.turn_command);
+
+        // None stays None (and absent in JSON).
+        let plain = ExecEnv::default();
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("turn_command"));
     }
 }

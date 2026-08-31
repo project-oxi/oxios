@@ -13,7 +13,7 @@
 //! - [`BudgetTool`] — Budget management (check, set, reserve, reset)
 //! - [`ResourceTool`] — Resource monitoring (snapshot, history, overloaded)
 //! - [`CalendarTool`] — Calendar events (create, update, delete, list, search, freebusy)
-//! - [`TaskTool`] — Task management (create, list, view, edit, schedule, verify, run)
+//! - [`AutomationTool`] — Automation management (create, list, get, update, pause, resume, run, runs, delete)
 
 pub mod agent_tool;
 pub mod budget_tool;
@@ -25,6 +25,7 @@ pub mod knowledge_tool;
 pub mod marketplace_tool;
 pub mod mcp_manage_tool;
 // First-party app module tools (opt-in, feature-gated).
+pub mod automation_tool;
 #[cfg(feature = "memo")]
 pub mod memo_tool;
 pub mod persona_tool;
@@ -34,11 +35,11 @@ pub mod resource_tool;
 pub mod screenshot_tool;
 pub mod security_tool;
 pub mod skill_forge_tool;
-pub mod task_tool;
 #[cfg(feature = "timeline")]
 pub mod timeline_tool;
 
 pub use agent_tool::AgentTool as KernelAgentTool;
+pub use automation_tool::AutomationTool;
 pub use budget_tool::BudgetTool;
 pub use calendar_tool::CalendarTool;
 pub use email_tool::EmailTool;
@@ -56,6 +57,5 @@ pub use resource_tool::ResourceTool;
 pub use screenshot_tool::ScreenshotTool;
 pub use security_tool::SecurityTool;
 pub use skill_forge_tool::SkillForgeTool;
-pub use task_tool::TaskTool;
 #[cfg(feature = "timeline")]
 pub use timeline_tool::TimelineTool;

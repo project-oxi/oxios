@@ -1,7 +1,7 @@
 //! Automation runner — the single execution path for automation runs.
 //!
 //! Shared by the manual-run HTTP endpoint, the auto-run tick loop, and the
-//! `task` agent tool. Wraps [`KernelHandle::run_goal`] with an overall
+//! `automation` agent tool. Wraps [`KernelHandle::run_goal`] with an overall
 //! deadline and, when the verify gate is armed, a verify/repair loop driven
 //! by a separate verifier conversation.
 //!

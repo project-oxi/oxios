@@ -372,8 +372,8 @@ impl KernelHandle {
     /// The single shared execution primitive for autonomous/scheduled runs.
     /// Used by:
     /// - the CronScheduler auto-start loop (background cron job execution),
-    /// - the task auto-run tick loop (scheduled/heartbeat tasks),
-    /// - `POST /api/tasks/:id/run` (manual task execution).
+    /// - the automation auto-run tick loop (scheduled/heartbeat automations),
+    /// - `POST /api/automations/:id/run` (manual automation execution).
     ///
     /// This calls `orchestrator.handle_unified` directly — the same in-process
     /// path the CLI uses (`execute_prompt_with_session`). It does NOT route

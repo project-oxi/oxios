@@ -1,16 +1,17 @@
-//! Task tool — agent-facing automation management.
+//! Automation tool — agent-facing automation management.
 //!
 //! Wraps [`AutomationStore`] (and the shared runner for `run`) behind the
-//! [`AgentTool`] interface so agents can create, inspect, edit, schedule,
-//! verify-gate, and trigger automations.
+//! [`AgentTool`] interface so agents can manage automations: create, list,
+//! inspect, update, pause/resume, trigger runs, read run history, delete.
 //!
-//! Mechanical cutover note (web IA major version): the underlying domain is
-//! the `automation` module; the tool surface keeps its `task` identity until
-//! the API-rename task lands.
+//! Scheduling (cron / heartbeat) and the verify gate are NOT exposed as
+//! separate tool ops in this major-version cutover; the HTTP layer keeps
+//! `PUT /api/automations/:id/{trigger,verify}` for those concerns. Agents
+//! that need to set or change the trigger pass it via the `create` op
+//! (and re-`create` if mutating).
 
 use async_trait::async_trait;
 
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -19,8 +20,7 @@ use serde_json::{Value, json};
 
 use crate::automation::{
     AutomationRunTrigger, AutomationStatus, AutomationStore, CreateAutomationParams,
-    ListAutomationsParams, SetTriggerParams, SetVerifyParams, UpdateAutomationParams,
-    execute_automation_run,
+    ListAutomationsParams, UpdateAutomationParams, execute_automation_run,
 };
 use crate::kernel_handle::KernelHandle;
 
@@ -34,31 +34,30 @@ const AGENT_RUN_TIMEOUT_SECS: u64 = 300;
 /// [`KernelHandle`] needed to spawn runs. The kernel slot is optional so
 /// store-only actions stay unit-testable without assembling the 16-facade
 /// handle (same degradation pattern as the memo/email optional slots); a
-/// missing kernel only disables the `run` action.
+/// missing kernel only disables the `run` op.
 ///
 /// ## Actions
 ///
-/// | Action          | Description                    | Required params     | Optional params |
-/// |-----------------|--------------------------------|---------------------|-----------------|
-/// | `create`        | Create one automation          | `name`, `instruction` | `description`, `trigger`, `cron_pattern`, `timezone`, `heartbeat_interval_secs`, `max_executions`, `persona_id`, `project_id`, `brain_space` |
-/// | `create_batch`  | Create several automations     | `tasks` (array)     | —               |
-/// | `list`          | List automations               | —                   | `status`, `limit`, `offset` |
-/// | `view`          | Automation detail + last run   | `id`                | —               |
-/// | `edit`          | Partial update                 | `id`                | `name`, `description`, `instruction`, `persona_id`, `project_id`, `brain_space` |
-/// | `update_status` | Change automation status       | `id`, `status`      | —               |
-/// | `set_schedule`  | Set/replace the trigger        | `id`, `trigger`     | `cron_pattern`, `timezone`, `heartbeat_interval_secs`, `max_executions` |
-/// | `set_verify`    | Configure the verify gate      | `id`                | `enabled`, `requirement`, `max_iterations` |
-/// | `run`           | Trigger a background run       | `id`                | —               |
-/// | `delete`        | Delete an automation           | `id`                | —               |
+/// | Action   | Description                    | Required params     | Optional params |
+/// |----------|--------------------------------|---------------------|-----------------|
+/// | `create` | Create one automation          | `name`, `instruction` | `description`, `trigger`, `cron_pattern`, `timezone`, `heartbeat_interval_secs`, `max_executions`, `persona_id`, `project_id`, `brain_space` |
+/// | `list`   | List automations               | —                   | `status`, `limit`, `offset` |
+/// | `get`    | Automation detail              | `id`                | —               |
+/// | `update` | Partial update                 | `id`                | `name`, `description`, `instruction`, `persona_id`, `project_id`, `brain_space` |
+/// | `pause`  | Set status to `paused`         | `id`                | —               |
+/// | `resume` | Set status to `active`         | `id`                | —               |
+/// | `run`    | Trigger a background run       | `id`                | —               |
+/// | `runs`   | Run history (newest first)     | `id`                | —               |
+/// | `delete` | Delete an automation           | `id`                | —               |
 ///
 /// `id` is the automation UUID.
-pub struct TaskTool {
+pub struct AutomationTool {
     store: Arc<Mutex<AutomationStore>>,
     kernel: Option<Arc<KernelHandle>>,
 }
 
-impl TaskTool {
-    /// Create a `TaskTool` from a [`KernelHandle`].
+impl AutomationTool {
+    /// Create an `AutomationTool` from a [`KernelHandle`].
     ///
     /// Returns `None` when the assembler has not attached an automation
     /// store (automation management disabled) — registration then skips
@@ -72,9 +71,10 @@ impl TaskTool {
     }
 
     /// Store-only constructor (production registration path; `run` unavailable).
-    /// Public so `register_tools_from_cspace_gated` can build a TaskTool from a
-    /// raw store handle without an `&Arc<KernelHandle>` (the gated function only
-    /// receives `&KernelHandle`, which is not Clone-able).
+    /// Public so `register_tools_from_cspace_gated` can build an
+    /// `AutomationTool` from a raw store handle without an `&Arc<KernelHandle>`
+    /// (the gated function only receives `&KernelHandle`, which is not
+    /// Clone-able).
     pub fn for_store(store: Arc<Mutex<AutomationStore>>) -> Self {
         Self {
             store,
@@ -92,14 +92,14 @@ impl TaskTool {
     }
 }
 
-impl std::fmt::Debug for TaskTool {
+impl std::fmt::Debug for AutomationTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TaskTool").finish()
+        f.debug_struct("AutomationTool").finish()
     }
 }
 
-/// Compact automation row for `list` output (full detail via `view`).
-fn task_summary(automation: &crate::automation::Automation) -> Value {
+/// Compact automation row for `list` output (full detail via `get`).
+fn automation_summary(automation: &crate::automation::Automation) -> Value {
     json!({
         "id": automation.id,
         "name": automation.name,
@@ -110,19 +110,19 @@ fn task_summary(automation: &crate::automation::Automation) -> Value {
 }
 
 #[async_trait]
-impl AgentTool for TaskTool {
+impl AgentTool for AutomationTool {
     fn name(&self) -> &str {
-        "task"
+        "automation"
     }
 
     fn label(&self) -> &str {
-        "Tasks"
+        "Automations"
     }
 
     fn description(&self) -> &'static str {
-        "Manage long-lived automations — create, schedule, verify-gate, run, and track \
-         recurring or on-demand work items. Actions: create, create_batch, list, view, \
-         edit, update_status, set_schedule, set_verify, run, delete."
+        "Manage long-lived automations — create, inspect, update, pause/resume, \
+         run, and track recurring or on-demand work items. Actions: create, list, \
+         get, update, pause, resume, run, runs, delete."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -132,14 +132,14 @@ impl AgentTool for TaskTool {
                 "action": {
                     "type": "string",
                     "enum": [
-                        "create", "create_batch", "list", "view", "edit", "update_status",
-                        "set_schedule", "set_verify", "run", "delete"
+                        "create", "list", "get", "update", "pause", "resume",
+                        "run", "runs", "delete"
                     ],
                     "description": "Automation operation to perform"
                 },
                 "id": {
                     "type": "string",
-                    "description": "Automation UUID (required for view/edit/update_status/set_schedule/set_verify/run/delete)"
+                    "description": "Automation UUID (required for get/update/pause/resume/run/runs/delete)"
                 },
                 "name": {
                     "type": "string",
@@ -147,16 +147,16 @@ impl AgentTool for TaskTool {
                 },
                 "instruction": {
                     "type": "string",
-                    "description": "Goal instruction executed on each run (create, edit)"
+                    "description": "Goal instruction executed on each run (create, update)"
                 },
                 "description": {
                     "type": "string",
-                    "description": "Human-readable description (create, edit)"
+                    "description": "Human-readable description (create, update)"
                 },
                 "trigger": {
                     "type": "string",
                     "enum": ["manual", "cron", "heartbeat"],
-                    "description": "What starts the automation (create, set_schedule)"
+                    "description": "What starts the automation (create)"
                 },
                 "cron_pattern": {
                     "type": "string",
@@ -164,7 +164,7 @@ impl AgentTool for TaskTool {
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "IANA timezone qualifying the cron schedule (create, set_schedule)"
+                    "description": "IANA timezone qualifying the cron schedule (create)"
                 },
                 "heartbeat_interval_secs": {
                     "type": "integer",
@@ -172,40 +172,32 @@ impl AgentTool for TaskTool {
                 },
                 "max_executions": {
                     "type": "integer",
-                    "description": "Stop after N executions (create, set_schedule)"
+                    "description": "Stop after N executions (create)"
                 },
                 "persona_id": {
                     "type": "string",
-                    "description": "Persona bound to the automation (create, edit); omit for default"
+                    "description": "Persona bound to the automation (create, update); omit for default"
                 },
                 "project_id": {
                     "type": "string",
-                    "description": "Project bound to the automation (create, edit); omit for projectless"
+                    "description": "Project bound to the automation (create, update); omit for projectless"
                 },
                 "brain_space": {
                     "type": "string",
-                    "description": "Brain space bound to the automation (create, edit)"
-                },
-                "tasks": {
-                    "type": "array",
-                    "description": "Array of automation objects for create_batch"
+                    "description": "Brain space bound to the automation (create, update)"
                 },
                 "status": {
                     "type": "string",
                     "enum": ["active", "paused", "exhausted", "failed"],
-                    "description": "New status (update_status)"
+                    "description": "Status filter (list)"
                 },
-                "enabled": {
-                    "type": "boolean",
-                    "description": "Arm/disarm the verify gate (set_verify)"
-                },
-                "requirement": {
-                    "type": "string",
-                    "description": "Acceptance criterion checked by a separate verifier conversation (set_verify)"
-                },
-                "max_iterations": {
+                "limit": {
                     "type": "integer",
-                    "description": "Max verify/repair attempts, default 3 (set_verify)"
+                    "description": "Max rows to return (list)"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Row offset for pagination (list)"
                 }
             },
             "required": ["action"]
@@ -246,78 +238,49 @@ impl AgentTool for TaskTool {
                 }
             }
 
-            "create_batch" => {
-                let raw = params
-                    .get("tasks")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| "create_batch requires 'tasks' array".to_string())?;
-                let mut created = Vec::new();
-                let mut errors = Vec::new();
-                {
-                    let store = self.store.lock().await;
-                    for (i, item) in raw.iter().enumerate() {
-                        let p: CreateAutomationParams = serde_json::from_value(item.clone())
-                            .map_err(|e| format!("create_batch: tasks[{i}] invalid: {e}"))?;
-                        match store.create_automation(p).await {
-                            Ok(automation) => created.push(json!({ "id": automation.id })),
-                            Err(e) => errors.push(format!("tasks[{i}]: {e}")),
-                        }
-                    }
-                }
-                Ok(AgentToolResult::success(
-                    serde_json::to_string_pretty(&json!({
-                        "created": created,
-                        "created_count": created.len(),
-                        "errors": errors,
-                    }))
-                    .unwrap_or_default(),
-                ))
-            }
-
             "list" => {
                 let p: ListAutomationsParams = serde_json::from_value(params.clone())
                     .map_err(|e| format!("list: invalid parameters: {e}"))?;
                 let store = self.store.lock().await;
                 match store.list_automations(p).await {
-                    Ok(list) if list.is_empty() => Ok(AgentToolResult::success("No tasks found.")),
+                    Ok(list) if list.is_empty() => {
+                        Ok(AgentToolResult::success("No automations found."))
+                    }
                     Ok(list) => Ok(AgentToolResult::success(
                         serde_json::to_string_pretty(&json!({
-                            "tasks": list.iter().map(task_summary).collect::<Vec<_>>(),
+                            "automations": list.iter().map(automation_summary).collect::<Vec<_>>(),
                             "count": list.len(),
                         }))
                         .unwrap_or_default(),
                     )),
-                    Err(e) => Ok(AgentToolResult::error(format!("Failed to list tasks: {e}"))),
+                    Err(e) => Ok(AgentToolResult::error(format!(
+                        "Failed to list automations: {e}"
+                    ))),
                 }
             }
 
-            "view" => {
-                let key = id_of().ok_or_else(|| "view requires 'id' parameter".to_string())?;
+            "get" => {
+                let key = id_of().ok_or_else(|| "get requires 'id' parameter".to_string())?;
                 let automation = match self.resolve(&key).await {
                     Ok(a) => a,
                     Err(e) => return Ok(AgentToolResult::error(e)),
                 };
-                let last_run = {
-                    let store = self.store.lock().await;
-                    store.latest_run(&automation.id).await.ok().flatten()
-                };
                 Ok(AgentToolResult::success(
                     serde_json::to_string_pretty(&json!({
-                        "task": automation,
-                        "last_run": last_run,
+                        "automation": automation,
                     }))
                     .unwrap_or_default(),
                 ))
             }
 
-            "edit" => {
-                let key = id_of().ok_or_else(|| "edit requires 'id' parameter".to_string())?;
+            "update" => {
+                let key = id_of().ok_or_else(|| "update requires 'id' parameter".to_string())?;
                 let automation = match self.resolve(&key).await {
                     Ok(a) => a,
                     Err(e) => return Ok(AgentToolResult::error(e)),
                 };
                 let p: UpdateAutomationParams = serde_json::from_value(params.clone())
-                    .map_err(|e| format!("edit: invalid parameters: {e}"))?;
+                    .map_err(|e| format!("update: invalid parameters: {e}"))?;
                 let store = self.store.lock().await;
                 if let Err(e) = store.update_automation(&automation.id, p).await {
                     return Ok(AgentToolResult::error(format!(
@@ -334,93 +297,14 @@ impl AgentTool for TaskTool {
                 }
             }
 
-            "update_status" => {
-                let key =
-                    id_of().ok_or_else(|| "update_status requires 'id' parameter".to_string())?;
-                let status_str = params
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| "update_status requires 'status' parameter".to_string())?;
-                let status = AutomationStatus::from_str(status_str)
-                    .map_err(|e| format!("update_status: {e}"))?;
-                let automation = match self.resolve(&key).await {
-                    Ok(a) => a,
-                    Err(e) => return Ok(AgentToolResult::error(e)),
-                };
-                let store = self.store.lock().await;
-                match store.update_status(&automation.id, &status).await {
-                    Ok(()) => Ok(AgentToolResult::success(format!(
-                        "Automation '{}' status set to {status}.",
-                        automation.id
-                    ))),
-                    Err(e) => Ok(AgentToolResult::error(format!(
-                        "Failed to update status: {e}"
-                    ))),
-                }
+            "pause" => {
+                let key = id_of().ok_or_else(|| "pause requires 'id' parameter".to_string())?;
+                self.set_status(&key, AutomationStatus::Paused).await
             }
 
-            "set_schedule" => {
-                let key =
-                    id_of().ok_or_else(|| "set_schedule requires 'id' parameter".to_string())?;
-                let automation = match self.resolve(&key).await {
-                    Ok(a) => a,
-                    Err(e) => return Ok(AgentToolResult::error(e)),
-                };
-                let p: SetTriggerParams = serde_json::from_value(params.clone())
-                    .map_err(|e| format!("set_schedule: invalid parameters: {e}"))?;
-                let store = self.store.lock().await;
-                if let Err(e) = store.set_trigger(&automation.id, p).await {
-                    return Ok(AgentToolResult::error(format!(
-                        "Failed to set schedule: {e}"
-                    )));
-                }
-                match store.get_automation(&automation.id).await {
-                    Ok(updated) => Ok(AgentToolResult::success(
-                        serde_json::to_string_pretty(&json!({
-                            "trigger": updated.trigger.to_string(),
-                            "cron_pattern": updated.cron_pattern,
-                            "timezone": updated.timezone,
-                            "heartbeat_interval_secs": updated.heartbeat_interval_secs,
-                            "max_executions": updated.max_executions,
-                            "next_run_at": updated.next_run_at,
-                            "status": updated.status.to_string(),
-                        }))
-                        .unwrap_or_default(),
-                    )),
-                    Err(e) => Ok(AgentToolResult::error(format!(
-                        "Scheduled but failed to reload: {e}"
-                    ))),
-                }
-            }
-
-            "set_verify" => {
-                let key =
-                    id_of().ok_or_else(|| "set_verify requires 'id' parameter".to_string())?;
-                let automation = match self.resolve(&key).await {
-                    Ok(a) => a,
-                    Err(e) => return Ok(AgentToolResult::error(e)),
-                };
-                let p: SetVerifyParams = serde_json::from_value(params.clone())
-                    .map_err(|e| format!("set_verify: invalid parameters: {e}"))?;
-                let store = self.store.lock().await;
-                if let Err(e) = store.set_verify(&automation.id, p).await {
-                    return Ok(AgentToolResult::error(format!(
-                        "Failed to set verify config: {e}"
-                    )));
-                }
-                match store.get_automation(&automation.id).await {
-                    Ok(updated) => Ok(AgentToolResult::success(
-                        serde_json::to_string_pretty(&json!({
-                            "verify_enabled": updated.verify.enabled,
-                            "verify_requirement": updated.verify.requirement,
-                            "verify_max_iterations": updated.verify.max_iterations,
-                        }))
-                        .unwrap_or_default(),
-                    )),
-                    Err(e) => Ok(AgentToolResult::error(format!(
-                        "Saved but failed to reload: {e}"
-                    ))),
-                }
+            "resume" => {
+                let key = id_of().ok_or_else(|| "resume requires 'id' parameter".to_string())?;
+                self.set_status(&key, AutomationStatus::Active).await
             }
 
             "run" => {
@@ -476,12 +360,35 @@ impl AgentTool for TaskTool {
                 }
                 Ok(AgentToolResult::success(
                     serde_json::to_string(&json!({
-                        "task_id": automation.id,
+                        "automation_id": automation.id,
                         "run_id": run_id,
-                        "note": "Run started in the background; poll the view action for the outcome.",
+                        "note": "Run started in the background; poll the runs action for the outcome.",
                     }))
                     .unwrap_or_default(),
                 ))
+            }
+
+            "runs" => {
+                let key = id_of().ok_or_else(|| "runs requires 'id' parameter".to_string())?;
+                let automation = match self.resolve(&key).await {
+                    Ok(a) => a,
+                    Err(e) => return Ok(AgentToolResult::error(e)),
+                };
+                let runs = {
+                    let store = self.store.lock().await;
+                    store.list_runs(&automation.id).await
+                };
+                match runs {
+                    Ok(runs) => Ok(AgentToolResult::success(
+                        serde_json::to_string_pretty(&json!({
+                            "automation_id": automation.id,
+                            "runs": runs,
+                            "count": runs.len(),
+                        }))
+                        .unwrap_or_default(),
+                    )),
+                    Err(e) => Ok(AgentToolResult::error(format!("Failed to list runs: {e}"))),
+                }
             }
 
             "delete" => {
@@ -503,9 +410,33 @@ impl AgentTool for TaskTool {
             }
 
             other => Err(format!(
-                "Unknown task action '{other}'. Valid: create, create_batch, list, view, edit, \
-                 update_status, set_schedule, set_verify, run, delete"
+                "Unknown automation action '{other}'. Valid: create, list, get, \
+                 update, pause, resume, run, runs, delete"
             )),
+        }
+    }
+}
+
+impl AutomationTool {
+    /// Shared helper for the `pause` / `resume` ops.
+    async fn set_status(
+        &self,
+        key: &str,
+        status: AutomationStatus,
+    ) -> Result<AgentToolResult, ToolError> {
+        let automation = match self.resolve(key).await {
+            Ok(a) => a,
+            Err(e) => return Ok(AgentToolResult::error(e)),
+        };
+        let store = self.store.lock().await;
+        match store.update_status(&automation.id, &status).await {
+            Ok(()) => Ok(AgentToolResult::success(format!(
+                "Automation '{}' status set to {status}.",
+                automation.id
+            ))),
+            Err(e) => Ok(AgentToolResult::error(format!(
+                "Failed to update status: {e}"
+            ))),
         }
     }
 }
@@ -513,36 +444,61 @@ impl AgentTool for TaskTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automation::AutomationStore;
+    use serde_json::json;
 
-    fn tool() -> TaskTool {
-        TaskTool::for_store(Arc::new(Mutex::new(AutomationStore::in_memory().unwrap())))
+    fn tool() -> AutomationTool {
+        AutomationTool::for_store(Arc::new(Mutex::new(AutomationStore::in_memory().unwrap())))
     }
 
-    async fn run_action(tool: &TaskTool, params: Value) -> Result<AgentToolResult, ToolError> {
+    async fn run_action(
+        tool: &AutomationTool,
+        params: Value,
+    ) -> Result<AgentToolResult, ToolError> {
         tool.execute("call-1", params, None, &ToolContext::default())
             .await
     }
 
     #[test]
-    fn test_schema_structure() {
+    fn name_and_label_are_automation() {
+        let t = tool();
+        assert_eq!(t.name(), "automation");
+        assert_eq!(t.label(), "Automations");
+    }
+
+    #[test]
+    fn schema_lists_only_the_nine_actions() {
         let schema = tool().parameters_schema();
         let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
-        for expected in [
-            "create",
+        let action_strs: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert_eq!(
+            action_strs,
+            vec![
+                "create", "list", "get", "update", "pause", "resume", "run", "runs", "delete",
+            ]
+        );
+        assert_eq!(schema["required"][0], "action");
+    }
+
+    #[test]
+    fn description_omits_removed_actions() {
+        // No mention of view, edit, update_status, set_schedule, set_verify,
+        // create_batch, add_comment, dependencies, backlog.
+        for forbidden in [
             "create_batch",
-            "list",
             "view",
             "edit",
             "update_status",
             "set_schedule",
             "set_verify",
-            "run",
-            "delete",
+            "comment",
+            "dependency",
+            "backlog",
         ] {
-            assert!(actions.iter().any(|a| a == expected), "missing {expected}");
+            assert!(
+                !tool().description().contains(forbidden),
+                "description must not mention `{forbidden}`"
+            );
         }
-        assert_eq!(schema["required"][0], "action");
     }
 
     #[tokio::test]
@@ -560,7 +516,7 @@ mod tests {
             .await
             .unwrap();
         assert!(res.success);
-        assert_eq!(res.output, "No tasks found.");
+        assert_eq!(res.output, "No automations found.");
     }
 
     #[tokio::test]
@@ -583,36 +539,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_verify_action_persists() {
+    async fn pause_and_resume_round_trip_status() {
         let tool = tool();
-        run_action(
+        let created = run_action(
             &tool,
-            json!({"action": "create", "name": "V", "instruction": "x"}),
+            json!({"action": "create", "name": "P", "instruction": "x"}),
         )
         .await
         .unwrap();
-        let created = {
-            let store = tool.store.lock().await;
-            store
-                .list_automations(ListAutomationsParams::default())
-                .await
-                .unwrap()
-        };
-        let id = created[0].id.clone();
-        let res = run_action(
-            &tool,
-            json!({"action": "set_verify", "id": id, "enabled": true,
-                   "requirement": "must include BANANA", "max_iterations": 5}),
-        )
-        .await
-        .unwrap();
-        assert!(res.success, "set_verify failed: {}", res.output);
-        let automation = tool.store.lock().await.get_automation(&id).await.unwrap();
-        assert!(automation.verify.enabled);
+        let id: String = serde_json::from_str::<serde_json::Value>(&created.output).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let pause = run_action(&tool, json!({"action": "pause", "id": id}))
+            .await
+            .unwrap();
+        assert!(pause.success, "pause failed: {}", pause.output);
+        let store = tool.store.lock().await;
         assert_eq!(
-            automation.verify.requirement.as_deref(),
-            Some("must include BANANA")
+            store.get_automation(&id).await.unwrap().status,
+            AutomationStatus::Paused,
         );
-        assert_eq!(automation.verify.max_iterations, 5);
+        drop(store);
+
+        let resume = run_action(&tool, json!({"action": "resume", "id": id}))
+            .await
+            .unwrap();
+        assert!(resume.success, "resume failed: {}", resume.output);
+        let store = tool.store.lock().await;
+        assert_eq!(
+            store.get_automation(&id).await.unwrap().status,
+            AutomationStatus::Active,
+        );
+    }
+
+    #[tokio::test]
+    async fn runs_returns_run_history() {
+        let tool = tool();
+        // Pre-create one automation. The `run` action needs a kernel handle
+        // (absent in the store-only constructor), so we can't trigger a run
+        // here. We still exercise `runs` against the in-memory store: the
+        // store starts with no runs, which is the empty-path the agent will
+        // hit when listing history before any run.
+        let created = run_action(
+            &tool,
+            json!({"action": "create", "name": "H", "instruction": "y"}),
+        )
+        .await
+        .unwrap();
+        let id: String = serde_json::from_str::<serde_json::Value>(&created.output).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let res = run_action(&tool, json!({"action": "runs", "id": id}))
+            .await
+            .unwrap();
+        assert!(res.success, "runs failed: {}", res.output);
+        let body: serde_json::Value = serde_json::from_str(&res.output).unwrap();
+        assert_eq!(body["count"], 0);
+        assert!(body["runs"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_action_is_rejected() {
+        let err = run_action(&tool(), json!({"action": "bogus"}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown automation action"),
+            "got: {err}"
+        );
     }
 }

@@ -494,9 +494,9 @@ impl Surface for WebSurface {
                 "API docs disabled (set gateway.expose_api_docs=true on a loopback bind to enable)"
             );
         }
-        // Spawn the task auto-run tick loop BEFORE `state` is moved into the
+        // Spawn the automation auto-run tick loop BEFORE `state` is moved into the
         // router. It clones the Arc internally.
-        let task_tick = spawn_task_auto_run(state.clone());
+        let automation_tick = spawn_automation_auto_run(state.clone());
 
         let app = app.with_state(state);
 
@@ -533,7 +533,7 @@ impl Surface for WebSurface {
 
         Ok(SurfaceHandle {
             channel: Some(Box::new(web_channel)),
-            tasks: vec![handle, task_tick],
+            tasks: vec![handle, automation_tick],
         })
     }
 }
@@ -547,7 +547,7 @@ impl Surface for WebSurface {
 /// loop share ONE execution path.
 ///
 /// On boot it first recovers runs stranded at `running` by a prior crash.
-fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
+fn spawn_automation_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     use oxios_kernel::automation::{
         AutomationRunTrigger, AutomationTrigger, execute_automation_run,
     };

@@ -1006,6 +1006,95 @@
     "brainDegraded": "Brain daemon offline — degraded",
     "scheduledTasks": "Scheduled tasks"
   },
+  "commandCenter": {
+    "greeting": {
+      "morning": "Good morning",
+      "afternoon": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "newTask": "New task",
+    "health": {
+      "healthy": "System healthy",
+      "attention": "Attention needed",
+      "degraded": "Degraded",
+      "attentionDetail": "{{count}} component(s) unhealthy"
+    },
+    "attention": {
+      "title": "Needs your attention"
+    },
+    "status": {
+      "running": "Running",
+      "starting": "Starting",
+      "failed": "Failed",
+      "idle": "Idle",
+      "completed": "Completed",
+      "stopped": "Stopped"
+    },
+    "activeExecution": {
+      "title": "Active execution",
+      "empty": "No active work",
+      "emptyHint": "Start a task to see it here in real time.",
+      "startTask": "Start a task",
+      "stop": "Stop",
+      "stopping": "Stopping…",
+      "selectRun": "Select run {{name}}"
+    },
+    "run": {
+      "steps": "{{completed}}/{{total}} steps",
+      "elapsed": "Elapsed"
+    },
+    "timeline": {
+      "title": "Live timeline",
+      "viewFull": "View full timeline",
+      "thisRun": "This run",
+      "connectedLive": "Live",
+      "reconnecting": "Reconnecting…",
+      "disconnected": "Disconnected"
+    },
+    "inspector": {
+      "title": "Run inspector",
+      "openRun": "Open run",
+      "stop": "Stop run",
+      "session": "Session",
+      "model": "Model",
+      "started": "Started",
+      "elapsed": "Elapsed",
+      "steps": "Execution steps",
+      "recentTools": "Recent tool calls",
+      "noSteps": "No steps recorded yet.",
+      "finished": "This run has finished.",
+      "noLongerActive": "This run is no longer active.",
+      "toolsEmpty": "No tool calls yet."
+    },
+    "picture": {
+      "title": "Today's operating picture",
+      "activeAgents": "Active agents",
+      "completedToday": "Completed today",
+      "tokensToday": "Tokens today",
+      "spendToday": "Spend today",
+      "last7days": "Runs per day (last 7 days)",
+      "unavailable": "Unavailable",
+      "retry": "Retry"
+    },
+    "system": {
+      "title": "System",
+      "showDetails": "System details",
+      "hideDetails": "Hide system details",
+      "versions": "Binary v{{binary}} · Web v{{web}}",
+      "links": {
+        "mcp": "MCP",
+        "brain": "Brain",
+        "skills": "Skills",
+        "budget": "Budget",
+        "resources": "Resources",
+        "security": "Security"
+      }
+    }
+  },
+  "events": {
+    "title": "Events",
+    "subtitle": "Live system event stream"
+  },
   "dataTable": {
     "clearFilters": "Clear filters",
     "noResults": "No results found",

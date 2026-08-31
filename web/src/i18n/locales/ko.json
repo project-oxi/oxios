@@ -1006,6 +1006,95 @@
     "brainDegraded": "브레인 데몬 오프라인 — 제한됨",
     "scheduledTasks": "예약된 작업"
   },
+  "commandCenter": {
+    "greeting": {
+      "morning": "좋은 아침입니다",
+      "afternoon": "좋은 오후입니다",
+      "evening": "좋은 저녁입니다"
+    },
+    "newTask": "새 작업",
+    "health": {
+      "healthy": "시스템 정상",
+      "attention": "주의 필요",
+      "degraded": "성능 저하",
+      "attentionDetail": "비정상 컴포넌트 {{count}}개"
+    },
+    "attention": {
+      "title": "주요 결정 필요"
+    },
+    "status": {
+      "running": "실행 중",
+      "starting": "시작 중",
+      "failed": "실패",
+      "idle": "대기",
+      "completed": "완료",
+      "stopped": "중지됨"
+    },
+    "activeExecution": {
+      "title": "실행 중인 작업",
+      "empty": "활성 작업 없음",
+      "emptyHint": "작업을 시작하면 실시간으로 여기에 표시됩니다.",
+      "startTask": "작업 시작",
+      "stop": "중지",
+      "stopping": "중지 중…",
+      "selectRun": "{{name}} 실행 선택"
+    },
+    "run": {
+      "steps": "{{completed}}/{{total}} 단계",
+      "elapsed": "경과 시간"
+    },
+    "timeline": {
+      "title": "라이브 타임라인",
+      "viewFull": "전체 타임라인 보기",
+      "thisRun": "이 실행",
+      "connectedLive": "실시간",
+      "reconnecting": "재연결 중…",
+      "disconnected": "연결 끊김"
+    },
+    "inspector": {
+      "title": "실행 인스펙터",
+      "openRun": "실행 열기",
+      "stop": "실행 중지",
+      "session": "세션",
+      "model": "모델",
+      "started": "시작",
+      "elapsed": "경과",
+      "steps": "실행 단계",
+      "recentTools": "최근 도구 호출",
+      "noSteps": "아직 기록된 단계가 없습니다.",
+      "finished": "이 실행은 종료되었습니다.",
+      "noLongerActive": "이 실행은 더 이상 활성 상태가 아닙니다.",
+      "toolsEmpty": "아직 도구 호출이 없습니다."
+    },
+    "picture": {
+      "title": "오늘의 운영 현황",
+      "activeAgents": "활성 에이전트",
+      "completedToday": "오늘 완료",
+      "tokensToday": "오늘 토큰",
+      "spendToday": "오늘 지출",
+      "last7days": "일별 실행 수 (최근 7일)",
+      "unavailable": "사용 불가",
+      "retry": "다시 시도"
+    },
+    "system": {
+      "title": "시스템",
+      "showDetails": "시스템 상세",
+      "hideDetails": "시스템 상세 숨기기",
+      "versions": "바이너리 v{{binary}} · 웹 v{{web}}",
+      "links": {
+        "mcp": "MCP",
+        "brain": "브레인",
+        "skills": "스킬",
+        "budget": "예산",
+        "resources": "리소스",
+        "security": "보안"
+      }
+    }
+  },
+  "events": {
+    "title": "이벤트",
+    "subtitle": "실시간 시스템 이벤트 스트림"
+  },
   "dataTable": {
     "clearFilters": "필터 초기화",
     "noResults": "결과 없음",

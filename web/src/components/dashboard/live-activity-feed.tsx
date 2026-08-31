@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { Pause, Play, Radio, Trash2 } from 'lucide-react'
+import { Pause, Play, Radio, RefreshCw, Trash2, WifiOff } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
@@ -30,10 +30,13 @@ const FILTER_PREFIXES: Record<string, string[]> = {
   approval_: ['approval_'],
 }
 
-function matchesFilter(type: string, filter: string): boolean {
+function matchesFilter(event: OxiosEvent, filter: string, selectedAgentId: string | null): boolean {
+  if (filter === 'thisRun') {
+    return selectedAgentId != null && event.agent_id === selectedAgentId
+  }
   const prefixes = Array.isArray(FILTER_PREFIXES[filter]) ? FILTER_PREFIXES[filter] : []
   if (prefixes.length === 0) return true
-  return prefixes.some((p) => type.startsWith(p))
+  return prefixes.some((p) => event.type.startsWith(p))
 }
 
 /**
@@ -51,7 +54,14 @@ function matchesFilter(type: string, filter: string): boolean {
  *   component provides the Card wrapper. Used inside
  *   `AgentsActivityCard` to avoid Card-in-Card nesting.
  */
-export function LiveActivityFeed({ variant = 'card' }: { variant?: 'card' | 'bare' } = {}) {
+export function LiveActivityFeed({
+  variant = 'card',
+  selectedAgentId = null,
+}: {
+  variant?: 'card' | 'bare'
+  /** When set, adds a "This run" filter scoped to the selected agent's events. */
+  selectedAgentId?: string | null
+} = {}) {
   const { t } = useTranslation()
   const { events, isConnected, error: connectionError } = useEvents()
   const [paused, setPaused] = useState(false)
@@ -75,12 +85,18 @@ export function LiveActivityFeed({ variant = 'card' }: { variant?: 'card' | 'bar
   // updating the visible list. Resume picks up from the live stream.
   const sourceEvents = paused ? (frozenEvents ?? events) : events
 
+  // "This run" is only offered while a run is selected; falling back to All
+  // keeps the select truthful if the selection is cleared mid-session.
+  const effectiveFilter = filter === 'thisRun' && !selectedAgentId ? 'all' : filter
+
   const filtered = useMemo(() => {
     const interesting = sourceEvents.filter(isInterestingEvent)
-    const total = interesting.length
-    const matched = interesting.filter((e) => matchesFilter(e.type, filter))
-    return { visible: matched.slice(0, MAX_VISIBLE), total }
-  }, [sourceEvents, filter])
+    // Count what the ACTIVE filter matches — an overflow "+N more" that
+    // includes events the user filtered out would be a lie (and under a
+    // run filter it would always claim phantom events).
+    const matched = interesting.filter((e) => matchesFilter(e, effectiveFilter, selectedAgentId))
+    return { visible: matched.slice(0, MAX_VISIBLE), total: matched.length }
+  }, [sourceEvents, effectiveFilter, selectedAgentId])
 
   const overflow = Math.max(0, filtered.total - filtered.visible.length)
 
@@ -184,16 +200,45 @@ export function LiveActivityFeed({ variant = 'card' }: { variant?: 'card' | 'bar
       )}
     </div>
   )
+  // Textual connection state (spec §4): a disconnected or reconnecting
+  // stream must be named in words, not merely colored. Single source for
+  // both rendering variants.
+  const connection =
+    isConnected && !connectionError
+      ? {
+          key: 'commandCenter.timeline.connectedLive',
+          cls: 'text-status-success-on-surface',
+          icon: <Radio className="h-3 w-3" aria-hidden="true" />,
+        }
+      : connectionError
+        ? {
+            key: 'commandCenter.timeline.disconnected',
+            cls: 'text-status-error-on-surface',
+            icon: <WifiOff className="h-3 w-3" aria-hidden="true" />,
+          }
+        : {
+            key: 'commandCenter.timeline.reconnecting',
+            cls: 'text-status-warning-on-surface',
+            icon: <RefreshCw className="h-3 w-3 motion-safe:animate-spin" aria-hidden="true" />,
+          }
 
   const controls = (
     <div className="flex items-center gap-1">
+      <span
+        className={`inline-flex items-center gap-1 text-2xs font-medium ${connection.cls}`}
+        aria-live="polite"
+      >
+        {connection.icon}
+        {t(connection.key)}
+      </span>
       <select
         className="h-7 rounded-md border bg-background px-2 text-xs transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        value={filter}
+        value={effectiveFilter}
         onChange={(e) => setFilter(e.target.value)}
         aria-label={t('dashboard.filterEvents')}
       >
         <option value="all">{t('dashboard.filterAll')}</option>
+        {selectedAgentId && <option value="thisRun">{t('commandCenter.timeline.thisRun')}</option>}
         <option value="agent_">{t('dashboard.filterAgents')}</option>
         <option value="tool_">{t('dashboard.filterTools')}</option>
         <option value="memory_">{t('dashboard.filterMemory')}</option>
@@ -228,17 +273,6 @@ export function LiveActivityFeed({ variant = 'card' }: { variant?: 'card' | 'bar
         <Badge variant="secondary" className="ml-1" aria-live="polite">
           {filtered.total}
         </Badge>
-        {isConnected && !connectionError && (
-          <span
-            className="ml-1 h-2 w-2 rounded-full bg-success animate-pulse"
-            aria-label={t('dashboard.connected')}
-          />
-        )}
-        {connectionError && (
-          <Badge variant="destructive" className="ml-1">
-            {t('dashboard.disconnected')}
-          </Badge>
-        )}
       </div>
       {controls}
     </div>

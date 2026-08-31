@@ -14,6 +14,7 @@ import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as BudgetRouteImport } from './routes/budget'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as EmailRouteImport } from './routes/email'
+import { Route as EventsRouteImport } from './routes/events'
 import { Route as GitRouteImport } from './routes/git'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as McpRouteImport } from './routes/mcp'
@@ -65,6 +66,11 @@ const ChatRoute = ChatRouteImport.update({
 const EmailRoute = EmailRouteImport.update({
   id: '/email',
   path: '/email',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EventsRoute = EventsRouteImport.update({
+  id: '/events',
+  path: '/events',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GitRoute = GitRouteImport.update({
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
+  '/events': typeof EventsRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
@@ -243,6 +250,7 @@ export interface FileRoutesByTo {
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
+  '/events': typeof EventsRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
@@ -278,6 +286,7 @@ export interface FileRoutesById {
   '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/email': typeof EmailRoute
+  '/events': typeof EventsRoute
   '/git': typeof GitRoute
   '/marketplace': typeof MarketplaceRoute
   '/mcp': typeof McpRoute
@@ -314,6 +323,7 @@ export interface FileRouteTypes {
     | '/budget'
     | '/chat'
     | '/email'
+    | '/events'
     | '/git'
     | '/marketplace'
     | '/mcp'
@@ -348,6 +358,7 @@ export interface FileRouteTypes {
     | '/budget'
     | '/chat'
     | '/email'
+    | '/events'
     | '/git'
     | '/marketplace'
     | '/mcp'
@@ -382,6 +393,7 @@ export interface FileRouteTypes {
     | '/budget'
     | '/chat'
     | '/email'
+    | '/events'
     | '/git'
     | '/marketplace'
     | '/mcp'
@@ -417,6 +429,7 @@ export interface RootRouteChildren {
   BudgetRoute: typeof BudgetRoute
   ChatRoute: typeof ChatRoute
   EmailRoute: typeof EmailRoute
+  EventsRoute: typeof EventsRoute
   GitRoute: typeof GitRoute
   MarketplaceRoute: typeof MarketplaceRoute
   McpRoute: typeof McpRoute
@@ -480,6 +493,13 @@ declare module '@tanstack/react-router' {
       path: '/email'
       fullPath: '/email'
       preLoaderRoute: typeof EmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/events': {
+      id: '/events'
+      path: '/events'
+      fullPath: '/events'
+      preLoaderRoute: typeof EventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/git': {
@@ -692,6 +712,7 @@ const rootRouteChildren: RootRouteChildren = {
   BudgetRoute: BudgetRoute,
   ChatRoute: ChatRoute,
   EmailRoute: EmailRoute,
+  EventsRoute: EventsRoute,
   GitRoute: GitRoute,
   MarketplaceRoute: MarketplaceRoute,
   McpRoute: McpRoute,

@@ -31,21 +31,6 @@ export type {
   ToolRenderProps,
 } from './chat'
 
-// Agent
-export interface Agent {
-  id: string
-  name: string
-  status: string // Backend sends Debug format: "Running", "Idle", "Stopped", "Starting", "Error"
-  created_at?: string
-}
-
-export interface AgentListResponse {
-  items: Agent[]
-  total: number
-  page: number
-  limit: number
-}
-
 // Session
 export interface Session {
   id: string

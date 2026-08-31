@@ -31,24 +31,6 @@ export function LoadingTable({ rows = 5 }: { rows?: number }) {
   )
 }
 
-/** KPI stat card skeleton — big number + label + sparkline area */
-export function LoadingStatCards({ count = 6 }: { count?: number }) {
-  return (
-    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 animate-stagger">
-      {Array.from({ length: count }, (_, i) => (
-        <div key={i} className="rounded-xl border p-4 space-y-3">
-          <Skeleton className="h-3 w-2/3" />
-          <Skeleton className="h-7 w-1/3" />
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-3 w-1/4" />
-            <Skeleton className="h-10 w-20 rounded" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /** Agent list skeleton — icon + name + id */
 export function LoadingAgentList({ count = 4 }: { count?: number }) {
   return (

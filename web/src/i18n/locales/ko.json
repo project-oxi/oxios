@@ -248,8 +248,6 @@
     "activeConversation": "대화 중",
     "newConversationButton": "새 대화",
     "newProjectButton": "새 프로젝트",
-    "moreActions": "더 보기",
-    "quickLinks": "빠른 링크",
     "connecting": "연결 중...",
     "connectingToServer": "서버에 연결 중...",
     "startConversationHint": "메시지를 보내 대화를 시작하세요.",
@@ -279,7 +277,6 @@
     "knowledgeQualityCurated": "품질: 정리됨",
     "knowledgeRecurate": "다시 정리",
     "showLess": "← 간략히 보기",
-    "manageSessions": "세션 관리",
     "manageSpaces": "공간 관리",
     "user": "사용자",
     "assistant": "어시스턴트",
@@ -467,7 +464,6 @@
       }
     },
     "connectionLost": "연결이 끊겼습니다 — 응답이 잘렸을 수 있습니다",
-    "manageProjects": "프로젝트 관리",
     "noSessionsInProject": "대화 없음",
     "recentSessions": "최근 대화",
     "reconnecting": "재연결 중...",
@@ -477,7 +473,7 @@
     "interrupted": "사용자가 중단함",
     "queue": "큐",
     "queued": "{{count}}개 대기 중",
-    "unfiled": "분류 안 됨",
+    "noProject": "프로젝트 없음",
     "modelPicker": {
       "trigger": "모델",
       "triggerHint": "다음 메시지에 사용할 모델 선택",
@@ -582,14 +578,14 @@
     "runHint": "실행할 내용 입력…",
     "composed": "합성됨",
     "typeIntent": "의도를 입력하세요",
-    "switchMode": "{{mode}} 모드로 전환",
+    "switchSurface": "{{surface}} 화면으로 전환",
     "switchPersona": "페르소나 전환: {{name}}",
     "switchModel": "모델 전환: {{name}}",
     "switchedPersona": "페르소나가 전환됨",
     "switchedModel": "모델 설정: {{name}}",
     "switchFailed": "전환 실패",
     "killAgent": "에이전트 종료: {{name}}",
-    "triggerCron": "cron 실행: {{name}}",
+    "triggerAutomation": "자동화 실행: {{name}}",
     "enableSkill": "스킬 활성화: {{name}}",
     "disableSkill": "스킬 비활성화: {{name}}",
     "skillEnabled": "스킬이 활성화됨",
@@ -606,7 +602,7 @@
     "newSkill": "새 스킬",
     "newPersona": "새 페르소나",
     "newProject": "새 프로젝트",
-    "newCron": "새 cron 작업",
+    "newAutomation": "새 자동화",
     "newNote": "새 노트",
     "hintNavigate": "이동",
     "hintSelect": "선택",
@@ -728,7 +724,8 @@
     "hoursLater": "{{count}}시간 후",
     "lastPage": "마지막 페이지",
     "minutesLater": "{{count}}분 후",
-    "modeNavigation": "모드 전환",
+    "surfaceNavigation": "화면 전환",
+    "surfacePlaceholderBody": "이 화면은 준비 중입니다 — 다음 통합 단계에서 화면이 제공됩니다.",
     "nextPage": "다음 페이지",
     "openNav": "내비게이션 메뉴 열기",
     "other": "기타",
@@ -1262,6 +1259,9 @@
     "verifySuccess": "Git 무결성 검증 완료"
   },
   "knowledge": {
+    "groupMemory": "메모리 · 브레인",
+    "groupLibrary": "라이브러리 · 지식",
+    "overview": "개요",
     "title": "지식",
     "homeTitle": "지식 홈",
     "homeSubtitle": "오늘의 메모와 노트를 한눈에",
@@ -2154,11 +2154,17 @@
     "brainEnabled": "브레인 활성화",
     "brainEnabledDescription": "oxibrain 연결의 마스터 토글. 적용하려면 재시작 필요."
   },
+  "operate": {
+    "groupNow": "지금",
+    "attention": "주의",
+    "groupProjects": "프로젝트",
+    "groupRuns": "실행",
+    "groupSystem": "시스템"
+  },
   "sidebar": {
-    "console": "콘솔",
+    "operate": "운영",
     "knowledge": "지식",
-    "brain": "브레인",
-    "chat": "채팅"
+    "studio": "스튜디오"
   },
   "skills": {
     "title": "스킬",

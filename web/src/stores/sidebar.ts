@@ -1,15 +1,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type SidebarMode = 'console' | 'knowledge' | 'brain' | 'chat'
-
+/**
+ * Sidebar chrome state only. The active surface is derived from the route
+ * (`deriveSurface`), never stored — there is no persisted surface mode.
+ */
 interface SidebarState {
   collapsed: boolean
   mobileOpen: boolean
-  mode: SidebarMode
   toggle: () => void
   setMobileOpen: (open: boolean) => void
-  setMode: (mode: SidebarMode) => void
 }
 
 export const useSidebarStore = create<SidebarState>()(
@@ -17,7 +17,6 @@ export const useSidebarStore = create<SidebarState>()(
     (set) => ({
       collapsed: false,
       mobileOpen: false,
-      mode: 'console' as SidebarMode,
 
       toggle: () =>
         set((s) => {
@@ -26,8 +25,6 @@ export const useSidebarStore = create<SidebarState>()(
         }),
 
       setMobileOpen: (open) => set({ mobileOpen: open }),
-
-      setMode: (mode) => set({ mode }),
     }),
     {
       name: 'oxios-sidebar',
@@ -35,11 +32,3 @@ export const useSidebarStore = create<SidebarState>()(
     },
   ),
 )
-
-/** Derive sidebar mode from pathname. */
-export function deriveSidebarMode(pathname: string): SidebarMode {
-  if (pathname.startsWith('/brain/knowledge')) return 'knowledge'
-  if (pathname.startsWith('/brain')) return 'brain'
-  if (pathname === '/chat') return 'chat'
-  return 'console'
-}

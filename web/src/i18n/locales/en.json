@@ -248,8 +248,6 @@
     "activeConversation": "In conversation",
     "newConversationButton": "New conversation",
     "newProjectButton": "New project",
-    "moreActions": "More",
-    "quickLinks": "Quick links",
     "connecting": "Connecting...",
     "connectingToServer": "Connecting to server...",
     "startConversationHint": "Send a message to start a conversation.",
@@ -279,7 +277,6 @@
     "knowledgeQualityCurated": "Quality: curated",
     "knowledgeRecurate": "Re-curate",
     "showLess": "← Show less",
-    "manageSessions": "Session management",
     "manageSpaces": "Spaces management",
     "user": "User",
     "assistant": "Assistant",
@@ -468,7 +465,6 @@
       }
     },
     "connectionLost": "Connection lost — response may be incomplete",
-    "manageProjects": "Project management",
     "noSessionsInProject": "No conversations",
     "recentSessions": "Recent conversations",
     "reconnecting": "Reconnecting...",
@@ -478,7 +474,7 @@
     "interrupted": "Stopped by you",
     "queue": "Queue",
     "queued": "{{count}} queued",
-    "unfiled": "Unfiled",
+    "noProject": "No project",
     "modelPicker": {
       "trigger": "Model",
       "triggerHint": "Choose a model for the next message",
@@ -582,14 +578,14 @@
     "runHint": "Type to run…",
     "composed": "composed",
     "typeIntent": "type your intent",
-    "switchMode": "Switch to {{mode}} mode",
+    "switchSurface": "Switch to {{surface}}",
     "switchPersona": "Switch to persona: {{name}}",
     "switchModel": "Switch to model: {{name}}",
     "switchedPersona": "Persona switched",
     "switchedModel": "Model set: {{name}}",
     "switchFailed": "Switch failed",
     "killAgent": "Kill agent: {{name}}",
-    "triggerCron": "Trigger cron: {{name}}",
+    "triggerAutomation": "Run automation: {{name}}",
     "enableSkill": "Enable skill: {{name}}",
     "disableSkill": "Disable skill: {{name}}",
     "skillEnabled": "Skill enabled",
@@ -606,7 +602,7 @@
     "newSkill": "New skill",
     "newPersona": "New persona",
     "newProject": "New project",
-    "newCron": "New cron job",
+    "newAutomation": "New automation",
     "newNote": "New note",
     "hintNavigate": "navigate",
     "hintSelect": "select",
@@ -728,7 +724,8 @@
     "hoursLater": "{{count}}h later",
     "lastPage": "Last page",
     "minutesLater": "{{count}}m later",
-    "modeNavigation": "Mode navigation",
+    "surfaceNavigation": "Surface navigation",
+    "surfacePlaceholderBody": "This surface is being assembled — its views land with the next integration wave.",
     "nextPage": "Next page",
     "openNav": "Open navigation menu",
     "other": "Other",
@@ -1262,6 +1259,9 @@
     "verifySuccess": "Git integrity verified"
   },
   "knowledge": {
+    "groupMemory": "Memory · Brain",
+    "groupLibrary": "Library · Knowledge",
+    "overview": "Overview",
     "title": "Knowledge",
     "homeTitle": "Knowledge Home",
     "homeSubtitle": "Your notes and captures at a glance",
@@ -2154,11 +2154,17 @@
     "brainEnabled": "Brain enabled",
     "brainEnabledDescription": "Master toggle for the oxibrain connection. Restart required to apply."
   },
+  "operate": {
+    "groupNow": "Now",
+    "attention": "Attention",
+    "groupProjects": "Projects",
+    "groupRuns": "Runs",
+    "groupSystem": "System"
+  },
   "sidebar": {
-    "console": "Console",
+    "operate": "Operate",
     "knowledge": "Knowledge",
-    "brain": "Brain",
-    "chat": "Chat"
+    "studio": "Studio"
   },
   "skills": {
     "title": "Skills",

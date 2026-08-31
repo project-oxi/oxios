@@ -1,28 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import {
-  Bot,
-  ChevronRight,
-  FolderKanban,
-  FolderPlus,
-  Inbox,
-  LayoutDashboard,
-  List,
-  MoreHorizontal,
-  Plus,
-  Settings,
-} from 'lucide-react'
+import { ChevronRight, FolderKanban, FolderPlus, Inbox, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CreateProjectDialog } from '@/components/project/create-project-dialog'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMoveSession } from '@/hooks/use-sessions'
 import { api } from '@/lib/api-client'
@@ -38,20 +20,9 @@ import {
   sectionGap,
   sectionHeader,
   sectionSeparator,
-} from './sidebar'
-
-// Global destinations reachable from chat mode — the session nav is the
-// whole sidebar here, so these keep Dashboard/Agents/Projects/Settings
-// one click away without switching sidebar mode.
-const quickLinks = [
-  { to: '/', labelKey: 'common.dashboard', icon: LayoutDashboard },
-  { to: '/agents', labelKey: 'common.agents', icon: Bot },
-  { to: '/projects', labelKey: 'common.projects', icon: FolderKanban },
-  { to: '/settings', labelKey: 'common.settings', icon: Settings },
-]
-
+} from './sidebar-primitives'
 // ---------------------------------------------------------------------------
-// ChatSessionNav — renders inside the main sidebar when chat mode is active.
+// ChatSessionNav — renders inside the sidebar when the Studio surface is active.
 // RFC-025: Project-tree layout (Project folders → sessions).
 // ---------------------------------------------------------------------------
 
@@ -236,12 +207,12 @@ function ExpandedChatNav() {
           )
         })}
 
-        {/* ── Unfiled sessions ── */}
+        {/* ── No project sessions ── */}
         {unfiledSessions.length > 0 && (
           <div className={sectionGap}>
             <div className="flex items-center gap-1 px-2 py-1 text-sm text-muted-foreground">
               <Inbox className="h-3.5 w-3.5" />
-              <span className="font-medium">{t('chat.unfiled')}</span>
+              <span className="font-medium">{t('chat.noProject')}</span>
               <span className="ml-auto text-2xs text-muted-foreground/60">
                 {unfiledSessions.length}
               </span>
@@ -278,45 +249,6 @@ function ExpandedChatNav() {
         {projects.length > 0 && <div className={sectionSeparator} />}
       </div>
 
-      {/* Quick links — the only global nav in chat mode */}
-      <div className={sectionGap}>
-        <span className={sectionHeader.replace('mb-1 ', '')}>{t('chat.quickLinks')}</span>
-        {quickLinks.map((link) => (
-          <Link key={link.to} to={link.to} className={cn(itemDense, itemInactive)}>
-            <link.icon className="h-4 w-4 shrink-0" />
-            <span className="block truncate">{t(link.labelKey)}</span>
-          </Link>
-        ))}
-      </div>
-
-      {/* Footer: management actions */}
-      <div className={sectionSeparator.replace('my-2', 'mt-2 mb-1')} />
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="w-full justify-start text-muted-foreground">
-            <MoreHorizontal className="h-4 w-4" />
-            {t('chat.moreActions')}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          side="top"
-          align="start"
-          className="w-(--radix-dropdown-menu-trigger-width)"
-        >
-          <DropdownMenuItem asChild>
-            <Link to="/sessions">
-              <List className="h-4 w-4" />
-              {t('chat.manageSessions')}
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <Link to="/projects">
-              <FolderKanban className="h-4 w-4" />
-              {t('chat.manageProjects')}
-            </Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
       <CreateProjectDialog open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
     </>
   )
@@ -391,16 +323,6 @@ function CollapsedChatNav() {
         </TooltipTrigger>
         <TooltipContent side="right">{t('chat.newConversationButton')}</TooltipContent>
       </Tooltip>
-      {quickLinks.map((link) => (
-        <Tooltip key={link.to}>
-          <TooltipTrigger asChild>
-            <Link to={link.to} className={cn(itemCollapsedBase, itemInactive)}>
-              <link.icon className="h-4 w-4" />
-            </Link>
-          </TooltipTrigger>
-          <TooltipContent side="right">{t(link.labelKey)}</TooltipContent>
-        </Tooltip>
-      ))}
     </div>
   )
 }

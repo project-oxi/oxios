@@ -325,6 +325,7 @@ mod tests {
             personality_traits: vec![],
             capabilities: vec![],
             tool_profile: crate::persona::ToolProfile::Code,
+            presentation_lens: crate::persona::PresentationLens::Research,
         };
         pm.store().register(custom);
         pm.set_active("custom-1").await.unwrap();
@@ -333,6 +334,11 @@ mod tests {
         // Fresh manager — load from disk.
         let pm2 = PersonaManager::new().with_state_store(store.clone());
         pm2.load_from_state_store(&store).await.unwrap();
+        // Presentation lens survives the snapshot roundtrip.
+        assert_eq!(
+            pm2.store().get("custom-1").unwrap().presentation_lens,
+            crate::persona::PresentationLens::Research
+        );
         assert!(pm2.store().get("custom-1").is_some());
         assert_eq!(pm2.active_persona_id(), Some("custom-1".to_string()));
         // Defaults should also still be present (new() created them).

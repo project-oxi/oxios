@@ -9,11 +9,10 @@
 // Rule (design §6.1): Base/Code → ['diff'] always, plus files/terminal/
 // worktree-fanout iff the project has filesystem roots. Minimal/Control → [].
 // The UI never infers affordances from persona names or categories — only
-// from the server-derived EffectiveProfile.
 
 import { describe, expect, it } from 'vitest'
-import { has, isCodingFamily } from '@/lib/affordances'
-import type { Affordance, EffectiveProfile, ToolProfileName } from '@/types'
+import { has, isCodingFamily, presentationLens } from '@/lib/affordances'
+import type { Affordance, EffectiveProfile, PresentationLens, ToolProfileName } from '@/types'
 
 const ALL_AFFORDANCES: Affordance[] = ['files', 'terminal', 'diff', 'worktree-fanout']
 
@@ -25,8 +24,12 @@ function kernelDerive(toolProfile: ToolProfileName, hasRoots: boolean): Affordan
   return []
 }
 
-function makeProfile(toolProfile: ToolProfileName, affordances: Affordance[]): EffectiveProfile {
-  return { persona_id: 'p1', tool_profile: toolProfile, affordances }
+function makeProfile(
+  toolProfile: ToolProfileName,
+  affordances: Affordance[],
+  presentation_lens: PresentationLens = 'general',
+): EffectiveProfile {
+  return { persona_id: 'p1', tool_profile: toolProfile, affordances, presentation_lens }
 }
 
 describe('affordance matrix (mirrors kernel derive_affordances)', () => {
@@ -59,6 +62,24 @@ describe('affordance matrix (mirrors kernel derive_affordances)', () => {
         expect(has(p, a)).toBe(false)
       }
     }
+  })
+})
+
+describe('presentationLens accessor (IA design §8.5)', () => {
+  it('returns the server-derived lens when present', () => {
+    const p = makeProfile('code', [], 'research')
+    expect(presentationLens(p)).toBe('research')
+  })
+
+  it('defaults a missing field to general (rolling-deploy boundary only)', () => {
+    const missing = structuredClone(makeProfile('minimal', [])) as Partial<EffectiveProfile>
+    delete missing.presentation_lens
+    expect(presentationLens(missing as EffectiveProfile | null)).toBe('general')
+    expect(presentationLens(null)).toBe('general')
+  })
+
+  it('null profile never carries an inferred lens', () => {
+    expect(presentationLens(null)).toBe('general')
   })
 })
 

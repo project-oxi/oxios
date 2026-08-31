@@ -95,7 +95,7 @@ function AgentDetailPage() {
                   className="h-auto p-0 text-xs"
                   onClick={() =>
                     navigate({
-                      to: '/sessions/$sessionId',
+                      to: '/studio/sessions/$sessionId',
                       params: { sessionId: (agent as { session_id: string }).session_id },
                     })
                   }

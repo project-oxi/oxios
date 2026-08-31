@@ -1542,6 +1542,15 @@
       "code": "코딩 — 코딩 도구, Oxios 제어 없음",
       "minimal": "최소 — 파일 + 웹 검색만"
     },
+    "presentationLens": "프레젠테이션 렌즈",
+    "presentationLensHint": "표현 전용 — Studio 화면 구성에만 영향을 줍니다. 도구나 권한은 바뀌지 않습니다",
+    "presentationLenses": {
+      "general": "일반 — 차분한 대화",
+      "code": "코드 — 도구와 diff 중심",
+      "research": "리서치 — 종합과 출처",
+      "operations": "운영 — 승인과 상태",
+      "writing": "집필 — 초고와 아웃라인"
+    },
     "activeBadge": "활성",
     "profileBadge": {
       "base": "전체 도구",
@@ -2394,6 +2403,56 @@
     "deleteConfirmTitle": "파일을 삭제하시겠습니까?",
     "deleteConfirmDesc": "{{path}} 파일이 영구 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
     "uploadFile": "파일 업로드"
+  },
+  "studio": {
+    "context": {
+      "project": "프로젝트",
+      "persona": "페르소나",
+      "model": "모델",
+      "brain": "브레인",
+      "noProject": "프로젝트 없음",
+      "defaultModel": "구성된 모델",
+      "brainNotConnected": "연결 안 됨",
+      "nextTurnHint": "변경 사항은 다음 턴부터 적용됩니다"
+    },
+    "inspector": {
+      "label": "인스펙터",
+      "close": "인스펙터 닫기",
+      "context": "컨텍스트",
+      "sources": "출처",
+      "activity": "활동",
+      "outline": "아웃라인",
+      "review": "리뷰",
+      "unnamedSource": "이름 없는 출처",
+      "toolRun": "도구",
+      "subagent": "에이전트",
+      "reasoning": "추론",
+      "pendingApproval": "승인 대기",
+      "pendingPathAccess": "경로 접근 요청",
+      "pendingChange": "변경 대기"
+    },
+    "turnOptions": {
+      "label": "턴 옵션",
+      "title": "이 턴에만",
+      "noOverride": "세션 모델 사용",
+      "resetsHint": "오버라이드는 다음 전송 한 번에만 적용된 후 초기화됩니다."
+    },
+    "launch": {
+      "title": "Studio에 추가",
+      "description": "이 컨텍스트를 열 위치를 선택하세요. 참조는 검증되며 암묵적으로 바인딩되지 않습니다.",
+      "brainMemory": "메모리",
+      "knowledgeDocument": "문서",
+      "citation": "인용",
+      "artifact": "아티팩트",
+      "removeChip": "사용할 수 없는 참조 제거",
+      "destination": "대상",
+      "projectless": "프로젝트 없이 시작",
+      "current": "현재 대화에 추가",
+      "chooseProject": "프로젝트 선택",
+      "project": "프로젝트",
+      "pickProject": "프로젝트 선택…",
+      "apply": "Studio에서 열기"
+    }
   },
   "tasks": {
     "title": "작업",

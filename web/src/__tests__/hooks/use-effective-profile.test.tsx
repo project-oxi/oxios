@@ -23,12 +23,14 @@ const CODE_ROOTS: EffectiveProfile = {
   persona_id: 'dev',
   tool_profile: 'code',
   affordances: ['diff', 'files', 'terminal', 'worktree-fanout'],
+  presentation_lens: 'code',
 }
 
 const MINIMAL: EffectiveProfile = {
   persona_id: 'writer',
   tool_profile: 'minimal',
   affordances: [],
+  presentation_lens: 'writing',
 }
 
 const sessionDetail = (effective_profile: EffectiveProfile | null): SessionDetail => ({

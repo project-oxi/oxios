@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api-client'
+import type { PresentationLens } from '@/types'
 
 export interface PersonaItem {
   id: string
@@ -29,15 +30,27 @@ export interface PersonaItem {
   /// Tool access profile: 'base' | 'code' | 'minimal' | 'control'.
   /// (Task 6: UI affordances are derived server-side from profile × roots.)
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  /// Presentation lens (IA design §8.5) — presentation only.
+  presentation_lens?: PresentationLens
   /// Whether this persona is the global active one (list endpoint).
   active?: boolean
 }
+
+/** The five fixed presentation lenses (IA design §8.5). Presentation only. */
+const PRESENTATION_LENS_OPTIONS: PresentationLens[] = [
+  'general',
+  'code',
+  'research',
+  'operations',
+  'writing',
+]
 
 export interface PersonaPatch {
   name: string
   description: string
   system_prompt: string
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  presentation_lens?: PresentationLens
 }
 
 interface EditPersonaDialogProps {
@@ -57,6 +70,7 @@ interface PersonaDetail {
   personality_traits: string[]
   capabilities?: string[]
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  presentation_lens?: PresentationLens
 }
 
 /**
@@ -79,6 +93,7 @@ export function EditPersonaDialog({
   const [description, setDescription] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [toolProfile, setToolProfile] = useState<'base' | 'code' | 'control' | 'minimal'>('code')
+  const [presentationLens, setPresentationLens] = useState<PresentationLens>('general')
 
   const detail = useQuery({
     queryKey: ['persona', persona?.id],
@@ -94,6 +109,7 @@ export function EditPersonaDialog({
       setDescription(detail.data.description)
       setSystemPrompt(detail.data.system_prompt)
       setToolProfile(detail.data.tool_profile ?? 'code')
+      setPresentationLens(detail.data.presentation_lens ?? 'general')
     } else {
       setName(persona.name)
       setDescription(persona.description)
@@ -112,6 +128,7 @@ export function EditPersonaDialog({
       description: description.trim(),
       system_prompt: systemPrompt,
       tool_profile: toolProfile,
+      presentation_lens: presentationLens,
     })
   }
 
@@ -176,6 +193,18 @@ export function EditPersonaDialog({
                 options={(['base', 'code', 'minimal'] as const).map((p) => ({
                   label: t(`personas.toolProfiles.${p}`),
                   value: p,
+                }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>{t('personas.presentationLens')}</Label>
+              <p className="text-xs text-muted-foreground">{t('personas.presentationLensHint')}</p>
+              <Select
+                value={presentationLens}
+                onValueChange={(v) => setPresentationLens(v as PresentationLens)}
+                options={PRESENTATION_LENS_OPTIONS.map((l) => ({
+                  label: t(`personas.presentationLenses.${l}`),
+                  value: l,
                 }))}
               />
             </div>

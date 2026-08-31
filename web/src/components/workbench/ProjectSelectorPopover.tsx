@@ -1,12 +1,12 @@
 // ProjectSelectorPopover — the project picker anchored in the workbench
-// header (Task 7, design §7.3).
+// header and the Studio context bar (IA design §8.3).
 //
-// Replaces the legacy `projects` page as the canonical project picker:
-// "No project" detaches the active session (`setActiveProject(null)`),
-// every project is listed via the same `useProjects` query that drives
-// the sidebar, and create / edit-folder entries jump to the existing
-// `CreateProjectDialog` / `EditProjectDialog` so the picker does not
-// duplicate their logic.
+// "No project" unbinds future turns (`bindProject(null)`); every project
+// is listed via the same `useProjects` query that drives the sidebar, and
+// create / edit-folder entries jump to the existing `CreateProjectDialog`
+// / `EditProjectDialog` so the picker does not duplicate their logic.
+// Binding changes FUTURE turns only: the live conversation, its
+// transcript, and buffered tokens are never reset here.
 
 import { FolderPlus, Plus, Settings } from 'lucide-react'
 import { useState } from 'react'
@@ -46,12 +46,13 @@ export function ProjectSelectorPopover({ activeProject, onSelect }: ProjectSelec
   const projects = projectsData?.items ?? []
   const [createOpen, setCreateOpen] = useState(false)
   const [editProject, setEditProject] = useState<Project | null>(null)
-  const detachSession = useChatStore((s) => s.setActiveProject)
+  const bindProject = useChatStore((s) => s.bindProject)
 
   const handleSelect = (project: Project | null) => {
-    // Bind (or detach) the chat session's project via the chat store —
-    // this is the source of truth the next send reads (`project_id`).
-    detachSession(project ? project.id : null)
+    // Future-turns-only binding (IA design §8.3): the chat store keeps the
+    // active session and its transcript; the next send carries the new
+    // `project_id` and the server records it on the session.
+    bindProject(project ? project.id : null)
     onSelect(project)
   }
 

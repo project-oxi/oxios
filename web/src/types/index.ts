@@ -50,6 +50,10 @@ export interface Session {
 export type Affordance = 'files' | 'terminal' | 'diff' | 'worktree-fanout'
 
 export type ToolProfileName = 'base' | 'code' | 'minimal' | 'control'
+/** Server-derived presentation lens (IA design §8.5). Presentation ONLY —
+ *  never a permission/tool/model gate; the client may never infer it from
+ *  persona name, role, or category. */
+export type PresentationLens = 'general' | 'code' | 'research' | 'operations' | 'writing'
 
 /** Server-derived execution snapshot emitted by the kernel on the
  *  POST /api/chat response, WS done chunks, GET /api/sessions/:id, and
@@ -58,6 +62,32 @@ export interface EffectiveProfile {
   persona_id: string
   tool_profile: ToolProfileName
   affordances: Affordance[]
+  /// Presentation-only lens from the effective persona (IA design §8.5).
+  presentation_lens: PresentationLens
+}
+
+// ── Studio launch intent (IA design §9) ──
+
+/** A typed context reference carried across surfaces. The receiving
+ *  Studio route validates each reference through canonical APIs; stale or
+ *  inaccessible references render as removable unavailable chips — the
+ *  client NEVER falls back to a similarly named project or source. */
+export type StudioContextRef =
+  | { kind: 'brain-memory'; id: string }
+  | { kind: 'knowledge-document'; path: string }
+  | { kind: 'citation'; turnId: string; citationId: string }
+  | { kind: 'artifact'; id: string }
+
+/** Typed cross-surface handoff into Studio (IA design §9). Free text is
+ *  never used to infer a binding; every field is an explicit ID. */
+export interface StudioLaunchIntent {
+  source: 'operate' | 'knowledge' | 'automation' | 'project'
+  projectId?: string
+  automationId?: string
+  runId?: string
+  sessionId?: string
+  contextRefs?: StudioContextRef[]
+  initialPrompt?: string
 }
 
 // Session detail (from GET /api/sessions/:id)
@@ -591,6 +621,8 @@ export interface Persona {
   /// Tool access profile: 'base' (all tools incl. Oxios control) |
   /// 'code' (coding tools, no control) | 'minimal' (file + web search).
   tool_profile?: 'base' | 'code' | 'minimal' | 'control'
+  /// Presentation lens (IA design §8.5): presentation only, five fixed values.
+  presentation_lens?: PresentationLens
   /// Whether this persona is the global active persona (list endpoint only).
   active?: boolean
 }

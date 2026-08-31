@@ -1,9 +1,9 @@
 // Task 6 (project-roots persona workbench): profile-variant gating of every
-// conditional chat control.
+// conditional Studio control.
 //
-// The chat shell renders for real (ChatPage + ChatInput + BlockStream) and
-// the ONLY lever is the server-derived EffectiveProfile in the chat store —
-// no persona name/category/capability-string inference anywhere:
+// The Studio shell renders for real (StudioShell + ChatInput + BlockStream)
+// and the ONLY lever is the server-derived EffectiveProfile in the chat
+// store — no persona name/category/capability-string inference anywhere:
 //   - code + roots  → terminal toggle + fan-out button visible
 //   - code, folderless → terminal/fan-out hidden, diff still renders
 //   - minimal / no profile → all conditional controls hidden
@@ -15,7 +15,7 @@ import { HttpResponse, http } from 'msw'
 import type { ReactNode } from 'react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlockStream } from '@/components/chat/messages/components/BlockStream'
-import { ChatPage } from '@/routes/chat'
+import { StudioShell } from '@/components/studio/studio-shell'
 import { useChatStore } from '@/stores/chat'
 import type { ChatBlock, EffectiveProfile } from '@/types'
 import { server } from '../../msw/server'
@@ -32,18 +32,21 @@ const CODE_ROOTS: EffectiveProfile = {
   persona_id: 'dev',
   tool_profile: 'code',
   affordances: ['diff', 'files', 'terminal', 'worktree-fanout'],
+  presentation_lens: 'code',
 }
 
 const CODE_FOLDERLESS: EffectiveProfile = {
   persona_id: 'dev',
   tool_profile: 'code',
   affordances: ['diff'],
+  presentation_lens: 'code',
 }
 
 const MINIMAL: EffectiveProfile = {
   persona_id: 'writer',
   tool_profile: 'minimal',
   affordances: [],
+  presentation_lens: 'writing',
 }
 
 // Inert WebSocket: connect() attaches handlers and waits — nothing opens,
@@ -117,7 +120,7 @@ afterEach(() => {
 
 function renderShell() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<ChatPage />, {
+  return render(<StudioShell />, {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     ),

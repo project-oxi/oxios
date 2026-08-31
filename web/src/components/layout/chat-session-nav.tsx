@@ -304,7 +304,7 @@ function ExpandedChatNav() {
           className="w-(--radix-dropdown-menu-trigger-width)"
         >
           <DropdownMenuItem asChild>
-            <Link to="/sessions">
+            <Link to="/studio">
               <List className="h-4 w-4" />
               {t('chat.manageSessions')}
             </Link>

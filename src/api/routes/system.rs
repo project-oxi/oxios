@@ -156,21 +156,29 @@ pub(crate) struct StatusResponse {
 ///
 /// That file is emitted by the Vite build and carries the version stamped
 /// from the root `Cargo.toml` (same source as the binary version), plus an
-/// optional `git_sha`. Returns `"dev"` when the file is missing — e.g. when
-/// running `bun dev` or serving a workspace `web/dist` that predates the
-/// version plugin — so the dashboard always renders a sane badge.
+/// optional `git_sha`. Embedded builds have no on-disk dist — `web_dist` is
+/// `None` — so the stamp comes from the compiled-in `version.json` instead.
+/// Returns `"dev"` when neither source carries a version — e.g. when running
+/// `bun dev` or serving a workspace `web/dist` that predates the version
+/// plugin — so the dashboard always renders a sane badge.
 fn read_web_version(web_dist: &Option<PathBuf>) -> String {
     #[derive(Deserialize)]
     struct VersionFile {
         version: Option<String>,
     }
 
-    web_dist
+    let on_disk = web_dist
         .as_ref()
         .and_then(|p| std::fs::read(p.join("version.json")).ok())
         .and_then(|b| serde_json::from_slice::<VersionFile>(&b).ok())
-        .and_then(|v| v.version)
-        .unwrap_or_else(|| "dev".to_string())
+        .and_then(|v| v.version);
+    on_disk.unwrap_or_else(|| {
+        if crate::embedded_web::is_embedded() {
+            crate::embedded_web::version()
+        } else {
+            "dev".to_string()
+        }
+    })
 }
 
 /// GET /api/status — System status with component health.

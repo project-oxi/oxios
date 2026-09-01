@@ -40,8 +40,8 @@ export interface OperateAttentionResponse {
 /** Which surface a run row belongs to. */
 export type OperateRunKind = 'automation' | 'agent'
 
-/** Automation run trigger (`manual | schedule | heartbeat`). */
-export type OperateRunTrigger = 'manual' | 'schedule' | 'heartbeat'
+/** Automation run trigger (`manual | cron | heartbeat`). */
+export type OperateRunTrigger = 'manual' | 'cron' | 'heartbeat'
 
 /**
  * One run row in the merged operate run list. Only recorded fields are

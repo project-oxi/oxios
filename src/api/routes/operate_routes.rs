@@ -1,12 +1,12 @@
-//! Read-only Operate projections for the web IA redesign (Task 4.1).
+//! Read-only Operate projections for the web IA redesign (plan automation 4.1).
 //!
 //! Four `GET /api/operate/*` endpoints that project EXISTING sources onto the
 //! frozen operate contract — no scheduler, no lifecycle manager, no event bus,
 //! no second authority:
 //!
 //! - `/api/operate/attention` — pending HitL approvals (security facade) and
-//!   failed/canceled automation runs (`AppState.task_store`).
-//! - `/api/operate/runs` — automation runs (task store) merged with the recent
+//!   failed/canceled automation runs (`AppState.automation_store`).
+//! - `/api/operate/runs` — automation runs (automation store) merged with the recent
 //!   agent page (agents facade), running first then most-recent activity.
 //! - `/api/operate/projects/{id}/context` — project record, stored root paths,
 //!   open issues, milestone counts (derived from labelled-issue listing only),
@@ -37,7 +37,9 @@ use oxios_kernel::agent_log_db::{
     AgentListFilter, AgentStatusFilter, SearchField, SortBy, SortDir,
 };
 use oxios_kernel::approval::ApprovalMode;
-use oxios_kernel::task::{ListTasksParams, Task, TaskRun, TaskRunTrigger};
+use oxios_kernel::automation::{
+    Automation, AutomationRun, AutomationRunStatus, AutomationRunTrigger, ListAutomationsParams,
+};
 use oxios_kernel::types::AgentInfo;
 use oxios_kernel::{IssueQuery, SkillSource, SkillStatus};
 
@@ -58,8 +60,8 @@ const ACTIVE_RUNS_CAP: usize = 20;
 const DEFAULT_RUNS_LIMIT: u32 = 50;
 /// Maximum page size for `/api/operate/runs`.
 const MAX_RUNS_LIMIT: u32 = 200;
-/// Task-store page size when scanning tasks for their latest run.
-const TASK_SCAN_LIMIT: u32 = 500;
+/// Automation-store page size when scanning automations for their latest run.
+const AUTOMATION_SCAN_LIMIT: u32 = 500;
 
 // ── Attention ───────────────────────────────────────────────────────────────
 
@@ -111,10 +113,10 @@ pub(crate) struct OperateOrigin {
     /// Owning session id, when the source records one.
     #[serde(skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
-    /// Owning task id, for automation-run items.
+    /// Owning automation id, for automation-run items.
     #[serde(skip_serializing_if = "Option::is_none")]
     automation_id: Option<String>,
-    /// Owning task name, for automation-run items.
+    /// Owning automation name, for automation-run items.
     #[serde(skip_serializing_if = "Option::is_none")]
     automation_name: Option<String>,
     /// Owning project id, when the source records one.
@@ -127,7 +129,7 @@ pub(crate) struct OperateOrigin {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OperateAttentionItem {
     kind: OperateAttentionKind,
-    /// Approval uuid, registry item id, or task run id.
+    /// Approval uuid, registry item id, or automation run id.
     id: String,
     /// Exact backend state string ("pending", the run's terminal status, …).
     state: String,
@@ -160,30 +162,37 @@ pub(crate) async fn handle_operate_attention(
     // 2. `waiting_input` — the pending tool/path/ask-user registries expose no
     //    enumeration API (resolve-only), so nothing truthful is emitted here.
 
-    // 3. Failed/canceled automation runs — latest run per task.
-    let store = state.task_store.lock().await;
-    let tasks = store
-        .list_tasks(ListTasksParams {
-            limit: Some(TASK_SCAN_LIMIT),
-            ..ListTasksParams::default()
+    // 3. Failed/canceled automation runs — latest run per automation.
+    let store = state.automation_store.lock().await;
+    let automations = store
+        .list_automations(ListAutomationsParams {
+            limit: Some(AUTOMATION_SCAN_LIMIT),
+            ..ListAutomationsParams::default()
         })
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to list tasks: {e}")))?;
-    let mut failed: Vec<(TaskRun, Task)> = Vec::new();
-    for task in tasks {
-        match store.latest_run(&task.id).await {
-            Ok(Some(run)) if run.status == "failed" || run.status == "canceled" => {
-                failed.push((run, task));
+        .map_err(|e| AppError::Internal(format!("Failed to list automations: {e}")))?;
+    let mut failed: Vec<(AutomationRun, Automation)> = Vec::new();
+    for automation in automations {
+        match store.latest_run(&automation.id).await {
+            Ok(Some(run))
+                if matches!(
+                    run.status,
+                    AutomationRunStatus::Failed | AutomationRunStatus::Canceled
+                ) =>
+            {
+                failed.push((run, automation));
             }
             Ok(_) => {}
-            Err(e) => tracing::warn!(task = %task.id, error = %e, "Skipping unreadable task run"),
+            Err(e) => {
+                tracing::warn!(automation = %automation.id, error = %e, "Skipping unreadable automation run")
+            }
         }
     }
     // Newest first by the run's own timestamp, then cap.
     failed.sort_by_key(|(run, _)| std::cmp::Reverse(parse_rfc3339(&run.started_at)));
     failed.truncate(FAILED_RUN_CAP);
-    for (run, task) in &failed {
-        items.push(failed_run_item(run, task));
+    for (run, automation) in &failed {
+        items.push(failed_run_item(run, automation));
     }
 
     Ok(Json(AttentionResponse {
@@ -232,18 +241,18 @@ fn action_label(action: &Action) -> String {
 }
 
 /// Project a failed/canceled automation run onto an attention item.
-fn failed_run_item(run: &TaskRun, task: &Task) -> OperateAttentionItem {
+fn failed_run_item(run: &AutomationRun, automation: &Automation) -> OperateAttentionItem {
     OperateAttentionItem {
         kind: OperateAttentionKind::FailedRun,
         id: run.id.clone(),
-        state: run.status.clone(),
+        state: run.status.to_string(),
         summary: truncate_chars(
-            &format!("Automation \"{}\" run {}", task.name, run.status),
+            &format!("Automation \"{}\" run {}", automation.name, run.status),
             SUMMARY_MAX_CHARS,
         ),
         origin: OperateOrigin {
-            automation_id: Some(task.id.clone()),
-            automation_name: Some(task.name.clone()),
+            automation_id: Some(automation.id.clone()),
+            automation_name: Some(automation.name.clone()),
             ..OperateOrigin::default()
         },
         timestamp: run.started_at.clone(),
@@ -266,30 +275,30 @@ pub(crate) struct RunsResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OperateRunKind {
-    /// A scheduled/manual task run.
+    /// A scheduled/manual automation run.
     Automation,
     /// An agent execution.
     Agent,
 }
 
-/// Run trigger, mirrored from the task store (`TaskRunTrigger`).
+/// Run trigger, mirrored from the automation store (`AutomationRunTrigger`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OperateRunTrigger {
     /// Manually triggered.
     Manual,
     /// Cron schedule.
-    Schedule,
+    Cron,
     /// Heartbeat interval.
     Heartbeat,
 }
 
-impl From<TaskRunTrigger> for OperateRunTrigger {
-    fn from(value: TaskRunTrigger) -> Self {
+impl From<AutomationRunTrigger> for OperateRunTrigger {
+    fn from(value: AutomationRunTrigger) -> Self {
         match value {
-            TaskRunTrigger::Manual => Self::Manual,
-            TaskRunTrigger::Schedule => Self::Schedule,
-            TaskRunTrigger::Heartbeat => Self::Heartbeat,
+            AutomationRunTrigger::Manual => Self::Manual,
+            AutomationRunTrigger::Cron => Self::Cron,
+            AutomationRunTrigger::Heartbeat => Self::Heartbeat,
         }
     }
 }
@@ -309,7 +318,7 @@ pub(crate) struct OperateRun {
     /// Automation runs only.
     #[serde(skip_serializing_if = "Option::is_none")]
     automation_id: Option<String>,
-    /// Only when recorded (agents carry project ids; tasks do not).
+    /// Only when recorded (agents carry project ids; automations do not).
     #[serde(skip_serializing_if = "Option::is_none")]
     project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -356,24 +365,24 @@ pub(crate) async fn handle_operate_runs(
     let mut automation_total: u64 = 0;
 
     {
-        let store = state.task_store.lock().await;
-        let tasks = store
-            .list_tasks(ListTasksParams {
-                limit: Some(TASK_SCAN_LIMIT),
-                ..ListTasksParams::default()
+        let store = state.automation_store.lock().await;
+        let automations = store
+            .list_automations(ListAutomationsParams {
+                limit: Some(AUTOMATION_SCAN_LIMIT),
+                ..ListAutomationsParams::default()
             })
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to list tasks: {e}")))?;
-        for task in &tasks {
-            let runs = match store.list_runs(&task.id).await {
+            .map_err(|e| AppError::Internal(format!("Failed to list automations: {e}")))?;
+        for automation in &automations {
+            let runs = match store.list_runs(&automation.id).await {
                 Ok(runs) => runs,
                 Err(e) => {
                     // One unreadable history must not blank the whole
                     // projection — degrade like the attention handler does.
                     tracing::warn!(
-                        task = %task.id,
+                        automation = %automation.id,
                         error = %e,
-                        "Skipping unreadable task run history"
+                        "Skipping unreadable automation run history"
                     );
                     continue;
                 }
@@ -382,9 +391,9 @@ pub(crate) async fn handle_operate_runs(
             for run in &runs {
                 let activity = run.completed_at.as_deref().unwrap_or(&run.started_at);
                 rows.push((
-                    run.status == "running",
+                    matches!(run.status, AutomationRunStatus::Running),
                     parse_rfc3339(activity),
-                    automation_run_row(run, task),
+                    automation_run_row(run, automation),
                 ));
             }
         }
@@ -482,8 +491,8 @@ fn agent_sort_row(agent: &AgentInfo) -> (bool, DateTime<Utc>, OperateRun) {
     (active, activity, agent_run_row(agent))
 }
 
-/// Map a `TaskRun` plus its owning `Task` onto the operate contract.
-fn automation_run_row(run: &TaskRun, task: &Task) -> OperateRun {
+/// Map a `AutomationRun` plus its owning `Automation` onto the operate contract.
+fn automation_run_row(run: &AutomationRun, automation: &Automation) -> OperateRun {
     let duration_secs = run.completed_at.as_deref().and_then(|completed| {
         DateTime::parse_from_rfc3339(completed)
             .ok()
@@ -493,11 +502,11 @@ fn automation_run_row(run: &TaskRun, task: &Task) -> OperateRun {
     OperateRun {
         kind: OperateRunKind::Automation,
         id: run.id.clone(),
-        name: task.name.clone(),
-        status: run.status.clone(),
-        trigger: Some(OperateRunTrigger::from(run.trigger.clone())),
-        automation_id: Some(task.id.clone()),
-        // Tasks do not record a project.
+        name: automation.name.clone(),
+        status: run.status.to_string(),
+        trigger: Some(OperateRunTrigger::from(run.trigger)),
+        automation_id: Some(automation.id.clone()),
+        // Automations do not record a project.
         project_id: None,
         session_id: run.session_id.clone(),
         error: run
@@ -978,7 +987,7 @@ mod tests {
         assert_eq!(json["actions"], serde_json::json!(["approve", "reject"]));
     }
 
-    /// Test 3: a failed task run surfaces in attention (with automation
+    /// Test 3: a failed automation run surfaces in attention (with automation
     /// origin) and in runs (kind "automation"); healthy runs never do.
     #[tokio::test]
     async fn failed_run_surfaces_in_attention_and_runs() {
@@ -986,65 +995,69 @@ mod tests {
         let app = test_support::test_app(tmp.path());
         let mut svc = router(&app);
 
-        let store = app.state.task_store.lock().await;
-        let failed_task = store
-            .create_task(oxios_kernel::task::CreateTaskParams {
+        let store = app.state.automation_store.lock().await;
+        let failed_automation = store
+            .create_automation(oxios_kernel::automation::CreateAutomationParams {
                 name: "nightly-sync".to_string(),
                 instruction: "sync the vault".to_string(),
-                identifier: None,
                 description: None,
-                priority: None,
-                parent_task_id: None,
-                assignee_agent_id: None,
-                created_by_agent_id: None,
-                created_by_session_id: None,
-                sort_order: None,
+                trigger: oxios_kernel::automation::AutomationTrigger::Manual,
+                cron_pattern: None,
+                timezone: None,
+                heartbeat_interval_secs: None,
+                max_executions: None,
+                persona_id: None,
+                project_id: None,
+                brain_space: None,
+                verify: Default::default(),
             })
             .await
             .unwrap();
-        let run_id = store
-            .mark_running(&failed_task.id, TaskRunTrigger::Schedule)
+        let run = store
+            .begin_run(&failed_automation.id, AutomationRunTrigger::Cron, None)
             .await
             .unwrap();
         store
-            .mark_finished(
-                &failed_task.id,
-                &run_id,
+            .finish_run(
+                &failed_automation.id,
+                &run.id,
                 false,
-                false,
-                "run failed".to_string(),
+                Some("run failed".to_string()),
+                None,
                 Some("boom".to_string()),
             )
             .await
             .unwrap();
 
-        // A healthy run on a second task must NOT appear in attention.
-        let healthy_task = store
-            .create_task(oxios_kernel::task::CreateTaskParams {
-                name: "healthy-task".to_string(),
+        // A healthy run on a second automation must NOT appear in attention.
+        let healthy_automation = store
+            .create_automation(oxios_kernel::automation::CreateAutomationParams {
+                name: "healthy-automation".to_string(),
                 instruction: "keep going".to_string(),
-                identifier: None,
                 description: None,
-                priority: None,
-                parent_task_id: None,
-                assignee_agent_id: None,
-                created_by_agent_id: None,
-                created_by_session_id: None,
-                sort_order: None,
+                trigger: oxios_kernel::automation::AutomationTrigger::Manual,
+                cron_pattern: None,
+                timezone: None,
+                heartbeat_interval_secs: None,
+                max_executions: None,
+                persona_id: None,
+                project_id: None,
+                brain_space: None,
+                verify: Default::default(),
             })
             .await
             .unwrap();
         let healthy_run = store
-            .mark_running(&healthy_task.id, TaskRunTrigger::Manual)
+            .begin_run(&healthy_automation.id, AutomationRunTrigger::Manual, None)
             .await
             .unwrap();
         store
-            .mark_finished(
-                &healthy_task.id,
-                &healthy_run,
+            .finish_run(
+                &healthy_automation.id,
+                &healthy_run.id,
                 true,
-                false,
-                "done".to_string(),
+                Some("done".to_string()),
+                None,
                 None,
             )
             .await
@@ -1058,7 +1071,7 @@ mod tests {
         let item = &items[0];
         assert_eq!(item["kind"], "failed_run");
         assert_eq!(item["state"], "failed");
-        assert_eq!(item["origin"]["automationId"], failed_task.id);
+        assert_eq!(item["origin"]["automationId"], failed_automation.id);
         assert_eq!(item["origin"]["automationName"], "nightly-sync");
         assert_eq!(item["detailRoute"], "/operate/runs");
         assert_eq!(
@@ -1071,14 +1084,17 @@ mod tests {
         let runs = body["runs"].as_array().unwrap();
         let row = runs
             .iter()
-            .find(|r| r["id"] == run_id)
+            .find(|r| r["id"] == run.id)
             .expect("failed run row present");
         assert_eq!(row["kind"], "automation");
         assert_eq!(row["status"], "failed");
-        assert_eq!(row["automationId"], failed_task.id);
-        assert_eq!(row["trigger"], "schedule");
+        assert_eq!(row["automationId"], failed_automation.id);
+        assert_eq!(row["trigger"], "cron");
         assert_eq!(row["error"], "boom");
-        assert!(row.get("projectId").is_none(), "tasks carry no project");
+        assert!(
+            row.get("projectId").is_none(),
+            "automations carry no project"
+        );
     }
 
     /// Test 4 (redaction): a seeded MCP server's env secret and args never
@@ -1170,16 +1186,16 @@ mod tests {
         }
     }
 
-    /// Test 7: the existing task surface is untouched.
+    /// Test 7: the existing automation surface is untouched.
     #[tokio::test]
     async fn existing_tasks_endpoint_still_works() {
         let tmp = tempfile::tempdir().unwrap();
         let app = test_support::test_app(tmp.path());
         let mut svc = router(&app);
 
-        let (status, body) = send(&mut svc, "GET", "/api/tasks").await;
+        let (status, body) = send(&mut svc, "GET", "/api/automations").await;
         assert_eq!(status, StatusCode::OK, "body: {body}");
-        assert!(body["tasks"].is_array());
+        assert!(body["automations"].is_array());
     }
 
     /// The truncation helper respects char boundaries (redaction rule).

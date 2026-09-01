@@ -315,7 +315,6 @@
       "deny": "Deny",
       "approve": "Approve"
     },
-    "title": "Chat",
     "placeholder": "Send a message...",
     "send": "Send",
     "attachFiles": "Attach files",
@@ -747,7 +746,6 @@
     "email": "Email",
     "dashboard": "Dashboard",
     "knowledge": "Knowledge",
-    "chat": "Chat",
     "assets": "Assets",
     "projects": "Projects",
     "project": "Project",
@@ -781,7 +779,6 @@
     "notes": "Notes",
     "goBack": "Go back",
     "eventStream": "Event stream",
-    "chatMessages": "Chat messages",
     "sendMessage": "Send message",
     "errorFailedToLoad": "Failed to load data",
     "errorSomethingWrong": "Something went wrong. Please try again.",
@@ -819,7 +816,8 @@
     "fri": "Fri",
     "sat": "Sat",
     "brain": "Brain",
-    "add": "Add"
+    "add": "Add",
+    "messages": "Messages"
   },
   "cost": {
     "title": "Cost & Spend",
@@ -938,30 +936,8 @@
     "name": "Name",
     "everyNMinutes": "Every minute",
     "everyNHours": "Every hour",
-    "migrateToTasks": "Migrate to tasks",
-    "migratePreviewTitle": "Migrate cron jobs to tasks",
-    "migratePreviewIntro": "A dry-run is shown below. Cron jobs are copied (never deleted); retire them yourself after verifying the tasks work.",
-    "migrateCreatedCount_one": "{{count}} task will be created",
-    "migrateCreatedCount_other": "{{count}} tasks will be created",
-    "migrateSkippedCount_one": "{{count}} skipped",
-    "migrateSkippedCount_other": "{{count}} skipped",
-    "migrateConfirm_one": "Create {{count}} task",
-    "migrateConfirm_other": "Create {{count}} tasks",
-    "migrateConfirmTitle": "Confirm migration",
-    "migrateConfirmDescription_one": "Create {{count}} task from a cron job? The cron jobs will remain until you retire them.",
-    "migrateConfirmDescription_other": "Create {{count}} tasks from cron jobs? The cron jobs will remain until you retire them.",
-    "migrateConfirmAction": "Migrate",
-    "migrateDryRunFailed": "Failed to preview migration",
-    "migrateFailed": "Migration failed",
-    "migrateSuccess_one": "Created {{created}} task; skipped {{skipped}}",
-    "migrateSuccess_other": "Created {{created}} tasks; skipped {{skipped}}",
-    "migrateSummary_one": "{{created}} task created ({{skipped}} skipped).",
-    "migrateSummary_other": "{{created}} tasks created ({{skipped}} skipped).",
     "templates": {
-      "all": "All",
-      "galleryTitle": "Task Templates",
-      "galleryDescription": "Get started quickly with a pre-built template",
-      "addTask": "Add Task"
+      "all": "All"
     }
   },
   "dashboard": {
@@ -989,7 +965,6 @@
     "systemResourceUsage": "System resource usage",
     "agentMemoryStore": "Agent memory store",
     "auditTrailAccessControl": "Audit trail & access control",
-    "taskQueueManagement": "Task queue management",
     "tokensPerMin": "Tokens/min",
     "cpu": "CPU",
     "pendingApprovals": "Pending Approvals",
@@ -1628,8 +1603,6 @@
     "openNotifications": "Notifications",
     "unreadCount": "({{count}} unread)",
     "markAllRead": "Mark all read",
-    "taskCompleted": "Task Completed",
-    "taskFailed": "Task Failed",
     "agentStarted": "Agent Started",
     "agentFailed": "Agent Failed",
     "approvalRequired": "Approval Required",
@@ -2350,8 +2323,8 @@
       "count": "{{count}} runs",
       "trigger": {
         "manual": "Manual",
-        "schedule": "Schedule",
-        "heartbeat": "Heartbeat"
+        "heartbeat": "Heartbeat",
+        "cron": "Cron"
       }
     },
     "project": {

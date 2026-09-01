@@ -315,7 +315,6 @@
       "deny": "거부",
       "approve": "승인"
     },
-    "title": "채팅",
     "placeholder": "메시지 보내기...",
     "send": "보내기",
     "attachFiles": "파일 첨부",
@@ -747,7 +746,6 @@
     "email": "이메일",
     "dashboard": "대시보드",
     "knowledge": "지식",
-    "chat": "채팅",
     "assets": "에셋",
     "projects": "프로젝트",
     "project": "프로젝트",
@@ -781,7 +779,6 @@
     "notes": "노트",
     "goBack": "뒤로",
     "eventStream": "이벤트 스트림",
-    "chatMessages": "채팅 메시지",
     "sendMessage": "메시지 보내기",
     "errorFailedToLoad": "데이터 로드 실패",
     "errorSomethingWrong": "문제가 발생했습니다. 다시 시도해 주세요.",
@@ -819,7 +816,8 @@
     "fri": "금",
     "sat": "토",
     "brain": "브레인",
-    "add": "추가"
+    "add": "추가",
+    "messages": "메시지"
   },
   "cost": {
     "title": "비용 및 지출",
@@ -938,30 +936,8 @@
     "goal": "목표",
     "name": "이름",
     "everyNHours": "매시간",
-    "migrateToTasks": "작업으로 마이그레이션",
-    "migratePreviewTitle": "cron 작업을 작업으로 마이그레이션",
-    "migratePreviewIntro": "아래는 드라이런 결과입니다. cron 작업은 복사만 되며 삭제되지 않습니다. 작업이 잘 동작하는 것을 확인한 뒤 직접 정리하세요.",
-    "migrateCreatedCount_one": "생성될 작업 {{count}}개",
-    "migrateCreatedCount_other": "생성될 작업 {{count}}개",
-    "migrateSkippedCount_one": "건너뜀 {{count}}개",
-    "migrateSkippedCount_other": "건너뜀 {{count}}개",
-    "migrateConfirm_one": "작업 {{count}}개 생성",
-    "migrateConfirm_other": "작업 {{count}}개 생성",
-    "migrateConfirmTitle": "마이그레이션 확인",
-    "migrateConfirmDescription_one": "cron 작업에서 작업 {{count}}개를 생성하시겠습니까? cron 작업은 직접 정리할 때까지 유지됩니다.",
-    "migrateConfirmDescription_other": "cron 작업에서 작업 {{count}}개를 생성하시겠습니까? cron 작업은 직접 정리할 때까지 유지됩니다.",
-    "migrateConfirmAction": "마이그레이션",
-    "migrateDryRunFailed": "마이그레이션 미리보기에 실패했습니다",
-    "migrateFailed": "마이그레이션에 실패했습니다",
-    "migrateSuccess_one": "{{created}}개 작업 생성, {{skipped}}개 건너뜀",
-    "migrateSuccess_other": "{{created}}개 작업 생성, {{skipped}}개 건너뜀",
-    "migrateSummary_one": "{{created}}개 작업 생성됨 ({{skipped}}개 건너뜀).",
-    "migrateSummary_other": "{{created}}개 작업 생성됨 ({{skipped}}개 건너뜀).",
     "templates": {
-      "all": "전체",
-      "galleryTitle": "작업 템플릿",
-      "galleryDescription": "사전 구축된 템플릿으로 빠르게 시작하세요",
-      "addTask": "작업 추가"
+      "all": "전체"
     }
   },
   "dashboard": {
@@ -989,7 +965,6 @@
     "systemResourceUsage": "시스템 리소스 사용량",
     "agentMemoryStore": "에이전트 메모리 저장소",
     "auditTrailAccessControl": "감사 로그 & 접근 제어",
-    "taskQueueManagement": "작업 대기열 관리",
     "tokensPerMin": "토큰/분",
     "cpu": "CPU",
     "pendingApprovals": "대기 중인 승인",
@@ -1629,8 +1604,6 @@
     "unreadCount": "{{count}}개 읽지 않음",
     "noNotifications": "알림 없음",
     "markAllRead": "모두 읽음으로 표시",
-    "taskCompleted": "작업 완료",
-    "taskFailed": "작업 실패",
     "agentStarted": "에이전트 시작",
     "agentFailed": "에이전트 실패",
     "approvalRequired": "승인 필요"
@@ -2350,8 +2323,8 @@
       "count": "실행 {{count}}개",
       "trigger": {
         "manual": "수동",
-        "schedule": "스케줄",
-        "heartbeat": "하트비트"
+        "heartbeat": "하트비트",
+        "cron": "크론"
       }
     },
     "project": {

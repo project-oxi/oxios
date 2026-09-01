@@ -66,7 +66,7 @@ export function SidebarFooter({ collapsed }: { collapsed: boolean }) {
           <Languages className="h-4 w-4" />
         </button>
         <Link
-          to="/settings"
+          to="/operate/system/settings"
           search={{ section: undefined }}
           className="rounded-lg p-2 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label={t('common.settings')}
@@ -105,7 +105,7 @@ export function SidebarFooter({ collapsed }: { collapsed: boolean }) {
         <span>{langLabel}</span>
       </button>
       <Link
-        to="/settings"
+        to="/operate/system/settings"
         search={{ section: undefined }}
         className={cn(
           'flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm text-left select-none transition-all',

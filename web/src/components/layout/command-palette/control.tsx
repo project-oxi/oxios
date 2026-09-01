@@ -8,7 +8,8 @@ import type { Skill } from '@/types'
 import type { AgentListResponse } from '@/types/agent'
 import type { CommandProvider, PaletteItem, QueryContext } from './types'
 
-interface CronJob {
+/** Minimal Automation fields the palette needs (WT-1 `/api/automations`). */
+interface AutomationRef {
   id: string
   name: string
 }
@@ -17,9 +18,9 @@ interface CronJob {
  * Control provider — verb `control` (prefix `!`).
  *
  * Direct REST actions (Tier 1, design §4). Conventions (§5 "inline action
- * args"): destructive targets (agent kill, cron trigger) need no action token —
- * the entity alone implies the verb's default; toggle-able targets (skill,
- * token-maxing) require an explicit `enable|disable|start|stop` action.
+ * args"): destructive targets (agent kill, automation run) need no action
+ * token — the entity alone implies the verb's default; toggle-able targets
+ * (skill, token-maxing) require an explicit `enable|disable|start|stop` action.
  *
  * Note: `@maxing` has no colon, so the lexer yields `{ name: 'maxing' }` with no
  * `type` — match it by name too.
@@ -36,11 +37,11 @@ export function useControlProvider(): CommandProvider {
       ),
     refetchInterval: 10_000,
   })
-  const cronQ = useQuery({
-    queryKey: ['tasks'],
-    queryFn: async (): Promise<CronJob[]> => {
-      const res = await api.get<{ tasks: CronJob[] }>('/api/tasks')
-      return Array.isArray(res?.tasks) ? res.tasks : []
+  const automationsQ = useQuery({
+    queryKey: ['automations'],
+    queryFn: async (): Promise<AutomationRef[]> => {
+      const res = await api.get<{ automations: AutomationRef[] }>('/api/automations')
+      return Array.isArray(res?.automations) ? res.automations : []
     },
     refetchInterval: 30_000,
   })
@@ -58,11 +59,11 @@ export function useControlProvider(): CommandProvider {
     },
     onError: () => toast.error(t('commandPalette.controlFailed')),
   })
-  const triggerMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/api/tasks/${id}/run`),
+  const runMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/api/automations/${id}/run`),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success(t('commandPalette.triggeredCron'))
+      qc.invalidateQueries({ queryKey: ['automations'] })
+      toast.success(t('commandPalette.triggeredAutomation'))
     },
     onError: () => toast.error(t('commandPalette.controlFailed')),
   })
@@ -83,7 +84,7 @@ export function useControlProvider(): CommandProvider {
   })
 
   const agents = agentsQ.data?.items ?? []
-  const crons = cronQ.data ?? []
+  const automations = automationsQ.data ?? []
   const skills = skillsQ.data?.skills ?? []
 
   return useMemo(
@@ -149,27 +150,27 @@ export function useControlProvider(): CommandProvider {
           if (ent.type === 'agent') return []
         }
 
-        // @cron → trigger
-        if (ent.type === 'cron' || !ent.type) {
-          const cron = crons.find(
-            (c) =>
-              c.id === ent.name ||
-              c.name.toLowerCase().includes(name) ||
-              c.id.toLowerCase() === name,
+        // @automation → run
+        if (ent.type === 'automation' || !ent.type) {
+          const automation = automations.find(
+            (a) =>
+              a.id === ent.name ||
+              a.name.toLowerCase().includes(name) ||
+              a.id.toLowerCase() === name,
           )
-          if (cron) {
+          if (automation) {
             return [
               {
-                id: `control-cron-${cron.id}`,
+                id: `control-automation-${automation.id}`,
                 verb: 'control',
                 icon: <Play className="h-4 w-4" />,
-                title: t('commandPalette.triggerCron', { name: cron.name }),
+                title: t('commandPalette.triggerAutomation', { name: automation.name }),
                 score: 100,
-                onSelect: () => triggerMutation.mutate(cron.id),
+                onSelect: () => runMutation.mutate(automation.id),
               },
             ]
           }
-          if (ent.type === 'cron') return []
+          if (ent.type === 'automation') return []
         }
 
         // @skill enable|disable (requires action token)
@@ -212,6 +213,6 @@ export function useControlProvider(): CommandProvider {
         return []
       },
     }),
-    [t, agents, crons, skills, killMutation, triggerMutation, skillToggle, maxingMutation],
+    [t, agents, automations, skills, killMutation, runMutation, skillToggle, maxingMutation],
   )
 }

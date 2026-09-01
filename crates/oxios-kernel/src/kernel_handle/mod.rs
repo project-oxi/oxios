@@ -159,10 +159,10 @@ pub struct KernelHandle {
     /// Unified asset store — central binary storage with metadata index.
     /// Attached by the kernel assembler. `None` on the preliminary handle.
     pub asset_store: Option<Arc<crate::asset_store::AssetStore>>,
-    /// Task store (RFC-043) — SQLite-backed task lifecycle. Attached by
+    /// Automation store — SQLite-backed automation lifecycle. Attached by
     /// the kernel assembler so the web routes, the auto-run tick, and the
     /// `task` agent tool share ONE store. `None` on the preliminary handle.
-    pub task_store: Option<Arc<tokio::sync::Mutex<crate::task::TaskStore>>>,
+    pub automation_store: Option<Arc<tokio::sync::Mutex<crate::automation::AutomationStore>>>,
     /// Structured tool-result side channel: tools insert payloads keyed by
     /// `tool_call_id`; the agent-runtime completion callback takes them when
     /// publishing `KernelEvent::ToolExecutionFinished`. Consumers today are
@@ -239,7 +239,7 @@ impl KernelHandle {
             readiness: Arc::new(ReadinessGate::new(0)),
             orchestrator: None,
             asset_store: None,
-            task_store: None,
+            automation_store: None,
         }
     }
 
@@ -355,12 +355,12 @@ impl KernelHandle {
         self
     }
 
-    /// Attach the task store (RFC-043).
-    pub fn with_task_store(
+    /// Attach the automation store.
+    pub fn with_automation_store(
         mut self,
-        store: Arc<tokio::sync::Mutex<crate::task::TaskStore>>,
+        store: Arc<tokio::sync::Mutex<crate::automation::AutomationStore>>,
     ) -> Self {
-        self.task_store = Some(store);
+        self.automation_store = Some(store);
         self
     }
 
@@ -372,8 +372,8 @@ impl KernelHandle {
     /// The single shared execution primitive for autonomous/scheduled runs.
     /// Used by:
     /// - the CronScheduler auto-start loop (background cron job execution),
-    /// - the task auto-run tick loop (scheduled/heartbeat tasks),
-    /// - `POST /api/tasks/:id/run` (manual task execution).
+    /// - the automation auto-run tick loop (scheduled/heartbeat automations),
+    /// - `POST /api/automations/:id/run` (manual automation execution).
     ///
     /// This calls `orchestrator.handle_unified` directly — the same in-process
     /// path the CLI uses (`execute_prompt_with_session`). It does NOT route

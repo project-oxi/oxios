@@ -28,12 +28,10 @@ import { SLASH_COMMANDS, type SlashCommandDef } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat'
 import { ApprovalModeSelector } from './approval-mode-selector'
-import { BrainPickerContainer } from './brain-picker'
 import { FanOutButton } from './FanOutButton'
 import { LiveActivityBar } from './live-activity-bar'
 import { ModelParamsPopover } from './model-params-popover'
 import { ModelPickerContainer } from './model-picker'
-import { PersonaPickerContainer } from './persona-picker'
 
 // ── Types ──
 
@@ -46,7 +44,7 @@ export interface AttachedFile {
 }
 
 export interface ContextAttachment {
-  type: 'knowledge' | 'memory' | 'file'
+  type: 'knowledge' | 'memory' | 'file' | 'artifact' | 'citation'
   id: string
   label: string
   snippet?: string
@@ -70,18 +68,22 @@ interface ChatInputProps {
   connected?: boolean
   queuedCount?: number
   /**
-   * `'chat'` (default) — full composer with persona picker, files, mentions,
-   * model params, and fan-out. `'copilot'` restricts the UI to match the
-   * locked-persona Copilot dialog boundary: no persona/files/mentions/params/
-   * fan-out; model picker and approval mode stay.
+   * `'studio'` (default) — the Studio composer (IA design §8.3): NO
+   * persistent project/persona/model/Brain selectors (StudioContextBar
+   * owns them); attachments, mentions, slash commands, params, approval
+   * mode, and tool-affordance controls stay. `'copilot'` restricts the
+   * UI to match the locked-persona Copilot dialog boundary: no
+   * files/mentions/params/fan-out; model picker and approval mode stay.
    */
-  variant?: 'chat' | 'copilot'
+  variant?: 'studio' | 'copilot'
   roles?: { name: string; model: string }[]
-  activeRole?: string | null
   setActiveRole?: (role: string | null) => void
   activeModelId?: string | null
   setActiveModelId?: (id: string | null) => void
   placeholder?: string
+  /** Extra controls rendered in the composer toolbar's left group (e.g.
+   *  the Studio one-turn `Turn options` popover). */
+  toolbarSlot?: React.ReactNode
 }
 
 // TipTap's setContent() and the `content:` option parse their argument as
@@ -108,9 +110,9 @@ export function ChatInput({
   isStreaming,
   connected,
   queuedCount = 0,
-  variant = 'chat',
+  variant = 'studio',
+  toolbarSlot = null,
   roles = [],
-  activeRole = null,
   setActiveRole = () => {},
   activeModelId = null,
   setActiveModelId = () => {},
@@ -822,15 +824,15 @@ export function ChatInput({
         <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-1">
           {/* Left: model + context tools */}
           <div className="flex items-center gap-1 min-w-0 flex-1">
-            <ModelPickerContainer
-              activeModelId={activeModelId}
-              setActiveModelId={setActiveModelId}
-              roles={isCopilot ? [] : roles}
-              activeRole={isCopilot ? null : activeRole}
-              setActiveRole={setActiveRole}
-            />
-            {!isCopilot && <PersonaPickerContainer />}
-            {!isCopilot && <BrainPickerContainer />}
+            {isCopilot && (
+              <ModelPickerContainer
+                activeModelId={activeModelId}
+                setActiveModelId={setActiveModelId}
+                roles={[]}
+                activeRole={null}
+                setActiveRole={setActiveRole}
+              />
+            )}
             <ApprovalModeSelector />
             {!isCopilot && (
               <>
@@ -857,6 +859,7 @@ export function ChatInput({
           </div>
           {/* Right: queue + send */}
           <div className="flex items-center shrink-0 gap-1.5">
+            {toolbarSlot}
             {queuedCount > 0 && (
               <span className="mr-0.5 flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
                 <Clock className="h-3 w-3" />

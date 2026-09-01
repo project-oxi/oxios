@@ -15,39 +15,41 @@ interface NewTarget {
 
 /**
  * Creation targets — each routes to the page that owns its creation UI
- * (SkillEditorDialog, persona/project/cron create forms, knowledge "New File").
- * v1 routes to the page (resolved OQ); directly opening the create dialog from
- * the palette is a later enhancement requiring cross-component state.
+ * (skill editor, persona/project/automation create forms, knowledge "New
+ * File"). v1 routes to the page (resolved OQ); directly opening the create
+ * dialog from the palette is a later enhancement requiring cross-component
+ * state. Targets use the canonical surface routes from the IA design §10.1;
+ * before wave-2 routes land they resolve to the surface shells.
  */
 const TARGETS: NewTarget[] = [
   {
     key: 'skill',
     titleKey: 'commandPalette.newSkill',
-    href: '/skills',
+    href: '/operate/system/skills',
     icon: <Zap className="h-4 w-4" />,
   },
   {
     key: 'persona',
     titleKey: 'commandPalette.newPersona',
-    href: '/personas',
+    href: '/studio/personas',
     icon: <Theater className="h-4 w-4" />,
   },
   {
     key: 'project',
     titleKey: 'commandPalette.newProject',
-    href: '/projects',
+    href: '/operate/projects',
     icon: <FolderKanban className="h-4 w-4" />,
   },
   {
-    key: 'cron',
-    titleKey: 'commandPalette.newCron',
-    href: '/tasks',
+    key: 'automation',
+    titleKey: 'commandPalette.newAutomation',
+    href: '/studio/automations',
     icon: <Timer className="h-4 w-4" />,
   },
   {
     key: 'note',
     titleKey: 'commandPalette.newNote',
-    href: '/brain/knowledge',
+    href: '/knowledge/library',
     icon: <FilePlus className="h-4 w-4" />,
   },
 ]

@@ -4,7 +4,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useChatAppend, useChecklistAdd, useJournalAdd } from '@/hooks/use-knowledge'
-import { matchScore, modePrimaryVerb } from './ranker'
+import { matchScore, surfacePrimaryVerb } from './ranker'
 import type { CommandProvider, PaletteItem, QueryContext } from './types'
 
 /** A capture destination (checklist file or journal). */
@@ -137,9 +137,9 @@ export function useCaptureProvider(): CommandProvider {
           )
         }
 
-        // Bare text → mode-primary. CaptureProvider owns knowledge-mode memos.
+        // Bare text → surface-primary. CaptureProvider owns Knowledge-surface memos.
         const trimmed = ctx.text.trim()
-        if (ctx.verb === null && modePrimaryVerb(ctx.mode) === 'capture' && trimmed) {
+        if (ctx.verb === null && surfacePrimaryVerb(ctx.surface) === 'capture' && trimmed) {
           return [
             {
               id: 'capture-inbox',

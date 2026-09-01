@@ -426,13 +426,13 @@ impl Surface for WebSurface {
             WebBridgeHandle::from_bridge(&web_channel).with_response_timeout(response_timeout);
 
         // Build app state — all knowledge access goes through kernel.knowledge
-        // Task store (RFC-043) — attached by the kernel assembler; the web
+        // Automation store — attached by the kernel assembler; the web
         // surface hard-requires it.
-        let task_store = ctx
+        let automation_store = ctx
             .kernel
-            .task_store
+            .automation_store
             .clone()
-            .expect("task store not attached to kernel handle");
+            .expect("automation store not attached to kernel handle");
 
         let state = Arc::new(AppState {
             base_url: format!("http://{host}:{port}"),
@@ -445,7 +445,7 @@ impl Surface for WebSurface {
             web_dist,
             readiness: ctx.kernel.readiness.clone(),
             gateway: ctx.gateway.clone(),
-            task_store,
+            automation_store,
         });
 
         // Build API routes
@@ -494,9 +494,9 @@ impl Surface for WebSurface {
                 "API docs disabled (set gateway.expose_api_docs=true on a loopback bind to enable)"
             );
         }
-        // Spawn the task auto-run tick loop BEFORE `state` is moved into the
+        // Spawn the automation auto-run tick loop BEFORE `state` is moved into the
         // router. It clones the Arc internally.
-        let task_tick = spawn_task_auto_run(state.clone());
+        let automation_tick = spawn_automation_auto_run(state.clone());
 
         let app = app.with_state(state);
 
@@ -533,31 +533,32 @@ impl Surface for WebSurface {
 
         Ok(SurfaceHandle {
             channel: Some(Box::new(web_channel)),
-            tasks: vec![handle, task_tick],
+            tasks: vec![handle, automation_tick],
         })
     }
 }
 
-/// Background loop that drives scheduled/heartbeat tasks.
+/// Background loop that drives scheduled/heartbeat automations.
 ///
-/// Every 60 s, polls `list_due_tasks` and executes each due task on its own
-/// task (bounded concurrency via spawn; a stuck LLM call doesn't block the
-/// tick). Each run goes through the shared `execute_task_run` helper, so the
-/// manual run endpoint and this loop share ONE execution path.
+/// Every 60 s, polls `list_due_automations` and executes each due
+/// automation on its own task (bounded concurrency via spawn; a stuck LLM
+/// call doesn't block the tick). Each run goes through the shared
+/// `execute_automation_run` helper, so the manual run endpoint and this
+/// loop share ONE execution path.
 ///
-/// On boot it first recovers tasks stranded at `running` by a prior crash
-/// (the Task model persists status to SQLite, unlike the CronScheduler's
-/// in-memory set).
-fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
-    use oxios_kernel::task::{TaskAutomationMode, TaskRunTrigger, execute_task_run};
+/// On boot it first recovers runs stranded at `running` by a prior crash.
+fn spawn_automation_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
+    use oxios_kernel::automation::{
+        AutomationRunTrigger, AutomationTrigger, execute_automation_run,
+    };
 
     tokio::spawn(async move {
-        let task_store = state.task_store.clone();
+        let automation_store = state.automation_store.clone();
         let kernel = state.kernel.clone();
 
-        // Boot recovery: close orphaned runs + reset stranded tasks.
-        if let Err(e) = task_store.lock().await.recover_stranded().await {
-            tracing::warn!(error = %e, "Task stranded-recovery failed");
+        // Boot recovery: close orphaned runs left open by a crash.
+        if let Err(e) = automation_store.lock().await.recover_stranded().await {
+            tracing::warn!(error = %e, "Automation stranded-recovery failed");
         }
 
         // First tick fires immediately (interval semantics); consume it so we
@@ -567,68 +568,32 @@ fn spawn_task_auto_run(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
 
         loop {
             interval.tick().await;
-            let now = chrono::Utc::now();
-            let due = match task_store.lock().await.list_due_tasks().await {
+            let due = match automation_store.lock().await.list_due_automations().await {
                 Ok(t) => t,
                 Err(e) => {
-                    tracing::warn!(error = %e, "list_due_tasks failed");
+                    tracing::warn!(error = %e, "list_due_automations failed");
                     continue;
                 }
             };
-            for task in due {
-                // Safety: skip exhausted tasks (list_due_tasks shouldn't
-                // return them, but guard against a race).
-                if task.is_exhausted() {
+            for automation in due {
+                // Safety: skip exhausted automations (list_due_automations
+                // shouldn't return them, but guard against a race).
+                if automation.is_exhausted() {
                     continue;
                 }
 
-                // Dependency gate (RFC-043): defer until all dependencies
-                // reach `completed`. Manual runs bypass this — explicit user
-                // intent. Push next_run_at to the next eligible slot so the
-                // task doesn't pop up on every tick.
-                let unsatisfied = match task_store
-                    .lock()
-                    .await
-                    .unsatisfied_dependencies(&task.id)
-                    .await
-                {
-                    Ok(u) => u,
-                    Err(e) => {
-                        tracing::warn!(task = %task.id, error = %e, "unsatisfied_dependencies failed");
-                        Vec::new()
-                    }
+                let trigger = match automation.trigger {
+                    AutomationTrigger::Cron => AutomationRunTrigger::Cron,
+                    _ => AutomationRunTrigger::Heartbeat,
                 };
-                if !unsatisfied.is_empty() {
-                    tracing::debug!(task = %task.id, ?unsatisfied, "deferring: deps not completed");
-                    let next = match task.automation_mode {
-                        Some(TaskAutomationMode::Schedule) => task
-                            .schedule_pattern
-                            .as_deref()
-                            .and_then(|p| oxios_kernel::task::cron_next_after(p, &now).ok()),
-                        Some(TaskAutomationMode::Heartbeat) => task
-                            .heartbeat_interval_secs
-                            .map(|s| (now + chrono::Duration::seconds(s as i64)).to_rfc3339()),
-                        None => None,
-                    };
-                    let _ = task_store
-                        .lock()
-                        .await
-                        .set_next_run(&task.id, next.as_deref())
-                        .await;
-                    continue;
-                }
-
-                let trigger = match task.automation_mode {
-                    Some(TaskAutomationMode::Schedule) => TaskRunTrigger::Schedule,
-                    _ => TaskRunTrigger::Heartbeat,
-                };
-                let ts = task_store.clone();
+                let ts = automation_store.clone();
                 let kh = kernel.clone();
-                let id = task.id.clone();
+                let id = automation.id.clone();
                 tokio::spawn(async move {
                     // Scheduled runs use the longer cron-style ceiling (600 s).
-                    let (_, success, _summary) = execute_task_run(ts, kh, &id, trigger, 600).await;
-                    tracing::info!(%id, success, "Scheduled task run completed");
+                    let (_, success, _summary) =
+                        execute_automation_run(ts, kh, &id, trigger, 600).await;
+                    tracing::info!(%id, success, "Scheduled automation run completed");
                 });
             }
         }

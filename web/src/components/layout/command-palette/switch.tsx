@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { Brain, Cpu, LayoutDashboard, MessageSquare, Theater } from 'lucide-react'
+import { BookOpen, Cpu, LayoutDashboard, MessageSquare, Theater } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useModels } from '@/hooks/use-engine'
 import { api } from '@/lib/api-client'
 import { useChatStore } from '@/stores/chat'
+import { SURFACE_HREFS, type SurfaceId } from '@/types/surfaces'
 import type { CommandProvider, PaletteItem, QueryContext } from './types'
 
 interface Persona {
@@ -14,26 +15,19 @@ interface Persona {
   name: string
 }
 
-const MODE_HREF: Record<string, string> = {
-  console: '/',
-  knowledge: '/brain/knowledge',
-  brain: '/brain',
-  chat: '/chat',
-}
-
-function modeIcon(key: string) {
-  if (key === 'knowledge' || key === 'brain') return <Brain className="h-4 w-4" />
-  if (key === 'chat') return <MessageSquare className="h-4 w-4" />
-  return <LayoutDashboard className="h-4 w-4" />
+const SURFACE_ICONS: Record<SurfaceId, typeof LayoutDashboard> = {
+  operate: LayoutDashboard,
+  knowledge: BookOpen,
+  studio: MessageSquare,
 }
 
 /**
  * Switch provider — verb `switch` (prefix `~`).
  *
- * Owns global/active-state switches: sidebar mode (`~ @mode:`), active persona
+ * Owns global/active-state switches: surface (`~ @surface:`), active persona
  * (`~ @persona:`, the only way to pick a persona in v1), and the per-message
- * model override (`~ @model:`). Mode switches navigate; persona/model switches
- * mutate active state.
+ * model override (`~ @model:`). Surface switches navigate; persona/model
+ * switches mutate active state.
  */
 export function useSwitchProvider(): CommandProvider {
   const { t } = useTranslation()
@@ -73,22 +67,26 @@ export function useSwitchProvider(): CommandProvider {
         if (!ent) return []
         const name = ent.name.toLowerCase()
 
-        // @mode — explicit only (bare name rarely a mode). Capture into a const
-        // so the `string | undefined` from indexed access narrows after the guard.
-        const modeHref = ent.type === 'mode' ? MODE_HREF[name] : undefined
-        if (modeHref) {
+        // @surface — explicit only (bare name rarely a surface). Capture into a
+        // const so the `string | undefined` from indexed access narrows after
+        // the guard.
+        const surface = (ent.type === 'surface' && name in SURFACE_HREFS ? name : undefined) as
+          | SurfaceId
+          | undefined
+        if (surface) {
+          const SurfaceIcon = SURFACE_ICONS[surface]
           return [
             {
-              id: `switch-mode-${name}`,
+              id: `switch-surface-${surface}`,
               verb: 'switch',
-              icon: modeIcon(name),
-              title: t('commandPalette.switchMode', { mode: name }),
+              icon: <SurfaceIcon className="h-4 w-4" />,
+              title: t('commandPalette.switchSurface', { surface: t(`sidebar.${surface}`) }),
               score: 100,
-              onSelect: () => router.history.push(modeHref),
+              onSelect: () => router.history.push(SURFACE_HREFS[surface]),
             },
           ]
         }
-        if (ent.type === 'mode') return [] // explicit @mode:… with no match
+        if (ent.type === 'surface') return [] // explicit @surface:… with no match
 
         // @persona — explicit type, or bare name matching a persona.
         if (ent.type === 'persona' || !ent.type) {

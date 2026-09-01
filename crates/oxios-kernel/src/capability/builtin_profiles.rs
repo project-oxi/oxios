@@ -545,7 +545,7 @@ fn make_operator() -> ToolProfileSpec {
             kernel_domain("budget", Rights::READ | Rights::WRITE),
             kernel_domain("resource", Rights::READ | Rights::WRITE),
             // Long-tail kernel-mutate domains (Task 9 catalog entries).
-            kernel_domain("task", Rights::READ | Rights::WRITE),
+            kernel_domain("automation", Rights::READ | Rights::WRITE),
             kernel_domain("marketplace", Rights::READ | Rights::WRITE),
             kernel_domain("program", Rights::READ | Rights::WRITE),
             kernel_domain("calendar", Rights::READ | Rights::WRITE),

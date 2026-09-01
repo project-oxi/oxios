@@ -5,6 +5,7 @@
 import { useNavigate } from '@tanstack/react-router'
 import { CornerDownLeft, Search } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 // ── Search item ──
@@ -19,7 +20,7 @@ interface SearchItem {
 
 // ── Build search index ──
 
-function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
+function buildSearchIndex(navigate: (to: string) => void, automationsLabel: string): SearchItem[] {
   return [
     // Settings sections
     {
@@ -139,11 +140,11 @@ function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
       action: () => navigate('/security'),
     },
     {
-      id: 'nav-cron',
-      label: 'Tasks',
-      keywords: ['cron', 'schedule', 'jobs', 'tasks', 'automation'],
+      id: 'nav-automations',
+      label: automationsLabel,
+      keywords: ['cron', 'schedule', 'jobs', 'tasks', 'automation', 'automations'],
       section: 'Navigation',
-      action: () => navigate('/tasks'),
+      action: () => navigate('/studio/automations'),
     },
     {
       id: 'nav-resources',
@@ -179,20 +180,21 @@ function buildSearchIndex(navigate: (to: string) => void): SearchItem[] {
 // ── Component ──
 
 export function SettingsSearch() {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [focusIndex, setFocusIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const navigateFn = useNavigate()
-
+  const automationsLabel = t('automations.title')
   const searchIndex = useRef<SearchItem[]>([])
   useEffect(() => {
     searchIndex.current = buildSearchIndex((to: string) => {
       navigateFn({ to } as never)
       setOpen(false)
       setQuery('')
-    })
-  }, [navigateFn])
+    }, automationsLabel)
+  }, [navigateFn, automationsLabel])
 
   // Filter results
   const results = query.trim()

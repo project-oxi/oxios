@@ -86,6 +86,7 @@ mod tests {
             personality_traits: vec!["curious".to_string()],
             capabilities: vec![],
             tool_profile: crate::persona::ToolProfile::Code,
+            presentation_lens: crate::persona::PresentationLens::General,
         }
     }
 

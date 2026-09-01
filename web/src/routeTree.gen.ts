@@ -9,68 +9,40 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as AssetsRouteImport } from './routes/assets'
-import { Route as BudgetRouteImport } from './routes/budget'
-import { Route as ChatRouteImport } from './routes/chat'
-import { Route as EmailRouteImport } from './routes/email'
-import { Route as EventsRouteImport } from './routes/events'
 import { Route as GitRouteImport } from './routes/git'
-import { Route as MarketplaceRouteImport } from './routes/marketplace'
-import { Route as McpRouteImport } from './routes/mcp'
 import { Route as PersonasRouteImport } from './routes/personas'
-import { Route as ResourcesRouteImport } from './routes/resources'
-import { Route as SecurityRouteImport } from './routes/security'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as SkillsRouteImport } from './routes/skills'
-import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as TokenMaxingRouteImport } from './routes/token-maxing'
-import { Route as AgentsIndexRouteImport } from './routes/agents/index'
-import { Route as AgentsAgentIdRouteImport } from './routes/agents/$agentId'
-import { Route as BrainIndexRouteImport } from './routes/brain/index'
-import { Route as BrainContradictionsRouteImport } from './routes/brain/contradictions'
-import { Route as BrainEntityRouteImport } from './routes/brain/entity'
-import { Route as BrainOperationsRouteImport } from './routes/brain/operations'
-import { Route as BrainSearchRouteImport } from './routes/brain/search'
 import { Route as KnowledgeIndexRouteImport } from './routes/knowledge/index'
-import { Route as KnowledgeGraphRouteImport } from './routes/knowledge/graph'
-import { Route as ProjectsIndexRouteImport } from './routes/projects/index'
-import { Route as ProjectsProjectIdRouteImport } from './routes/projects/$projectId'
-import { Route as SessionsIndexRouteImport } from './routes/sessions/index'
-import { Route as SessionsSessionIdRouteImport } from './routes/sessions/$sessionId'
+import { Route as OperateIndexRouteImport } from './routes/operate/index'
+import { Route as OperateCapabilitiesRouteImport } from './routes/operate/capabilities'
+import { Route as OperateEventsRouteImport } from './routes/operate/events'
+import { Route as OperateRunsRouteImport } from './routes/operate/runs'
+import { Route as StudioIndexRouteImport } from './routes/studio/index'
+import { Route as StudioAutomationsRouteImport } from './routes/studio/automations'
 import { Route as WorkspaceIndexRouteImport } from './routes/workspace/index'
-import { Route as AgentsAgentIdTraceRouteImport } from './routes/agents/$agentId/trace'
-import { Route as BrainKnowledgeIndexRouteImport } from './routes/brain/knowledge/index'
-import { Route as BrainKnowledgeGraphRouteImport } from './routes/brain/knowledge/graph'
+import { Route as KnowledgeLibraryIndexRouteImport } from './routes/knowledge/library/index'
+import { Route as KnowledgeLibraryAssetsRouteImport } from './routes/knowledge/library/assets'
+import { Route as KnowledgeLibraryGraphRouteImport } from './routes/knowledge/library/graph'
+import { Route as KnowledgeLibraryJournalRouteImport } from './routes/knowledge/library/journal'
+import { Route as KnowledgeMemoryIndexRouteImport } from './routes/knowledge/memory/index'
+import { Route as KnowledgeMemoryContradictionsRouteImport } from './routes/knowledge/memory/contradictions'
+import { Route as KnowledgeMemoryEntitiesRouteImport } from './routes/knowledge/memory/entities'
+import { Route as KnowledgeMemorySearchRouteImport } from './routes/knowledge/memory/search'
+import { Route as KnowledgeMemoryTimelineRouteImport } from './routes/knowledge/memory/timeline'
+import { Route as OperateProjectsIndexRouteImport } from './routes/operate/projects/index'
+import { Route as OperateProjectsProjectIdRouteImport } from './routes/operate/projects/$projectId'
+import { Route as OperateSystemConnectionsRouteImport } from './routes/operate/system/connections'
+import { Route as OperateSystemMcpRouteImport } from './routes/operate/system/mcp'
+import { Route as OperateSystemResourcesRouteImport } from './routes/operate/system/resources'
+import { Route as OperateSystemSecurityRouteImport } from './routes/operate/system/security'
+import { Route as OperateSystemSettingsRouteImport } from './routes/operate/system/settings'
+import { Route as OperateSystemSkillsRouteImport } from './routes/operate/system/skills'
+import { Route as StudioSessionsSessionIdRouteImport } from './routes/studio/sessions/$sessionId'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AssetsRoute = AssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BudgetRoute = BudgetRouteImport.update({
-  id: '/budget',
-  path: '/budget',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChatRoute = ChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EmailRoute = EmailRouteImport.update({
-  id: '/email',
-  path: '/email',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EventsRoute = EventsRouteImport.update({
-  id: '/events',
-  path: '/events',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GitRoute = GitRouteImport.update({
@@ -78,44 +50,9 @@ const GitRoute = GitRouteImport.update({
   path: '/git',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MarketplaceRoute = MarketplaceRouteImport.update({
-  id: '/marketplace',
-  path: '/marketplace',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const McpRoute = McpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PersonasRoute = PersonasRouteImport.update({
   id: '/personas',
   path: '/personas',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResourcesRoute = ResourcesRouteImport.update({
-  id: '/resources',
-  path: '/resources',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SecurityRoute = SecurityRouteImport.update({
-  id: '/security',
-  path: '/security',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SkillsRoute = SkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TasksRoute = TasksRouteImport.update({
-  id: '/tasks',
-  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TokenMaxingRoute = TokenMaxingRouteImport.update({
@@ -123,69 +60,39 @@ const TokenMaxingRoute = TokenMaxingRouteImport.update({
   path: '/token-maxing',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AgentsIndexRoute = AgentsIndexRouteImport.update({
-  id: '/agents/',
-  path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsAgentIdRoute = AgentsAgentIdRouteImport.update({
-  id: '/agents/$agentId',
-  path: '/agents/$agentId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainIndexRoute = BrainIndexRouteImport.update({
-  id: '/brain/',
-  path: '/brain/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainContradictionsRoute = BrainContradictionsRouteImport.update({
-  id: '/brain/contradictions',
-  path: '/brain/contradictions',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainEntityRoute = BrainEntityRouteImport.update({
-  id: '/brain/entity',
-  path: '/brain/entity',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainOperationsRoute = BrainOperationsRouteImport.update({
-  id: '/brain/operations',
-  path: '/brain/operations',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrainSearchRoute = BrainSearchRouteImport.update({
-  id: '/brain/search',
-  path: '/brain/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const KnowledgeIndexRoute = KnowledgeIndexRouteImport.update({
   id: '/knowledge/',
   path: '/knowledge/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const KnowledgeGraphRoute = KnowledgeGraphRouteImport.update({
-  id: '/knowledge/graph',
-  path: '/knowledge/graph',
+const OperateIndexRoute = OperateIndexRouteImport.update({
+  id: '/operate/',
+  path: '/operate/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProjectsIndexRoute = ProjectsIndexRouteImport.update({
-  id: '/projects/',
-  path: '/projects/',
+const OperateCapabilitiesRoute = OperateCapabilitiesRouteImport.update({
+  id: '/operate/capabilities',
+  path: '/operate/capabilities',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
-  id: '/projects/$projectId',
-  path: '/projects/$projectId',
+const OperateEventsRoute = OperateEventsRouteImport.update({
+  id: '/operate/events',
+  path: '/operate/events',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SessionsIndexRoute = SessionsIndexRouteImport.update({
-  id: '/sessions/',
-  path: '/sessions/',
+const OperateRunsRoute = OperateRunsRouteImport.update({
+  id: '/operate/runs',
+  path: '/operate/runs',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
-  id: '/sessions/$sessionId',
-  path: '/sessions/$sessionId',
+const StudioIndexRoute = StudioIndexRouteImport.update({
+  id: '/studio/',
+  path: '/studio/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioAutomationsRoute = StudioAutomationsRouteImport.update({
+  id: '/studio/automations',
+  path: '/studio/automations',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
@@ -193,313 +100,336 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
   path: '/workspace/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AgentsAgentIdTraceRoute = AgentsAgentIdTraceRouteImport.update({
-  id: '/trace',
-  path: '/trace',
-  getParentRoute: () => AgentsAgentIdRoute,
-} as any)
-const BrainKnowledgeIndexRoute = BrainKnowledgeIndexRouteImport.update({
-  id: '/brain/knowledge/',
-  path: '/brain/knowledge/',
+const KnowledgeLibraryIndexRoute = KnowledgeLibraryIndexRouteImport.update({
+  id: '/knowledge/library/',
+  path: '/knowledge/library/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BrainKnowledgeGraphRoute = BrainKnowledgeGraphRouteImport.update({
-  id: '/brain/knowledge/graph',
-  path: '/brain/knowledge/graph',
+const KnowledgeLibraryAssetsRoute = KnowledgeLibraryAssetsRouteImport.update({
+  id: '/knowledge/library/assets',
+  path: '/knowledge/library/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeLibraryGraphRoute = KnowledgeLibraryGraphRouteImport.update({
+  id: '/knowledge/library/graph',
+  path: '/knowledge/library/graph',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeLibraryJournalRoute = KnowledgeLibraryJournalRouteImport.update({
+  id: '/knowledge/library/journal',
+  path: '/knowledge/library/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeMemoryIndexRoute = KnowledgeMemoryIndexRouteImport.update({
+  id: '/knowledge/memory/',
+  path: '/knowledge/memory/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeMemoryContradictionsRoute =
+  KnowledgeMemoryContradictionsRouteImport.update({
+    id: '/knowledge/memory/contradictions',
+    path: '/knowledge/memory/contradictions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const KnowledgeMemoryEntitiesRoute = KnowledgeMemoryEntitiesRouteImport.update({
+  id: '/knowledge/memory/entities',
+  path: '/knowledge/memory/entities',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeMemorySearchRoute = KnowledgeMemorySearchRouteImport.update({
+  id: '/knowledge/memory/search',
+  path: '/knowledge/memory/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const KnowledgeMemoryTimelineRoute = KnowledgeMemoryTimelineRouteImport.update({
+  id: '/knowledge/memory/timeline',
+  path: '/knowledge/memory/timeline',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateProjectsIndexRoute = OperateProjectsIndexRouteImport.update({
+  id: '/operate/projects/',
+  path: '/operate/projects/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateProjectsProjectIdRoute =
+  OperateProjectsProjectIdRouteImport.update({
+    id: '/operate/projects/$projectId',
+    path: '/operate/projects/$projectId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const OperateSystemConnectionsRoute =
+  OperateSystemConnectionsRouteImport.update({
+    id: '/operate/system/connections',
+    path: '/operate/system/connections',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const OperateSystemMcpRoute = OperateSystemMcpRouteImport.update({
+  id: '/operate/system/mcp',
+  path: '/operate/system/mcp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateSystemResourcesRoute = OperateSystemResourcesRouteImport.update({
+  id: '/operate/system/resources',
+  path: '/operate/system/resources',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateSystemSecurityRoute = OperateSystemSecurityRouteImport.update({
+  id: '/operate/system/security',
+  path: '/operate/system/security',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateSystemSettingsRoute = OperateSystemSettingsRouteImport.update({
+  id: '/operate/system/settings',
+  path: '/operate/system/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OperateSystemSkillsRoute = OperateSystemSkillsRouteImport.update({
+  id: '/operate/system/skills',
+  path: '/operate/system/skills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioSessionsSessionIdRoute = StudioSessionsSessionIdRouteImport.update({
+  id: '/studio/sessions/$sessionId',
+  path: '/studio/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
-  '/email': typeof EmailRoute
-  '/events': typeof EventsRoute
   '/git': typeof GitRoute
-  '/marketplace': typeof MarketplaceRoute
-  '/mcp': typeof McpRoute
   '/personas': typeof PersonasRoute
-  '/resources': typeof ResourcesRoute
-  '/security': typeof SecurityRoute
-  '/settings': typeof SettingsRoute
-  '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
-  '/brain/contradictions': typeof BrainContradictionsRoute
-  '/brain/entity': typeof BrainEntityRoute
-  '/brain/operations': typeof BrainOperationsRoute
-  '/brain/search': typeof BrainSearchRoute
-  '/knowledge/graph': typeof KnowledgeGraphRoute
-  '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents/': typeof AgentsIndexRoute
-  '/brain/': typeof BrainIndexRoute
+  '/operate/capabilities': typeof OperateCapabilitiesRoute
+  '/operate/events': typeof OperateEventsRoute
+  '/operate/runs': typeof OperateRunsRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/knowledge/': typeof KnowledgeIndexRoute
-  '/projects/': typeof ProjectsIndexRoute
-  '/sessions/': typeof SessionsIndexRoute
+  '/operate/': typeof OperateIndexRoute
+  '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
-  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
-  '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
+  '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
+  '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
+  '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
+  '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
+  '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
+  '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
+  '/knowledge/memory/timeline': typeof KnowledgeMemoryTimelineRoute
+  '/operate/projects/$projectId': typeof OperateProjectsProjectIdRoute
+  '/operate/system/connections': typeof OperateSystemConnectionsRoute
+  '/operate/system/mcp': typeof OperateSystemMcpRoute
+  '/operate/system/resources': typeof OperateSystemResourcesRoute
+  '/operate/system/security': typeof OperateSystemSecurityRoute
+  '/operate/system/settings': typeof OperateSystemSettingsRoute
+  '/operate/system/skills': typeof OperateSystemSkillsRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
+  '/knowledge/library/': typeof KnowledgeLibraryIndexRoute
+  '/knowledge/memory/': typeof KnowledgeMemoryIndexRoute
+  '/operate/projects/': typeof OperateProjectsIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
-  '/email': typeof EmailRoute
-  '/events': typeof EventsRoute
   '/git': typeof GitRoute
-  '/marketplace': typeof MarketplaceRoute
-  '/mcp': typeof McpRoute
   '/personas': typeof PersonasRoute
-  '/resources': typeof ResourcesRoute
-  '/security': typeof SecurityRoute
-  '/settings': typeof SettingsRoute
-  '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
-  '/brain/contradictions': typeof BrainContradictionsRoute
-  '/brain/entity': typeof BrainEntityRoute
-  '/brain/operations': typeof BrainOperationsRoute
-  '/brain/search': typeof BrainSearchRoute
-  '/knowledge/graph': typeof KnowledgeGraphRoute
-  '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents': typeof AgentsIndexRoute
-  '/brain': typeof BrainIndexRoute
+  '/operate/capabilities': typeof OperateCapabilitiesRoute
+  '/operate/events': typeof OperateEventsRoute
+  '/operate/runs': typeof OperateRunsRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/knowledge': typeof KnowledgeIndexRoute
-  '/projects': typeof ProjectsIndexRoute
-  '/sessions': typeof SessionsIndexRoute
+  '/operate': typeof OperateIndexRoute
+  '/studio': typeof StudioIndexRoute
   '/workspace': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
-  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
-  '/brain/knowledge': typeof BrainKnowledgeIndexRoute
+  '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
+  '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
+  '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
+  '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
+  '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
+  '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
+  '/knowledge/memory/timeline': typeof KnowledgeMemoryTimelineRoute
+  '/operate/projects/$projectId': typeof OperateProjectsProjectIdRoute
+  '/operate/system/connections': typeof OperateSystemConnectionsRoute
+  '/operate/system/mcp': typeof OperateSystemMcpRoute
+  '/operate/system/resources': typeof OperateSystemResourcesRoute
+  '/operate/system/security': typeof OperateSystemSecurityRoute
+  '/operate/system/settings': typeof OperateSystemSettingsRoute
+  '/operate/system/skills': typeof OperateSystemSkillsRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
+  '/knowledge/library': typeof KnowledgeLibraryIndexRoute
+  '/knowledge/memory': typeof KnowledgeMemoryIndexRoute
+  '/operate/projects': typeof OperateProjectsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
-  '/chat': typeof ChatRoute
-  '/email': typeof EmailRoute
-  '/events': typeof EventsRoute
   '/git': typeof GitRoute
-  '/marketplace': typeof MarketplaceRoute
-  '/mcp': typeof McpRoute
   '/personas': typeof PersonasRoute
-  '/resources': typeof ResourcesRoute
-  '/security': typeof SecurityRoute
-  '/settings': typeof SettingsRoute
-  '/skills': typeof SkillsRoute
-  '/tasks': typeof TasksRoute
   '/token-maxing': typeof TokenMaxingRoute
-  '/agents/$agentId': typeof AgentsAgentIdRouteWithChildren
-  '/brain/contradictions': typeof BrainContradictionsRoute
-  '/brain/entity': typeof BrainEntityRoute
-  '/brain/operations': typeof BrainOperationsRoute
-  '/brain/search': typeof BrainSearchRoute
-  '/knowledge/graph': typeof KnowledgeGraphRoute
-  '/projects/$projectId': typeof ProjectsProjectIdRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/agents/': typeof AgentsIndexRoute
-  '/brain/': typeof BrainIndexRoute
+  '/operate/capabilities': typeof OperateCapabilitiesRoute
+  '/operate/events': typeof OperateEventsRoute
+  '/operate/runs': typeof OperateRunsRoute
+  '/studio/automations': typeof StudioAutomationsRoute
   '/knowledge/': typeof KnowledgeIndexRoute
-  '/projects/': typeof ProjectsIndexRoute
-  '/sessions/': typeof SessionsIndexRoute
+  '/operate/': typeof OperateIndexRoute
+  '/studio/': typeof StudioIndexRoute
   '/workspace/': typeof WorkspaceIndexRoute
-  '/agents/$agentId/trace': typeof AgentsAgentIdTraceRoute
-  '/brain/knowledge/graph': typeof BrainKnowledgeGraphRoute
-  '/brain/knowledge/': typeof BrainKnowledgeIndexRoute
+  '/knowledge/library/assets': typeof KnowledgeLibraryAssetsRoute
+  '/knowledge/library/graph': typeof KnowledgeLibraryGraphRoute
+  '/knowledge/library/journal': typeof KnowledgeLibraryJournalRoute
+  '/knowledge/memory/contradictions': typeof KnowledgeMemoryContradictionsRoute
+  '/knowledge/memory/entities': typeof KnowledgeMemoryEntitiesRoute
+  '/knowledge/memory/search': typeof KnowledgeMemorySearchRoute
+  '/knowledge/memory/timeline': typeof KnowledgeMemoryTimelineRoute
+  '/operate/projects/$projectId': typeof OperateProjectsProjectIdRoute
+  '/operate/system/connections': typeof OperateSystemConnectionsRoute
+  '/operate/system/mcp': typeof OperateSystemMcpRoute
+  '/operate/system/resources': typeof OperateSystemResourcesRoute
+  '/operate/system/security': typeof OperateSystemSecurityRoute
+  '/operate/system/settings': typeof OperateSystemSettingsRoute
+  '/operate/system/skills': typeof OperateSystemSkillsRoute
+  '/studio/sessions/$sessionId': typeof StudioSessionsSessionIdRoute
+  '/knowledge/library/': typeof KnowledgeLibraryIndexRoute
+  '/knowledge/memory/': typeof KnowledgeMemoryIndexRoute
+  '/operate/projects/': typeof OperateProjectsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
     | '/assets'
-    | '/budget'
-    | '/chat'
-    | '/email'
-    | '/events'
     | '/git'
-    | '/marketplace'
-    | '/mcp'
     | '/personas'
-    | '/resources'
-    | '/security'
-    | '/settings'
-    | '/skills'
-    | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
-    | '/brain/contradictions'
-    | '/brain/entity'
-    | '/brain/operations'
-    | '/brain/search'
-    | '/knowledge/graph'
-    | '/projects/$projectId'
-    | '/sessions/$sessionId'
-    | '/agents/'
-    | '/brain/'
+    | '/operate/capabilities'
+    | '/operate/events'
+    | '/operate/runs'
+    | '/studio/automations'
     | '/knowledge/'
-    | '/projects/'
-    | '/sessions/'
+    | '/operate/'
+    | '/studio/'
     | '/workspace/'
-    | '/agents/$agentId/trace'
-    | '/brain/knowledge/graph'
-    | '/brain/knowledge/'
+    | '/knowledge/library/assets'
+    | '/knowledge/library/graph'
+    | '/knowledge/library/journal'
+    | '/knowledge/memory/contradictions'
+    | '/knowledge/memory/entities'
+    | '/knowledge/memory/search'
+    | '/knowledge/memory/timeline'
+    | '/operate/projects/$projectId'
+    | '/operate/system/connections'
+    | '/operate/system/mcp'
+    | '/operate/system/resources'
+    | '/operate/system/security'
+    | '/operate/system/settings'
+    | '/operate/system/skills'
+    | '/studio/sessions/$sessionId'
+    | '/knowledge/library/'
+    | '/knowledge/memory/'
+    | '/operate/projects/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/assets'
-    | '/budget'
-    | '/chat'
-    | '/email'
-    | '/events'
     | '/git'
-    | '/marketplace'
-    | '/mcp'
     | '/personas'
-    | '/resources'
-    | '/security'
-    | '/settings'
-    | '/skills'
-    | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
-    | '/brain/contradictions'
-    | '/brain/entity'
-    | '/brain/operations'
-    | '/brain/search'
-    | '/knowledge/graph'
-    | '/projects/$projectId'
-    | '/sessions/$sessionId'
-    | '/agents'
-    | '/brain'
+    | '/operate/capabilities'
+    | '/operate/events'
+    | '/operate/runs'
+    | '/studio/automations'
     | '/knowledge'
-    | '/projects'
-    | '/sessions'
+    | '/operate'
+    | '/studio'
     | '/workspace'
-    | '/agents/$agentId/trace'
-    | '/brain/knowledge/graph'
-    | '/brain/knowledge'
+    | '/knowledge/library/assets'
+    | '/knowledge/library/graph'
+    | '/knowledge/library/journal'
+    | '/knowledge/memory/contradictions'
+    | '/knowledge/memory/entities'
+    | '/knowledge/memory/search'
+    | '/knowledge/memory/timeline'
+    | '/operate/projects/$projectId'
+    | '/operate/system/connections'
+    | '/operate/system/mcp'
+    | '/operate/system/resources'
+    | '/operate/system/security'
+    | '/operate/system/settings'
+    | '/operate/system/skills'
+    | '/studio/sessions/$sessionId'
+    | '/knowledge/library'
+    | '/knowledge/memory'
+    | '/operate/projects'
   id:
     | '__root__'
-    | '/'
     | '/assets'
-    | '/budget'
-    | '/chat'
-    | '/email'
-    | '/events'
     | '/git'
-    | '/marketplace'
-    | '/mcp'
     | '/personas'
-    | '/resources'
-    | '/security'
-    | '/settings'
-    | '/skills'
-    | '/tasks'
     | '/token-maxing'
-    | '/agents/$agentId'
-    | '/brain/contradictions'
-    | '/brain/entity'
-    | '/brain/operations'
-    | '/brain/search'
-    | '/knowledge/graph'
-    | '/projects/$projectId'
-    | '/sessions/$sessionId'
-    | '/agents/'
-    | '/brain/'
+    | '/operate/capabilities'
+    | '/operate/events'
+    | '/operate/runs'
+    | '/studio/automations'
     | '/knowledge/'
-    | '/projects/'
-    | '/sessions/'
+    | '/operate/'
+    | '/studio/'
     | '/workspace/'
-    | '/agents/$agentId/trace'
-    | '/brain/knowledge/graph'
-    | '/brain/knowledge/'
+    | '/knowledge/library/assets'
+    | '/knowledge/library/graph'
+    | '/knowledge/library/journal'
+    | '/knowledge/memory/contradictions'
+    | '/knowledge/memory/entities'
+    | '/knowledge/memory/search'
+    | '/knowledge/memory/timeline'
+    | '/operate/projects/$projectId'
+    | '/operate/system/connections'
+    | '/operate/system/mcp'
+    | '/operate/system/resources'
+    | '/operate/system/security'
+    | '/operate/system/settings'
+    | '/operate/system/skills'
+    | '/studio/sessions/$sessionId'
+    | '/knowledge/library/'
+    | '/knowledge/memory/'
+    | '/operate/projects/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AssetsRoute: typeof AssetsRoute
-  BudgetRoute: typeof BudgetRoute
-  ChatRoute: typeof ChatRoute
-  EmailRoute: typeof EmailRoute
-  EventsRoute: typeof EventsRoute
   GitRoute: typeof GitRoute
-  MarketplaceRoute: typeof MarketplaceRoute
-  McpRoute: typeof McpRoute
   PersonasRoute: typeof PersonasRoute
-  ResourcesRoute: typeof ResourcesRoute
-  SecurityRoute: typeof SecurityRoute
-  SettingsRoute: typeof SettingsRoute
-  SkillsRoute: typeof SkillsRoute
-  TasksRoute: typeof TasksRoute
   TokenMaxingRoute: typeof TokenMaxingRoute
-  AgentsAgentIdRoute: typeof AgentsAgentIdRouteWithChildren
-  BrainContradictionsRoute: typeof BrainContradictionsRoute
-  BrainEntityRoute: typeof BrainEntityRoute
-  BrainOperationsRoute: typeof BrainOperationsRoute
-  BrainSearchRoute: typeof BrainSearchRoute
-  KnowledgeGraphRoute: typeof KnowledgeGraphRoute
-  ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
-  SessionsSessionIdRoute: typeof SessionsSessionIdRoute
-  AgentsIndexRoute: typeof AgentsIndexRoute
-  BrainIndexRoute: typeof BrainIndexRoute
+  OperateCapabilitiesRoute: typeof OperateCapabilitiesRoute
+  OperateEventsRoute: typeof OperateEventsRoute
+  OperateRunsRoute: typeof OperateRunsRoute
+  StudioAutomationsRoute: typeof StudioAutomationsRoute
   KnowledgeIndexRoute: typeof KnowledgeIndexRoute
-  ProjectsIndexRoute: typeof ProjectsIndexRoute
-  SessionsIndexRoute: typeof SessionsIndexRoute
+  OperateIndexRoute: typeof OperateIndexRoute
+  StudioIndexRoute: typeof StudioIndexRoute
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
-  BrainKnowledgeGraphRoute: typeof BrainKnowledgeGraphRoute
-  BrainKnowledgeIndexRoute: typeof BrainKnowledgeIndexRoute
+  KnowledgeLibraryAssetsRoute: typeof KnowledgeLibraryAssetsRoute
+  KnowledgeLibraryGraphRoute: typeof KnowledgeLibraryGraphRoute
+  KnowledgeLibraryJournalRoute: typeof KnowledgeLibraryJournalRoute
+  KnowledgeMemoryContradictionsRoute: typeof KnowledgeMemoryContradictionsRoute
+  KnowledgeMemoryEntitiesRoute: typeof KnowledgeMemoryEntitiesRoute
+  KnowledgeMemorySearchRoute: typeof KnowledgeMemorySearchRoute
+  KnowledgeMemoryTimelineRoute: typeof KnowledgeMemoryTimelineRoute
+  OperateProjectsProjectIdRoute: typeof OperateProjectsProjectIdRoute
+  OperateSystemConnectionsRoute: typeof OperateSystemConnectionsRoute
+  OperateSystemMcpRoute: typeof OperateSystemMcpRoute
+  OperateSystemResourcesRoute: typeof OperateSystemResourcesRoute
+  OperateSystemSecurityRoute: typeof OperateSystemSecurityRoute
+  OperateSystemSettingsRoute: typeof OperateSystemSettingsRoute
+  OperateSystemSkillsRoute: typeof OperateSystemSkillsRoute
+  StudioSessionsSessionIdRoute: typeof StudioSessionsSessionIdRoute
+  KnowledgeLibraryIndexRoute: typeof KnowledgeLibraryIndexRoute
+  KnowledgeMemoryIndexRoute: typeof KnowledgeMemoryIndexRoute
+  OperateProjectsIndexRoute: typeof OperateProjectsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/assets': {
       id: '/assets'
       path: '/assets'
       fullPath: '/assets'
       preLoaderRoute: typeof AssetsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/budget': {
-      id: '/budget'
-      path: '/budget'
-      fullPath: '/budget'
-      preLoaderRoute: typeof BudgetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat': {
-      id: '/chat'
-      path: '/chat'
-      fullPath: '/chat'
-      preLoaderRoute: typeof ChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/email': {
-      id: '/email'
-      path: '/email'
-      fullPath: '/email'
-      preLoaderRoute: typeof EmailRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/events': {
-      id: '/events'
-      path: '/events'
-      fullPath: '/events'
-      preLoaderRoute: typeof EventsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/git': {
@@ -509,60 +439,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GitRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/marketplace': {
-      id: '/marketplace'
-      path: '/marketplace'
-      fullPath: '/marketplace'
-      preLoaderRoute: typeof MarketplaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/mcp': {
-      id: '/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/personas': {
       id: '/personas'
       path: '/personas'
       fullPath: '/personas'
       preLoaderRoute: typeof PersonasRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/resources': {
-      id: '/resources'
-      path: '/resources'
-      fullPath: '/resources'
-      preLoaderRoute: typeof ResourcesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/security': {
-      id: '/security'
-      path: '/security'
-      fullPath: '/security'
-      preLoaderRoute: typeof SecurityRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/skills': {
-      id: '/skills'
-      path: '/skills'
-      fullPath: '/skills'
-      preLoaderRoute: typeof SkillsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tasks': {
-      id: '/tasks'
-      path: '/tasks'
-      fullPath: '/tasks'
-      preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/token-maxing': {
@@ -572,55 +453,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TokenMaxingRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents/': {
-      id: '/agents/'
-      path: '/agents'
-      fullPath: '/agents/'
-      preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/$agentId': {
-      id: '/agents/$agentId'
-      path: '/agents/$agentId'
-      fullPath: '/agents/$agentId'
-      preLoaderRoute: typeof AgentsAgentIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain/': {
-      id: '/brain/'
-      path: '/brain'
-      fullPath: '/brain/'
-      preLoaderRoute: typeof BrainIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain/contradictions': {
-      id: '/brain/contradictions'
-      path: '/brain/contradictions'
-      fullPath: '/brain/contradictions'
-      preLoaderRoute: typeof BrainContradictionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain/entity': {
-      id: '/brain/entity'
-      path: '/brain/entity'
-      fullPath: '/brain/entity'
-      preLoaderRoute: typeof BrainEntityRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain/operations': {
-      id: '/brain/operations'
-      path: '/brain/operations'
-      fullPath: '/brain/operations'
-      preLoaderRoute: typeof BrainOperationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brain/search': {
-      id: '/brain/search'
-      path: '/brain/search'
-      fullPath: '/brain/search'
-      preLoaderRoute: typeof BrainSearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/knowledge/': {
       id: '/knowledge/'
       path: '/knowledge'
@@ -628,39 +460,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof KnowledgeIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/knowledge/graph': {
-      id: '/knowledge/graph'
-      path: '/knowledge/graph'
-      fullPath: '/knowledge/graph'
-      preLoaderRoute: typeof KnowledgeGraphRouteImport
+    '/operate/': {
+      id: '/operate/'
+      path: '/operate'
+      fullPath: '/operate/'
+      preLoaderRoute: typeof OperateIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/projects/': {
-      id: '/projects/'
-      path: '/projects'
-      fullPath: '/projects/'
-      preLoaderRoute: typeof ProjectsIndexRouteImport
+    '/operate/capabilities': {
+      id: '/operate/capabilities'
+      path: '/operate/capabilities'
+      fullPath: '/operate/capabilities'
+      preLoaderRoute: typeof OperateCapabilitiesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/projects/$projectId': {
-      id: '/projects/$projectId'
-      path: '/projects/$projectId'
-      fullPath: '/projects/$projectId'
-      preLoaderRoute: typeof ProjectsProjectIdRouteImport
+    '/operate/events': {
+      id: '/operate/events'
+      path: '/operate/events'
+      fullPath: '/operate/events'
+      preLoaderRoute: typeof OperateEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sessions/': {
-      id: '/sessions/'
-      path: '/sessions'
-      fullPath: '/sessions/'
-      preLoaderRoute: typeof SessionsIndexRouteImport
+    '/operate/runs': {
+      id: '/operate/runs'
+      path: '/operate/runs'
+      fullPath: '/operate/runs'
+      preLoaderRoute: typeof OperateRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sessions/$sessionId': {
-      id: '/sessions/$sessionId'
-      path: '/sessions/$sessionId'
-      fullPath: '/sessions/$sessionId'
-      preLoaderRoute: typeof SessionsSessionIdRouteImport
+    '/studio/': {
+      id: '/studio/'
+      path: '/studio'
+      fullPath: '/studio/'
+      preLoaderRoute: typeof StudioIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/automations': {
+      id: '/studio/automations'
+      path: '/studio/automations'
+      fullPath: '/studio/automations'
+      preLoaderRoute: typeof StudioAutomationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/workspace/': {
@@ -670,75 +509,166 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agents/$agentId/trace': {
-      id: '/agents/$agentId/trace'
-      path: '/trace'
-      fullPath: '/agents/$agentId/trace'
-      preLoaderRoute: typeof AgentsAgentIdTraceRouteImport
-      parentRoute: typeof AgentsAgentIdRoute
-    }
-    '/brain/knowledge/': {
-      id: '/brain/knowledge/'
-      path: '/brain/knowledge'
-      fullPath: '/brain/knowledge/'
-      preLoaderRoute: typeof BrainKnowledgeIndexRouteImport
+    '/knowledge/library/': {
+      id: '/knowledge/library/'
+      path: '/knowledge/library'
+      fullPath: '/knowledge/library/'
+      preLoaderRoute: typeof KnowledgeLibraryIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/brain/knowledge/graph': {
-      id: '/brain/knowledge/graph'
-      path: '/brain/knowledge/graph'
-      fullPath: '/brain/knowledge/graph'
-      preLoaderRoute: typeof BrainKnowledgeGraphRouteImport
+    '/knowledge/library/assets': {
+      id: '/knowledge/library/assets'
+      path: '/knowledge/library/assets'
+      fullPath: '/knowledge/library/assets'
+      preLoaderRoute: typeof KnowledgeLibraryAssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/library/graph': {
+      id: '/knowledge/library/graph'
+      path: '/knowledge/library/graph'
+      fullPath: '/knowledge/library/graph'
+      preLoaderRoute: typeof KnowledgeLibraryGraphRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/library/journal': {
+      id: '/knowledge/library/journal'
+      path: '/knowledge/library/journal'
+      fullPath: '/knowledge/library/journal'
+      preLoaderRoute: typeof KnowledgeLibraryJournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/memory/': {
+      id: '/knowledge/memory/'
+      path: '/knowledge/memory'
+      fullPath: '/knowledge/memory/'
+      preLoaderRoute: typeof KnowledgeMemoryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/memory/contradictions': {
+      id: '/knowledge/memory/contradictions'
+      path: '/knowledge/memory/contradictions'
+      fullPath: '/knowledge/memory/contradictions'
+      preLoaderRoute: typeof KnowledgeMemoryContradictionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/memory/entities': {
+      id: '/knowledge/memory/entities'
+      path: '/knowledge/memory/entities'
+      fullPath: '/knowledge/memory/entities'
+      preLoaderRoute: typeof KnowledgeMemoryEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/memory/search': {
+      id: '/knowledge/memory/search'
+      path: '/knowledge/memory/search'
+      fullPath: '/knowledge/memory/search'
+      preLoaderRoute: typeof KnowledgeMemorySearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/knowledge/memory/timeline': {
+      id: '/knowledge/memory/timeline'
+      path: '/knowledge/memory/timeline'
+      fullPath: '/knowledge/memory/timeline'
+      preLoaderRoute: typeof KnowledgeMemoryTimelineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/projects/': {
+      id: '/operate/projects/'
+      path: '/operate/projects'
+      fullPath: '/operate/projects/'
+      preLoaderRoute: typeof OperateProjectsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/projects/$projectId': {
+      id: '/operate/projects/$projectId'
+      path: '/operate/projects/$projectId'
+      fullPath: '/operate/projects/$projectId'
+      preLoaderRoute: typeof OperateProjectsProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/connections': {
+      id: '/operate/system/connections'
+      path: '/operate/system/connections'
+      fullPath: '/operate/system/connections'
+      preLoaderRoute: typeof OperateSystemConnectionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/mcp': {
+      id: '/operate/system/mcp'
+      path: '/operate/system/mcp'
+      fullPath: '/operate/system/mcp'
+      preLoaderRoute: typeof OperateSystemMcpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/resources': {
+      id: '/operate/system/resources'
+      path: '/operate/system/resources'
+      fullPath: '/operate/system/resources'
+      preLoaderRoute: typeof OperateSystemResourcesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/security': {
+      id: '/operate/system/security'
+      path: '/operate/system/security'
+      fullPath: '/operate/system/security'
+      preLoaderRoute: typeof OperateSystemSecurityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/settings': {
+      id: '/operate/system/settings'
+      path: '/operate/system/settings'
+      fullPath: '/operate/system/settings'
+      preLoaderRoute: typeof OperateSystemSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/operate/system/skills': {
+      id: '/operate/system/skills'
+      path: '/operate/system/skills'
+      fullPath: '/operate/system/skills'
+      preLoaderRoute: typeof OperateSystemSkillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/sessions/$sessionId': {
+      id: '/studio/sessions/$sessionId'
+      path: '/studio/sessions/$sessionId'
+      fullPath: '/studio/sessions/$sessionId'
+      preLoaderRoute: typeof StudioSessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface AgentsAgentIdRouteChildren {
-  AgentsAgentIdTraceRoute: typeof AgentsAgentIdTraceRoute
-}
-
-const AgentsAgentIdRouteChildren: AgentsAgentIdRouteChildren = {
-  AgentsAgentIdTraceRoute: AgentsAgentIdTraceRoute,
-}
-
-const AgentsAgentIdRouteWithChildren = AgentsAgentIdRoute._addFileChildren(
-  AgentsAgentIdRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AssetsRoute: AssetsRoute,
-  BudgetRoute: BudgetRoute,
-  ChatRoute: ChatRoute,
-  EmailRoute: EmailRoute,
-  EventsRoute: EventsRoute,
   GitRoute: GitRoute,
-  MarketplaceRoute: MarketplaceRoute,
-  McpRoute: McpRoute,
   PersonasRoute: PersonasRoute,
-  ResourcesRoute: ResourcesRoute,
-  SecurityRoute: SecurityRoute,
-  SettingsRoute: SettingsRoute,
-  SkillsRoute: SkillsRoute,
-  TasksRoute: TasksRoute,
   TokenMaxingRoute: TokenMaxingRoute,
-  AgentsAgentIdRoute: AgentsAgentIdRouteWithChildren,
-  BrainContradictionsRoute: BrainContradictionsRoute,
-  BrainEntityRoute: BrainEntityRoute,
-  BrainOperationsRoute: BrainOperationsRoute,
-  BrainSearchRoute: BrainSearchRoute,
-  KnowledgeGraphRoute: KnowledgeGraphRoute,
-  ProjectsProjectIdRoute: ProjectsProjectIdRoute,
-  SessionsSessionIdRoute: SessionsSessionIdRoute,
-  AgentsIndexRoute: AgentsIndexRoute,
-  BrainIndexRoute: BrainIndexRoute,
+  OperateCapabilitiesRoute: OperateCapabilitiesRoute,
+  OperateEventsRoute: OperateEventsRoute,
+  OperateRunsRoute: OperateRunsRoute,
+  StudioAutomationsRoute: StudioAutomationsRoute,
   KnowledgeIndexRoute: KnowledgeIndexRoute,
-  ProjectsIndexRoute: ProjectsIndexRoute,
-  SessionsIndexRoute: SessionsIndexRoute,
+  OperateIndexRoute: OperateIndexRoute,
+  StudioIndexRoute: StudioIndexRoute,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
-  BrainKnowledgeGraphRoute: BrainKnowledgeGraphRoute,
-  BrainKnowledgeIndexRoute: BrainKnowledgeIndexRoute,
+  KnowledgeLibraryAssetsRoute: KnowledgeLibraryAssetsRoute,
+  KnowledgeLibraryGraphRoute: KnowledgeLibraryGraphRoute,
+  KnowledgeLibraryJournalRoute: KnowledgeLibraryJournalRoute,
+  KnowledgeMemoryContradictionsRoute: KnowledgeMemoryContradictionsRoute,
+  KnowledgeMemoryEntitiesRoute: KnowledgeMemoryEntitiesRoute,
+  KnowledgeMemorySearchRoute: KnowledgeMemorySearchRoute,
+  KnowledgeMemoryTimelineRoute: KnowledgeMemoryTimelineRoute,
+  OperateProjectsProjectIdRoute: OperateProjectsProjectIdRoute,
+  OperateSystemConnectionsRoute: OperateSystemConnectionsRoute,
+  OperateSystemMcpRoute: OperateSystemMcpRoute,
+  OperateSystemResourcesRoute: OperateSystemResourcesRoute,
+  OperateSystemSecurityRoute: OperateSystemSecurityRoute,
+  OperateSystemSettingsRoute: OperateSystemSettingsRoute,
+  OperateSystemSkillsRoute: OperateSystemSkillsRoute,
+  StudioSessionsSessionIdRoute: StudioSessionsSessionIdRoute,
+  KnowledgeLibraryIndexRoute: KnowledgeLibraryIndexRoute,
+  KnowledgeMemoryIndexRoute: KnowledgeMemoryIndexRoute,
+  OperateProjectsIndexRoute: OperateProjectsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

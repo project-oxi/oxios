@@ -713,20 +713,20 @@ fn build_catalog() -> Vec<ToolDescriptor> {
         // live in `tools::registration::register_from_resolved_profile`
         // and key off these exact ids.
         ToolDescriptor {
-            id: ToolId::new("kernel.task.manage"),
+            id: ToolId::new("kernel.automation.manage"),
             provider: provider("kernel.kernel"),
             contract_version: V1,
-            description: "Create, schedule, and verify task entries.",
+            description: "Create, inspect, edit, pause/resume, run, and delete automations.",
             tags: leak_slice(&[tag("kernel-mutate")]),
             required_capabilities: leak_slice(&[CapabilityRequirement {
                 resource: ResourceRef::KernelDomain {
-                    domain: "task".into(),
+                    domain: "automation".into(),
                 },
                 rights: Rights::WRITE,
             }]),
             ui_affordances: leak_slice(&[tag("ui.kernel")]),
             activation_class: ActivationClass::ApprovalOnly,
-            registered_name: "task",
+            registered_name: "automation",
         },
         ToolDescriptor {
             id: ToolId::new("kernel.marketplace.manage"),

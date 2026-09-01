@@ -27,9 +27,9 @@ describe('palette lexer', () => {
       entity: { type: 'agent', name: 'abc123' },
       text: '',
     })
-    expect(lex('~ @mode:knowledge')).toMatchObject({
+    expect(lex('~ @surface:knowledge')).toMatchObject({
       verb: 'switch',
-      entity: { type: 'mode', name: 'knowledge' },
+      entity: { type: 'surface', name: 'knowledge' },
     })
   })
 
@@ -63,13 +63,13 @@ describe('palette lexer', () => {
     expect(lex('! @skill:x ENABLE')).toMatchObject({ action: 'enable' }) // case-insensitive
   })
 
-  it('buildContext attaches the mode', () => {
+  it('buildContext attaches the surface', () => {
     const ctx = buildContext('> @skill:a b', 'knowledge')
     expect(ctx).toMatchObject({
       verb: 'run',
       entity: { type: 'skill', name: 'a' },
       text: 'b',
-      mode: 'knowledge',
+      surface: 'knowledge',
     })
   })
 })

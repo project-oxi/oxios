@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
-import type { SidebarMode } from '@/stores/sidebar'
+import type { SurfaceId } from '@/types/surfaces'
 
 /**
  * Command palette core types.
  *
  * The palette is a federated provider registry: each provider contributes
- * `PaletteItem`s for a subset of verbs/modes given a parsed `QueryContext`.
+ * `PaletteItem`s for a subset of verbs/surfaces given a parsed `QueryContext`.
  * The host lexes the raw query, asks every active provider, ranks by score,
  * and renders. See `docs/designs/2026-06-29-command-palette-design.md`.
  *
@@ -13,8 +13,8 @@ import type { SidebarMode } from '@/stores/sidebar'
  * with the cmdk/shadcn `CommandItem` component imported alongside it in hosts.
  */
 
-/** The palette verbs. `go` is implicit (bare-text / nav match). `search` is the
- * brain-memory primary (bare text in the Brain surface searches memories). */
+/** The palette verbs. `go` is implicit (bare-text / nav match). `capture` is
+ * the Knowledge-surface primary (bare text there captures a memo). */
 export type Verb = 'go' | 'capture' | 'run' | 'switch' | 'control' | 'new' | 'search'
 
 /** A parsed `@entity` target. */
@@ -25,11 +25,11 @@ export interface PaletteEntity {
   name: string
 }
 
-/** The result of lexing the raw query string (mode attached by the caller). */
+/** The result of lexing the raw query string (surface attached by the caller). */
 export interface QueryContext {
   /** Original raw input. */
   raw: string
-  /** Leading verb prefix, or `null` for bare-text (→ mode-primary resolution). */
+  /** Leading verb prefix, or `null` for bare-text (→ surface-primary resolution). */
   verb: Verb | null
   /** Resolved `@entity`, or `null`. */
   entity: PaletteEntity | null
@@ -37,8 +37,8 @@ export interface QueryContext {
   action?: string
   /** Remainder free text — the intent / payload. */
   text: string
-  /** Current sidebar mode (drives mode-primary + modeBoost). */
-  mode: SidebarMode
+  /** Current surface (drives surface-primary + surfaceBoost). */
+  surface: SurfaceId
 }
 
 /** A single selectable palette entry. */
@@ -59,13 +59,13 @@ export interface PaletteItem {
    * by "compose" entries like the capture destination picker (`/later` → `/Later `).
    */
   compose?: string
-  /** Provider-computed base score; the ranker adds modeBoost + recencyBoost. */
+  /** Provider-computed base score; the ranker adds surfaceBoost + recencyBoost. */
   score: number
   onSelect: () => void | Promise<void>
 }
 
 /**
- * A provider contributes commands for a subset of verbs/modes.
+ * A provider contributes commands for a subset of verbs/surfaces.
  * `resolve` builds items (and onSelect closures) but MUST NOT execute side
  * effects itself — it runs on every keystroke. Side effects live in `onSelect`.
  */
@@ -73,8 +73,8 @@ export interface CommandProvider {
   id: string
   /** Verbs this provider answers. */
   verbs: Verb[]
-  /** Modes in which the provider is active; omit/empty for all modes. */
-  modes?: SidebarMode[]
+  /** Surfaces in which the provider is active; omit/empty for all surfaces. */
+  surfaces?: SurfaceId[]
   /** Return only items matching the context. */
   resolve(ctx: QueryContext): PaletteItem[]
 }

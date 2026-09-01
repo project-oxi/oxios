@@ -262,11 +262,11 @@ function eventSeverity(e: OxiosEvent): NotificationSeverity {
 function eventLink(e: OxiosEvent): string | undefined {
   switch (e.type) {
     case 'approval_requested':
-      return '/'
+      return '/operate'
     case 'agent_failed':
     case 'agent_started':
     case 'agent_stopped':
-      return e.agent_id ? '/agents' : undefined
+      return e.agent_id ? '/operate/runs' : undefined
     case 'persona_created':
     case 'persona_updated':
       return '/personas'

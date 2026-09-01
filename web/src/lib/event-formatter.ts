@@ -43,7 +43,7 @@ export interface FormattedEvent {
 function routeFromEvent(event: OxiosEvent): string | undefined {
   const type = event.type
   if (type === 'approval_requested' || type === 'approval_resolved') {
-    return '/'
+    return '/operate'
   }
   if (
     type === 'agent_created' ||
@@ -52,14 +52,13 @@ function routeFromEvent(event: OxiosEvent): string | undefined {
     type === 'agent_failed' ||
     type === 'agent_output'
   ) {
-    const id = (event.agent_id as string | undefined) ?? null
-    return id ? `/agents/${id}` : '/agents'
+    return '/operate/runs'
   }
   if (type === 'memory_stored' || type === 'memory_recalled') {
     return '/memory'
   }
   if (type === 'tool_started' || type === 'tool_finished') {
-    return '/chat'
+    return '/studio'
   }
   return undefined
 }

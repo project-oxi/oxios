@@ -60,6 +60,48 @@ impl std::fmt::Display for ToolProfile {
         write!(f, "{s}")
     }
 }
+/// Presentation-only lens for the web Studio surface (IA design §8.5).
+///
+/// Server-derived from the effective persona and persisted on the persona
+/// itself. The client may NEVER infer it from a persona's name, role, or
+/// category, and it never changes permissions, tool gates, model access,
+/// or approval policy — it only shapes presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentationLens {
+    #[default]
+    General,
+    Code,
+    Research,
+    Operations,
+    Writing,
+}
+
+impl std::fmt::Display for PresentationLens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::General => "general",
+            Self::Code => "code",
+            Self::Research => "research",
+            Self::Operations => "operations",
+            Self::Writing => "writing",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl PresentationLens {
+    /// Parse from a config/API string; unknown values fall back to [`General`].
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "code" => Self::Code,
+            "research" => Self::Research,
+            "operations" => Self::Operations,
+            "writing" => Self::Writing,
+            _ => Self::General,
+        }
+    }
+}
 /// Server-derived affordance: file tools are in scope.
 pub const AFFORDANCE_FILES: &str = "files";
 /// Server-derived affordance: terminal/exec is in scope.
@@ -98,6 +140,8 @@ pub struct EffectiveProfile {
     pub persona_id: String,
     pub tool_profile: String,
     pub affordances: Vec<String>,
+    /// Presentation-only lens from the effective persona (IA design §8.5).
+    pub presentation_lens: PresentationLens,
 }
 
 /// Resolve the effective profile for a turn (design §6.1).
@@ -124,6 +168,7 @@ pub fn resolve_effective_profile(
             .into_iter()
             .map(String::from)
             .collect(),
+        presentation_lens: persona.presentation_lens,
     })
 }
 
@@ -178,6 +223,12 @@ pub struct Persona {
     /// runtime. Old files load with the serde default (`code`).
     #[serde(default)]
     pub tool_profile: ToolProfile,
+    /// Presentation lens for the web Studio surface (IA design §8.5).
+    /// Purely presentational; never inferred from name/role/category.
+    /// Old files load with `General` via `#[serde(default)]` (the only
+    /// place a missing field is tolerated — rolling-deploy boundary).
+    #[serde(default)]
+    pub presentation_lens: PresentationLens,
 }
 
 impl Default for Persona {
@@ -193,6 +244,7 @@ impl Default for Persona {
             personality_traits: vec![],
             capabilities: vec![],
             tool_profile: ToolProfile::default(),
+            presentation_lens: PresentationLens::default(),
         }
     }
 }
@@ -211,6 +263,7 @@ impl Persona {
             personality_traits: vec![],
             capabilities: vec![],
             tool_profile: ToolProfile::default(),
+            presentation_lens: PresentationLens::default(),
         }
     }
 
@@ -233,6 +286,7 @@ impl Persona {
             personality_traits: vec![],
             capabilities: vec![],
             tool_profile: ToolProfile::default(),
+            presentation_lens: PresentationLens::default(),
         }
     }
 }
@@ -248,6 +302,11 @@ impl Persona {
 ///   (exec, browser, memory, knowledge, ask_user) but no Oxios control.
 /// - **Writing** (`minimal`): Writer, Novelist, Scenarist, Essayist,
 ///   Blogger — file + web-search only; no exec, browser, or control.
+/// - **Presentation lenses** (IA design §8.5): explicit per persona —
+///   Code (dev/review/architect/security), Research (research),
+///   Operations (ops), Writing (writer/novelist/scenarist/essayist/
+///   blogger), General (normal/oxios/mentor/planner). Never derived
+///   from name or role.
 pub fn default_personas() -> Vec<Persona> {
     vec![
         Persona {
@@ -283,6 +342,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec!["terminal".to_string(), "diff-viewer".to_string(), "worktree-fanout".to_string()],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Code,
         },
         Persona {
             id: "review".to_string(),
@@ -316,6 +376,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec!["diff-viewer".to_string()],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Code,
         },
         Persona {
             id: "research".to_string(),
@@ -349,6 +410,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Research,
         },
         Persona {
             id: "architect".to_string(),
@@ -386,6 +448,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Code,
         },
         Persona {
             id: "mentor".to_string(),
@@ -423,6 +486,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::General,
         },
         Persona {
             id: "ops".to_string(),
@@ -458,6 +522,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Operations,
         },
         Persona {
             id: "security".to_string(),
@@ -494,6 +559,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec!["diff-viewer".to_string()],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::Code,
         },
         Persona {
             id: "writer".to_string(),
@@ -531,6 +597,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Minimal,
+            presentation_lens: PresentationLens::Writing,
         },
         Persona {
             id: "planner".to_string(),
@@ -567,6 +634,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Code,
+            presentation_lens: PresentationLens::General,
         },
         Persona {
             id: "normal".to_string(),
@@ -588,6 +656,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Base,
+            presentation_lens: PresentationLens::General,
         },
         Persona {
             id: "oxios".to_string(),
@@ -611,6 +680,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Control,
+            presentation_lens: PresentationLens::General,
         },
         Persona {
             id: "novelist".to_string(),
@@ -651,6 +721,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Minimal,
+            presentation_lens: PresentationLens::Writing,
         },
         Persona {
             id: "scenarist".to_string(),
@@ -690,6 +761,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Minimal,
+            presentation_lens: PresentationLens::Writing,
         },
         Persona {
             id: "essayist".to_string(),
@@ -728,6 +800,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Minimal,
+            presentation_lens: PresentationLens::Writing,
         },
         Persona {
             id: "blogger".to_string(),
@@ -764,6 +837,7 @@ pub fn default_personas() -> Vec<Persona> {
             ],
             capabilities: vec![],
             tool_profile: ToolProfile::Minimal,
+            presentation_lens: PresentationLens::Writing,
         },
     ]
 }
@@ -906,5 +980,93 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let restored: Persona = serde_json::from_str(&json).unwrap();
         assert!(!restored.enabled);
+    }
+
+    #[test]
+    fn test_default_personas_presentation_lenses() {
+        let personas = default_personas();
+        let by_id = |id: &str| personas.iter().find(|p| p.id == id).unwrap();
+
+        for id in ["normal", "oxios", "mentor", "planner"] {
+            assert_eq!(
+                by_id(id).presentation_lens,
+                PresentationLens::General,
+                "{id}"
+            );
+        }
+        for id in ["dev", "review", "architect", "security"] {
+            assert_eq!(by_id(id).presentation_lens, PresentationLens::Code, "{id}");
+        }
+        assert_eq!(
+            by_id("research").presentation_lens,
+            PresentationLens::Research
+        );
+        assert_eq!(by_id("ops").presentation_lens, PresentationLens::Operations);
+        for id in ["writer", "novelist", "scenarist", "essayist", "blogger"] {
+            assert_eq!(
+                by_id(id).presentation_lens,
+                PresentationLens::Writing,
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_research_lens_is_stable_regardless_of_roots() {
+        use std::sync::Arc;
+
+        let pm = PersonaManager::new();
+
+        // No project manager: research lens, no filesystem affordances.
+        let profile = resolve_effective_profile(Some(&pm), None, Some("research"), None)
+            .expect("research persona resolves");
+        assert_eq!(profile.presentation_lens, PresentationLens::Research);
+        assert!(!profile.affordances.iter().any(|a| *a == AFFORDANCE_FILES));
+
+        // Project with roots: affordances gain filesystem entries while the
+        // lens stays exactly the same (presentation only).
+        let root = std::env::temp_dir().join(format!("oxios-lens-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let db = Arc::new(crate::kernel_db::KernelDatabase::open_in_memory().expect("open db"));
+        let projects = ProjectManager::new(db, None).expect("project manager");
+        let project = projects
+            .create("lens-test", vec![root.clone()], "")
+            .expect("create project");
+        let project_id = project.id.to_string();
+        let with_roots = resolve_effective_profile(
+            Some(&pm),
+            Some(&projects),
+            Some("research"),
+            Some(project_id.as_str()),
+        )
+        .expect("resolves with roots");
+        assert_eq!(with_roots.presentation_lens, PresentationLens::Research);
+        assert!(
+            with_roots
+                .affordances
+                .iter()
+                .any(|a| *a == AFFORDANCE_FILES)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn test_missing_lens_field_defaults_to_general() {
+        // Rolling-deploy tolerance (IA design §8.5): a snapshot without the
+        // field maps to General at the deserialize boundary only.
+        let p = Persona::new("T", "tester", "d", "p");
+        let mut json = serde_json::to_value(&p).unwrap();
+        json.as_object_mut().unwrap().remove("presentation_lens");
+        let restored: Persona = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.presentation_lens, PresentationLens::General);
+    }
+
+    #[test]
+    fn test_effective_profile_serializes_presentation_lens() {
+        let pm = PersonaManager::new();
+        let profile = resolve_effective_profile(Some(&pm), None, Some("research"), None)
+            .expect("research persona resolves");
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(json["presentation_lens"], "research");
     }
 }

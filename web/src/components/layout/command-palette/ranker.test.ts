@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { modePrimaryVerb } from './ranker'
+import { surfacePrimaryVerb } from './ranker'
 
-describe('modePrimaryVerb', () => {
-  it('console → go', () => {
-    expect(modePrimaryVerb('console')).toBe('go')
+describe('surfacePrimaryVerb', () => {
+  it('operate → go', () => {
+    expect(surfacePrimaryVerb('operate')).toBe('go')
   })
 
   it('knowledge → capture', () => {
-    expect(modePrimaryVerb('knowledge')).toBe('capture')
+    expect(surfacePrimaryVerb('knowledge')).toBe('capture')
   })
 
-  it('brain → search', () => {
-    expect(modePrimaryVerb('brain')).toBe('search')
-  })
-
-  it('chat → run', () => {
-    expect(modePrimaryVerb('chat')).toBe('run')
+  it('studio → run', () => {
+    expect(surfacePrimaryVerb('studio')).toBe('run')
   })
 })

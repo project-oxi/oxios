@@ -13,8 +13,6 @@ vi.mock('@tanstack/react-router', () => ({
   ),
 }))
 
-vi.mock('@/routes/agents', () => ({ defaultAgentSearch: {} }))
-
 function run(overrides: Partial<AgentListItem> = {}): AgentListItem {
   return {
     id: 'aaa111-agent',
@@ -131,7 +129,7 @@ describe('ActiveExecutionList', () => {
     expect(screen.getByText('commandCenter.activeExecution.empty')).toBeInTheDocument()
     expect(
       screen.getByRole('link', { name: 'commandCenter.activeExecution.startTask' }),
-    ).toHaveAttribute('href', '/chat')
+    ).toHaveAttribute('href', '/studio')
   })
 
   it('localizes a failed agents query with retry', () => {

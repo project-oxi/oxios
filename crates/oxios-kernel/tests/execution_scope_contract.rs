@@ -13,7 +13,8 @@ use oxios_kernel::agent_runtime::{
 use oxios_kernel::orchestrator::Orchestrator;
 use oxios_kernel::persona::{
     AFFORDANCE_DIFF, AFFORDANCE_FILES, AFFORDANCE_TERMINAL, AFFORDANCE_WORKTREE_FANOUT,
-    EffectiveProfile, PersonaManager, ToolProfile, derive_affordances, resolve_effective_profile,
+    EffectiveProfile, PersonaManager, PresentationLens, ToolProfile, derive_affordances,
+    resolve_effective_profile,
 };
 use oxios_kernel::project::ProjectManager;
 use oxios_kernel::session_context::SessionContext;
@@ -193,6 +194,7 @@ fn effective_profile_serializes_bilingual_keys() {
         persona_id: "dev".to_string(),
         tool_profile: "code".to_string(),
         affordances: vec![AFFORDANCE_FILES.to_string()],
+        presentation_lens: PresentationLens::Research,
     };
     let json: serde_json::Value = serde_json::to_value(&profile).expect("serialize");
     let mut keys: Vec<&str> = json
@@ -202,7 +204,15 @@ fn effective_profile_serializes_bilingual_keys() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    assert_eq!(keys, vec!["affordances", "persona_id", "tool_profile"]);
+    assert_eq!(
+        keys,
+        vec![
+            "affordances",
+            "persona_id",
+            "presentation_lens",
+            "tool_profile"
+        ]
+    );
 }
 
 #[test]

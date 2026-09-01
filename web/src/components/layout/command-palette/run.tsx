@@ -7,7 +7,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { api } from '@/lib/api-client'
 import { useChatStore } from '@/stores/chat'
 import type { Skill } from '@/types'
-import { modePrimaryVerb } from './ranker'
+import { surfacePrimaryVerb } from './ranker'
 import type { CommandProvider, PaletteItem, QueryContext } from './types'
 
 /**
@@ -18,8 +18,8 @@ import type { CommandProvider, PaletteItem, QueryContext } from './types'
  * WS. `@persona` is deferred to v2 (no per-message slot yet); persona switching
  * is owned by `~ @persona` (SwitchProvider).
  *
- * Also owns chat-mode bare-text (mode-primary `run`): typing plain text in chat
- * mode sends it as a message.
+ * Also owns Studio bare-text (surface-primary `run`): typing plain text in
+ * Studio sends it as a message.
  */
 export function useRunProvider(): CommandProvider {
   const { t } = useTranslation()
@@ -40,7 +40,7 @@ export function useRunProvider(): CommandProvider {
 
   const startChat = useCallback(
     (content: string) => {
-      router.history.push('/chat')
+      router.history.push('/studio')
       sendMessage(content)
     },
     [router, sendMessage],
@@ -52,8 +52,8 @@ export function useRunProvider(): CommandProvider {
       verbs: ['run'],
       resolve(ctx: QueryContext): PaletteItem[] {
         const isRun = ctx.verb === 'run'
-        const isChatBare = ctx.verb === null && modePrimaryVerb(ctx.mode) === 'run'
-        if (!isRun && !isChatBare) return []
+        const isStudioBare = ctx.verb === null && surfacePrimaryVerb(ctx.surface) === 'run'
+        if (!isRun && !isStudioBare) return []
 
         const text = ctx.text.trim()
         const ent = ctx.entity
@@ -108,7 +108,7 @@ export function useRunProvider(): CommandProvider {
                   score: 100,
                   onSelect: () => {
                     setActiveProject(project.id)
-                    router.history.push('/chat')
+                    router.history.push('/studio')
                   },
                 },
               ]

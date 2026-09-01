@@ -37,10 +37,12 @@ pub(crate) use integrations_routes::{
 };
 mod knowledge_routes;
 mod marketplace;
+mod operate_routes;
 mod search;
 #[cfg(feature = "screenshot")]
 use search::handle_screenshot;
 use search::{handle_browse, handle_search};
+mod automation_routes;
 mod issue_routes;
 mod project_routes;
 mod resource_routes;
@@ -48,7 +50,6 @@ mod secrets_routes;
 mod security_routes;
 mod system;
 mod system_routes;
-mod task_routes;
 mod token_maxing_routes;
 mod tools;
 mod workspace;
@@ -104,6 +105,12 @@ pub(crate) use cost_routes::{
     handle_cost_spend_limit_get, handle_cost_spend_limit_set, handle_cost_summary,
 };
 
+pub(crate) use automation_routes::{
+    handle_automation_create, handle_automation_delete, handle_automation_get,
+    handle_automation_run, handle_automation_runs, handle_automation_set_trigger,
+    handle_automation_set_verify, handle_automation_update, handle_automation_update_status,
+    handle_automations_list,
+};
 pub(crate) use email_routes::{
     handle_email_history, handle_email_history_detail, handle_email_setup, handle_email_status,
     handle_email_template_get, handle_email_templates, handle_email_test,
@@ -159,6 +166,10 @@ pub(crate) use marketplace::{
 };
 #[cfg(feature = "memo")]
 pub(crate) use memo_routes::{handle_memo_disable, handle_memo_enable, handle_memo_status};
+pub(crate) use operate_routes::{
+    handle_operate_attention, handle_operate_capabilities, handle_operate_project_context,
+    handle_operate_runs,
+};
 pub(crate) use project_routes::{
     handle_project_create, handle_project_delete, handle_project_get, handle_project_roots_status,
     handle_project_update, handle_projects_list,
@@ -176,13 +187,6 @@ pub(crate) use system::{
     handle_config_meta, handle_config_patch, handle_config_put, handle_doctor, handle_health,
     handle_log, handle_readiness, handle_status, handle_update_changelog, handle_update_check,
     handle_update_run,
-};
-pub(crate) use task_routes::{
-    handle_task_comment_create, handle_task_comment_delete, handle_task_comment_update,
-    handle_task_comments_list, handle_task_create, handle_task_create_batch, handle_task_delete,
-    handle_task_dependencies_list, handle_task_dependency_add, handle_task_dependency_remove,
-    handle_task_get, handle_task_run, handle_task_runs, handle_task_set_schedule,
-    handle_task_set_verify, handle_task_update, handle_task_update_status, handle_tasks_list,
 };
 #[cfg(feature = "timeline")]
 pub(crate) use timeline_routes::{
@@ -581,40 +585,27 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/sessions/{id}/threads",
             post(handle_session_create_thread),
         )
-        // Tasks (RFC-043)
-        .route("/api/tasks", get(handle_tasks_list))
-        .route("/api/tasks", post(handle_task_create))
-        .route("/api/tasks/batch", post(handle_task_create_batch))
-        .route("/api/tasks/{id}", get(handle_task_get))
-        .route("/api/tasks/{id}", put(handle_task_update))
-        .route("/api/tasks/{id}", delete(handle_task_delete))
-        .route("/api/tasks/{id}/status", put(handle_task_update_status))
-        .route("/api/tasks/{id}/schedule", put(handle_task_set_schedule))
-        .route("/api/tasks/{id}/verify", put(handle_task_set_verify))
-        .route("/api/tasks/{id}/run", post(handle_task_run))
-        .route("/api/tasks/{id}/runs", get(handle_task_runs))
-        .route("/api/tasks/{id}/comments", get(handle_task_comments_list))
-        .route("/api/tasks/{id}/comments", post(handle_task_comment_create))
+        // Automations (web IA major-version cutover).
+        // No compatibility routes are registered; the router 404s retired prefixes.
+        .route("/api/automations", get(handle_automations_list))
+        .route("/api/automations", post(handle_automation_create))
+        .route("/api/automations/{id}", get(handle_automation_get))
+        .route("/api/automations/{id}", put(handle_automation_update))
+        .route("/api/automations/{id}", delete(handle_automation_delete))
         .route(
-            "/api/tasks/{id}/comments/{cid}",
-            put(handle_task_comment_update),
+            "/api/automations/{id}/status",
+            put(handle_automation_update_status),
         )
         .route(
-            "/api/tasks/{id}/comments/{cid}",
-            delete(handle_task_comment_delete),
+            "/api/automations/{id}/trigger",
+            put(handle_automation_set_trigger),
         )
         .route(
-            "/api/tasks/{id}/dependencies",
-            get(handle_task_dependencies_list),
+            "/api/automations/{id}/verify",
+            put(handle_automation_set_verify),
         )
-        .route(
-            "/api/tasks/{id}/dependencies",
-            post(handle_task_dependency_add),
-        )
-        .route(
-            "/api/tasks/{id}/dependencies/{dep_id}",
-            delete(handle_task_dependency_remove),
-        )
+        .route("/api/automations/{id}/run", post(handle_automation_run))
+        .route("/api/automations/{id}/runs", get(handle_automation_runs))
         // Calendar
         .route(
             "/api/calendar/events",
@@ -708,6 +699,17 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{id}/milestones/{slug}",
             delete(handle_milestone_delete),
+        )
+        // Operate — read-only projections over existing sources (web IA Task 4.1)
+        .route("/api/operate/attention", get(handle_operate_attention))
+        .route("/api/operate/runs", get(handle_operate_runs))
+        .route(
+            "/api/operate/projects/{id}/context",
+            get(handle_operate_project_context),
+        )
+        .route(
+            "/api/operate/capabilities",
+            get(handle_operate_capabilities),
         )
         // Tool Registry (for settings UI)
         .route("/api/tools/registry", get(handle_tools_registry))

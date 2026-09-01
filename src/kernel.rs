@@ -222,13 +222,18 @@ impl Kernel {
                     self.brain.clone(),
                     self.brain_installer.clone(),
                 ));
-                // RFC-043: attach the task store so web routes, the auto-run
-                let kh = match oxios_kernel::task::TaskStore::open(
-                    &(self.config.kernel.workspace.clone() + "/tasks.db"),
+                // Attach the automation store so web routes, the auto-run
+                // tick, and the agent tool share ONE store. Major-version
+                // break: the database is a fresh `automations.db` — the
+                // retired tasks.db is never read or migrated.
+                let kh = match oxios_kernel::automation::AutomationStore::open(
+                    &(self.config.kernel.workspace.clone() + "/automations.db"),
                 ) {
-                    Ok(ts) => kh.with_task_store(std::sync::Arc::new(tokio::sync::Mutex::new(ts))),
+                    Ok(ts) => {
+                        kh.with_automation_store(std::sync::Arc::new(tokio::sync::Mutex::new(ts)))
+                    }
                     Err(e) => {
-                        tracing::error!(error = %e, "task store init failed; tasks degraded");
+                        tracing::error!(error = %e, "automation store init failed; automations degraded");
                         kh
                     }
                 };
@@ -634,73 +639,6 @@ impl Kernel {
     #[allow(dead_code)]
     pub async fn run_gateway(&self) -> Result<()> {
         self.gateway.run().await
-    }
-
-    /// One-time migration of legacy cron jobs into the RFC-043 task system.
-    ///
-    /// The `CronScheduler` is retired: recurring goals now live as Tasks with
-    /// `automation_mode = schedule`, executed by the task auto-run tick. This
-    /// collects every job that still exists — persisted API jobs
-    /// (`state_store: cron/jobs.json`) and `[[cron.jobs]]` entries from
-    /// config.toml — copies each into a scheduled Task, then deletes the
-    /// legacy state file. Identifier-collision skips make re-runs idempotent,
-    /// so a partially failed migration heals on the next boot.
-    ///
-    /// Must be called after `handle()` is cached (the task store hangs off
-    /// the cached KernelHandle). Fire-and-forget: a failure logs but never
-    /// blocks or crashes the daemon.
-    pub fn migrate_legacy_crons(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let state_store = self.state_store.clone();
-        let cron_config = self.config.cron.clone();
-        let task_store = self.handle().task_store.clone()?;
-        Some(tokio::spawn(async move {
-            // Persisted API jobs.
-            let mut jobs: Vec<oxios_kernel::task::legacy::CronJob> = state_store
-                .load_json("cron", "jobs")
-                .await
-                .unwrap_or(None)
-                .unwrap_or_default();
-            // Config-defined inline jobs ([[cron.jobs]] in config.toml).
-            for (name, inline) in &cron_config.jobs {
-                let mut job = oxios_kernel::task::legacy::CronJob::new(
-                    name.clone(),
-                    inline.schedule.clone(),
-                    inline.goal.clone(),
-                );
-                job.constraints = inline.constraints.clone();
-                job.acceptance_criteria = inline.acceptance_criteria.clone();
-                job.toolchain = inline.toolchain.clone();
-                job.priority = inline.priority;
-                job.enabled = inline.enabled;
-                jobs.push(job);
-            }
-            if jobs.is_empty() {
-                return;
-            }
-            let count = jobs.len();
-            let store = task_store.lock().await;
-            match oxios_kernel::task::migrate_cron_to_tasks(&jobs, &store, false).await {
-                Ok(report) => {
-                    tracing::info!(
-                        total = count,
-                        created = report.created.len(),
-                        skipped = report.skipped.len(),
-                        "Migrated legacy cron jobs into scheduled tasks"
-                    );
-                    for s in &report.skipped {
-                        tracing::info!(job = %s.name, reason = %s.reason, "cron migration skip");
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Legacy cron migration failed; retrying next boot");
-                    return;
-                }
-            }
-            // Drop the retired state so migrated jobs are not re-copied.
-            if let Err(e) = state_store.delete_file("cron", "jobs").await {
-                tracing::warn!(error = %e, "Failed to delete retired cron state file");
-            }
-        }))
     }
 
     // ── Initialization helpers (used by default mode only) ─────────────

@@ -11,7 +11,8 @@ import {
   CommandList,
 } from '@/components/ui/command'
 import { useCommandPaletteStore } from '@/stores/command-palette'
-import { deriveSidebarMode, useSidebarStore } from '@/stores/sidebar'
+import { useSidebarStore } from '@/stores/sidebar'
+import { deriveSurface } from '@/types/surfaces'
 import { useCaptureProvider } from './command-palette/capture'
 import { useControlProvider } from './command-palette/control'
 import { buildContext } from './command-palette/lexer'
@@ -41,8 +42,8 @@ function groupByVerb(items: PaletteItem[]): Array<[string, PaletteItem[]]> {
   const map = new Map<Verb, PaletteItem[]>()
   for (const it of items) {
     if (!map.has(it.verb)) {
-      map.set(it.verb, [])
       order.push(it.verb)
+      map.set(it.verb, [])
     }
     map.get(it.verb)!.push(it)
   }
@@ -53,7 +54,7 @@ export function CommandPalette() {
   const { t } = useTranslation()
   const router = useRouter()
   const routerState = useRouterState()
-  const mode = deriveSidebarMode(routerState.location.pathname)
+  const surface = deriveSurface(routerState.location.pathname)
 
   const open = useCommandPaletteStore((s) => s.open)
   const query = useCommandPaletteStore((s) => s.query)
@@ -113,7 +114,7 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePalette])
 
-  const ctx = useMemo(() => buildContext(query, mode), [query, mode])
+  const ctx = useMemo(() => buildContext(query, surface), [query, surface])
 
   const items = useMemo(() => {
     let resolved = registry.resolve(ctx)
@@ -143,7 +144,7 @@ export function CommandPalette() {
           title: t('commandPalette.actionSearchNotes'),
           hint: <kbd className="text-[10px] text-muted-foreground">⌘P</kbd>,
           score: 0,
-          onSelect: () => router.history.push('/brain/knowledge'),
+          onSelect: () => router.history.push('/knowledge'),
         },
       ]
     }

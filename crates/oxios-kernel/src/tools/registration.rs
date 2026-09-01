@@ -588,19 +588,19 @@ pub fn register_from_resolved_profile(
             // off, the descriptor stays in the catalog (so the selector
             // can still reason about it) but the arm warns and skips so
             // operators see the catalog/profile/feature mismatch.
-            // TaskTool is conditional on the assembler attaching a
-            // `task_store` — `from_kernel` returns `None` when no
+            // AutomationTool is conditional on the assembler attaching an
+            // `automation_store` — `from_kernel` returns `None` when no
             // store is attached, matching the legacy path. The
             // constructor signature takes `&Arc<KernelHandle>`; the
             // resolved-profile path now also takes `&Arc<KernelHandle>`,
             // so the kernel Arc is reused without an extra clone.
-            "kernel.task.manage" => {
-                if let Some(task_tool) = TaskTool::from_kernel(kernel, &agent_id.to_string()) {
-                    registry.register(task_tool);
+            "kernel.automation.manage" => {
+                if let Some(automation_tool) = AutomationTool::from_kernel(kernel) {
+                    registry.register(automation_tool);
                 } else {
                     tracing::warn!(
                         id = id,
-                        "task store unavailable; skipping kernel.task.manage"
+                        "automation store unavailable; skipping kernel.automation.manage"
                     );
                 }
             }
@@ -859,7 +859,7 @@ pub fn register_tools_from_cspace(
 /// | `KernelDomain { "budget" }` | any | `BudgetTool` |
 /// | `KernelDomain { "resource" }` | any | `ResourceTool` |
 /// | `KernelDomain { "knowledge" }` | any | `KnowledgeTool` |
-/// | `KernelDomain { "task" }` | any | `TaskTool` (when task store attached) |
+/// | `KernelDomain { "automation" }` | any | `AutomationTool` (when automation store attached) |
 /// | `KernelDomain { "marketplace" }` | any | `MarketplaceTool` |
 /// | `KernelDomain { "mcp_manage" }` | any | `McpManageTool` (approval-gated) |
 /// | `KernelDomain { "engine" }` | any | `EngineTool` (approval-gated) |
@@ -957,9 +957,9 @@ pub fn register_tools_from_cspace_gated(
                 "budget" => registry.register(BudgetTool::from_kernel(kernel)),
                 "resource" => registry.register(ResourceTool::from_kernel(kernel)),
                 "knowledge" => registry.register(KnowledgeTool::from_kernel(kernel)),
-                "task" => {
-                    if let Some(store) = kernel.task_store.clone() {
-                        registry.register(TaskTool::for_store(store, Some(agent_id.to_string())));
+                "automation" => {
+                    if let Some(store) = kernel.automation_store.clone() {
+                        registry.register(AutomationTool::for_store(store));
                     }
                 }
                 "marketplace" => registry.register(MarketplaceTool::from_kernel(kernel)),
@@ -1423,7 +1423,12 @@ mod tests {
 
         let cases: &[(&str, &str, &str, &str)] = &[
             // (descriptor_id, registered_name, domain, rights)
-            ("kernel.task.manage", "task", "task", "WRITE"),
+            (
+                "kernel.automation.manage",
+                "automation",
+                "automation",
+                "WRITE",
+            ),
             (
                 "kernel.marketplace.manage",
                 "marketplace",

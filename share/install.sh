@@ -79,9 +79,10 @@ rc="$HOME/.zshrc"; [ -f "$rc" ] || rc="$HOME/.zprofile"
 # block, then append one for the current root.
 if grep -q 'BEGIN oxios (managed)' "$rc" 2>/dev/null; then
   tmp_rc=$(mktemp)
-  sed "/# BEGIN oxios (managed)/,/# END oxios (managed)/d" "$rc" > "$tmp_rc" \
-    && mv "$tmp_rc" "$rc" \
-    || { rm -f "$tmp_rc"; echo "failed to update PATH block in $rc" >&2; exit 1; }
+  sed "/# BEGIN oxios (managed)/,/# END oxios (managed)/d" "$rc" > "$tmp_rc" ||
+    { rm -f "$tmp_rc"; echo "failed to update PATH block in $rc" >&2; exit 1; }
+  mv "$tmp_rc" "$rc" ||
+    { rm -f "$tmp_rc"; echo "failed to update PATH block in $rc" >&2; exit 1; }
 fi
 # SC2016 disable: \$PATH must remain literal in the user's rc file so it expands at
 # shell startup, not at printf time.

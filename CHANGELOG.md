@@ -5,9 +5,68 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [2.0.0] - 2026-09-01
+
+**Major-version break.** The web information architecture is rebuilt
+around three surfaces — Operate, Knowledge, Studio — and the scheduled
+Task domain is replaced by Automations. Legacy routes and endpoints are
+removed without redirects or aliases; old clients and bookmarks stop
+resolving.
+
+### Added
+
+- **One sidebar switcher, three surfaces.** `Operate`, `Knowledge`, and
+  `Studio` replace the Console/Brain/Chat mode tabs. The surface is
+  URL-derived (`/operate`, `/knowledge`, `/studio`) — never persisted,
+  never inferred. Each surface owns only its local navigation; the
+  mobile drawer carries the active surface's tree with the same single
+  switcher.
+
+- **Automation domain.** Scheduled tasks are replaced by Automations:
+  a saved manual/cron/heartbeat instruction with optional persona,
+  project, and Brain bindings that launches Automation Runs. Every run
+  stores an immutable context snapshot at start — mid-run edits to the
+  definition never alter an in-flight execution. Verification gates
+  with bounded repair attempts survive the rename. New API:
+  `/api/automations` (CRUD + status/trigger/verify/run). Task planning
+  features (priority, assignee, dependencies, comments, Gantt) are
+  gone, not renamed — Issues and Milestones remain the project
+  planning domain.
+
+- **Operate — exception/decision first.** `/operate` composes Attention
+  (pending approvals, failed/canceled runs, waiting input, quota
+  blocks), a Run Center, Project control rooms, and capability
+  records from source-backed `/api/operate/*` projections. Nothing is
+  invented: rows appear only when a recorded relation exists, tool
+  arguments and secrets are redacted, and every item carries canonical
+  deep links plus a typed "Investigate in Studio" launch.
+
+- **Knowledge — memory and library, truthfully labeled.** Brain memory
+  (`/knowledge/memory/*`) and Library documents
+  (`/knowledge/library/*`) stay distinct queries; combined views
+  interleave only after each item carries its source kind and backing
+  ID. "Add to Studio" hands off through a validated, typed
+  `StudioLaunchIntent` — stale or inaccessible references render as
+  removable chips, never silently substituted.
+
+- **Server-derived presentation lens.** Personas carry an explicit
+  `presentation_lens` (general/code/research/operations/writing)
+  surfaced through `EffectiveProfile` everywhere it already travels
+  (session load, chat completion, events). A lens changes presentation
+  only — it never grants filesystem, tool, model, or approval
+  authority.
 
 ### Changed
+
+- **Studio is conversation-first and projectless-first.** `/studio`
+  opens a first-class projectless session (`No project · configured
+  model · Not connected`); no setup warning, no hidden default
+  project. The `StudioContextBar` (`project · persona · model · Brain`)
+  is the single persistent selector; the composer no longer repeats
+  those controls. Context changes apply from the next turn; existing
+  messages keep their original recorded metadata. The transcript DOM
+  survives persona/lens/project switches — switching to Builder never
+  re-keys or scrolls away the conversation.
 
 - **Brain binary managed layout** (ecosystem binary-path standard).
   `BrainInstaller` now installs oxibrain per-app —
@@ -17,6 +76,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[brain].binary_path` → managed launcher → pre-standard
   `~/.oxi/bin/oxibrain` → `PATH`; a successful install retires the
   pre-standard copy.
+
+- **Dependency security.** wasmtime 36.0.13 → 36.0.14
+  (RUSTSEC-2026-0269, filesystem sandbox escape via trailing-slash
+  paths, CVSS 8.8).
+
+### Removed
+
+- Legacy web routes: `/` (dashboard — use `/operate`), `/tasks`,
+  `/chat`, `/sessions/*`, `/brain/*`, the flat `/knowledge/*` pages,
+  and `/agents/*` (agent monitoring moved into Operate). All resolve
+  as normal 404s — no redirects, no compatibility shims.
+
+- Legacy API surface: every `/api/tasks*` endpoint (router 404s the
+  prefix) and the Task execution tool. Automation CRUD replaces it
+  tool-side with `create/list/get/update/pause/resume/run/runs/delete`
+  only.
+
+- Persona category/genre taxonomy and dashboard-only KPI card grids
+  that answered no Operate question.
+
+### Upgrade notes
+
+- **`tasks.db` is retired state.** The assembler opens
+  `~/.oxi/oxios/workspace/automations.db`; `tasks.db` is never read,
+  migrated, or deleted at runtime. To reclaim space, delete it
+  manually after confirming nothing you need is inside — Oxios will
+  not touch it.
+
+- Browsers may keep a stale `oxios-sidebar-mode` localStorage key. It
+  is inert: the surface is derived from the URL and the key is never
+  read. Clearing site data is optional.
+
+- oxibrain installs move to `~/.oxi/oxibrain/`; the next successful
+  install retires the old `~/.oxi/bin/oxibrain` copy automatically.
 
 ## [1.45.0] - 2026-08-31
 

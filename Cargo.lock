@@ -6719,7 +6719,7 @@ dependencies = [
 
 [[package]]
 name = "oxios"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6782,7 +6782,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-calendar"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6803,7 +6803,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-gateway"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -6823,7 +6823,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-kernel"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6885,7 +6885,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-markdown"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6918,7 +6918,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-mcp"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -6930,7 +6930,7 @@ dependencies = [
 
 [[package]]
 name = "oxios-ouroboros"
-version = "1.45.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-trait",

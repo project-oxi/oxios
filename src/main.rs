@@ -1735,7 +1735,12 @@ fn main() {
 
     if let Err(e) = runtime.block_on(run(cli)) {
         eprintln!();
-        eprintln!("  {} {}", style("error:").red().bold(), e);
+        eprintln!("  {} {e}", style("error:").red().bold());
+        let mut source = e.source();
+        while let Some(cause) = source {
+            eprintln!("    ↳ {cause}");
+            source = cause.source();
+        }
         eprintln!(
             "  Run {} for diagnostics.\n",
             style("`oxios doctor`").cyan()

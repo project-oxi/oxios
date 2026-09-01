@@ -209,6 +209,16 @@ pub fn install_version_bytes(oxios_home: &Path, version: &str, tar_gz: &[u8]) ->
     for entry in archive.entries().context("open tar entries")? {
         let mut entry = entry.context("read tar entry")?;
         let path = entry.path().context("read tar entry path")?.into_owned();
+        // macOS tar stores xattrs as `._<name>` AppleDouble members even
+        // with --no-xattrs in older toolchains — noise, not tampering.
+        // Skip them; anything else that is not exactly `oxios` still bails.
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("._") && path.parent() == Some(std::path::Path::new("")))
+        {
+            continue;
+        }
         if path != std::path::Path::new("oxios") {
             anyhow::bail!("unexpected tar member {}", path.display());
         }

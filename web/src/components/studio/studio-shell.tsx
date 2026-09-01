@@ -564,7 +564,7 @@ export function StudioShell() {
               onScroll={handleListScroll}
               className="relative flex-1 min-h-0 overflow-y-auto"
               role="log"
-              aria-label={t('common.chatMessages')}
+              aria-label={t('common.messages')}
             >
               {rows.map((row) => {
                 if (row.kind === 'empty') {

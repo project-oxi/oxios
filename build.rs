@@ -26,7 +26,10 @@ fn main() {
         // Make the dist contents visible to rustc's and sccache's fingerprints:
         // a changed tree changes this env, forcing dependent recompilation so
         // include_dir! re-expands instead of reusing a cached expansion.
-        println!("cargo:rustc-env=OXIOS_WEB_DIST_HASH={}", hash_dir(marker.parent().expect("dist dir")));
+        println!(
+            "cargo:rustc-env=OXIOS_WEB_DIST_HASH={}",
+            hash_dir(marker.parent().expect("dist dir"))
+        );
     }
     // Declare the custom cfg so rustc's `unexpected_cfgs` lint accepts it
     // (emitted above when web/dist exists; absent otherwise).
@@ -38,7 +41,9 @@ fn hash_dir(root: &std::path::Path) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {

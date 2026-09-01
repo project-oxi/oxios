@@ -29,7 +29,10 @@ jobs:
         run: which bun && bun --version
       - name: Build web assets
         working-directory: web
-        run: bun install --frozen-lockfile && bun run build
+        run: rm -rf dist && bun install --frozen-lockfile && bun run build
+        # A self-hosted runner reuses its checkout: without the explicit dist
+        # cleanup a previous release's assets survive into the embed
+        # (v2.0.0 shipped a mixed old/new UI — incident 2026-09-01).
       - name: Build dist binary
         run: cargo build --profile dist --locked
       - name: Smoke test

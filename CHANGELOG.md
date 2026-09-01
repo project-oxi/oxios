@@ -5,7 +5,20 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.0.0] - 2026-09-01
+## [2.0.1] - 2026-09-01
+
+### Fixed
+
+- **Release binaries could embed a stale or mixed web UI.** The release
+  workflow now removes `web/dist` before building, and the build script
+  tracks the dist tree and exposes its content hash to the compiler, so
+  `include_dir!` always bakes the just-built SPA. v2.0.0 binaries could
+  serve the v1.45.0 dashboard despite reporting 2.0.0.
+
+- CI gates: `clippy::needless_update` in an automation store test and
+  a shellcheck SC2015 in the installer's managed PATH rewrite no
+  longer fail the `fmt` job.
+
 
 **Major-version break.** The web information architecture is rebuilt
 around three surfaces — Operate, Knowledge, Studio — and the scheduled

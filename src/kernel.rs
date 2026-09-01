@@ -1337,8 +1337,11 @@ impl KernelBuilder {
                     if let Some(bin) = inst.locate_binary() {
                         tracing::info!(count = pending.count, "draining brain extraction backlog");
                         // Bound the drain so a stuck child never wedges the
-                        // 600 s tick. 30 min is generous for any realistic
-                        // backlog; longer means the run is hung, not slow.
+                        // 600 s tick. On timeout the child is SIGKILLed
+                        // (`kill_on_drop`); `admin extract` commits per
+                        // episode, so the next run resumes after the last
+                        // completed one — progress is kept, work is never
+                        // duplicated.
                         let extract_fut = oxios_kernel::brain::run_cli(
                             &bin,
                             &dir,
@@ -1365,7 +1368,8 @@ impl KernelBuilder {
                             }
                             Err(_) => {
                                 tracing::warn!(
-                                    "brain admin extract --pending timed out after 30 min"
+                                    "brain admin extract --pending timed out after 30 min; \
+                                     child killed, backlog resumes on the next tick"
                                 )
                             }
                         }

@@ -19,6 +19,11 @@ pub async fn run_cli(binary: &Path, dir: &Path, args: &[&str]) -> Result<Output>
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        // A caller that abandons the future — the drain timer's 30-min
+        // timeout — must not leave the child running: without this flag the
+        // dropped Child survived as an orphan (still burning GPU/CPU) while
+        // the timer spawned a duplicate 30 min later.
+        .kill_on_drop(true)
         .output()
         .await
         .with_context(|| format!("run {} {:?}", binary.display(), args))

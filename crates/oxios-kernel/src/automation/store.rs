@@ -1762,7 +1762,6 @@ mod tests {
                     timezone: None,
                     heartbeat_interval_secs: Some(600),
                     max_executions: None,
-                    ..Default::default()
                 },
             )
             .await

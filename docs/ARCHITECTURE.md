@@ -1768,6 +1768,30 @@ This overlap is legitimate; do not merge the two surfaces.
 
 ---
 
+## 12. Execution Recipe Seam
+
+Turn behavior is selected declaratively by an execution recipe
+(`crates/oxios-kernel/src/execution_recipe/`, design
+`docs/designs/2026-08-31-execution-recipe-coding-host-design.md`).
+Ownership per layer:
+
+| Layer | Owning symbol |
+|---|---|
+| Recipe selection (general-v1 default; coding-omp-v1 pilot) | `execution_recipe::ExecutionRecipeResolver` — resolved in `AgentRuntime::execute_inner` beside persona/CSpace resolution |
+| Portable coding behavior | oxicode-sdk `coding-omp-v1` pack (crates.io, `behavior` feature) |
+| Policy envelope | unchanged: `AccessGate` + CSpace + `GatedTool::with_approval` + `ApprovalGate`; the pack never bypasses them |
+| Gated install seam | `execution_recipe::GatedBehaviorInstaller` / `install_coding_turn` — the single registration path, reconciled against a static implementation-id map |
+| Session-scoped extensions | `execution_recipe::extensions::RuntimeExtensionManager` — hashline snapshot store, persistent shell, eval kernels keyed by `(project, session, canonical workspace)` |
+| Turn delivery | unchanged `KernelEvent` bus; new `ExecutionRecipeResolved` / `RuntimeExtensionStatus` variants (bridged to SSE) |
+
+Invariants: a recipe narrows, never widens; an essential pack tool denied by
+policy fails the turn before any model call; native overlays
+(`web_search`, `get_search_results`, `todo`) and lifecycle delegation reject
+pack duplicates with structured degradations; ordinary turns resolve
+`general-v1` and never pay for coding extensions.
+
+---
+
 ## Appendix: Quick Reference
 
 ### Key File Locations

@@ -15,6 +15,7 @@ pub mod agent_group;
 pub mod agent_lifecycle;
 pub mod agent_runtime;
 pub mod daemon;
+pub mod execution_recipe;
 pub mod readiness;
 pub mod streaming_sink;
 pub mod subagent_runner;

@@ -892,6 +892,13 @@ impl EngineApi {
         self.config.read().search.clone()
     }
 
+    /// Execution-recipe resolution config (`[execution_recipe]` section).
+    /// Reads the LIVE config under its shared RwLock so coding-pilot
+    /// toggles take effect on the next agent run.
+    pub fn execution_recipe_config(&self) -> crate::config::ExecutionRecipeConfig {
+        self.config.read().execution_recipe.clone()
+    }
+
     /// RFC-032: Resolve the model ID for a given role, if configured.
     /// Reads the LIVE config under its shared RwLock so updates take
     /// effect immediately. Returns `None` when the role is not in

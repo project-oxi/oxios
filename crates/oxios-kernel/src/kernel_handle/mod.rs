@@ -175,6 +175,11 @@ pub struct KernelHandle {
     /// Session-scoped todo plans. Shared across handles by the assembler so
     /// a plan created on one turn is found again on the next.
     pub todos: Arc<crate::tools::TodoRegistry>,
+    /// Session-scoped coding-recipe runtime extensions (hashline snapshot
+    /// store, persistent shell, eval kernels). Shared across handles by the
+    /// assembler so one chat's shell/anchor state survives across turns
+    /// regardless of which handle serves them.
+    pub runtime_extensions: Arc<crate::execution_recipe::extensions::RuntimeExtensionManager>,
 }
 
 impl KernelHandle {
@@ -230,6 +235,13 @@ impl KernelHandle {
             // Per-handle by default; the assembler may inject a shared
             // instance across handles via `with_tool_results`.
             tool_results: Arc::new(crate::tools::StructuredResultBus::new()),
+            // Session-scoped coding-recipe runtime extensions (hashline
+            // snapshot store, persistent shell, eval kernels). Per-handle by
+            // default; the assembler may inject a shared instance across
+            // handles via `with_runtime_extensions`.
+            runtime_extensions: Arc::new(
+                crate::execution_recipe::extensions::RuntimeExtensionManager::default(),
+            ),
             // Per-handle by default; the assembler injects a shared instance
             // via `with_issues` so ownership guards are observed everywhere.
             issues: Arc::new(issue_api::IssueApi::new()),
@@ -352,6 +364,17 @@ impl KernelHandle {
     /// created on one turn is found again on the next.
     pub fn with_todos(mut self, todos: Arc<crate::tools::TodoRegistry>) -> Self {
         self.todos = todos;
+        self
+    }
+
+    /// Share one [`RuntimeExtensionManager`] across handles, so a coding
+    /// chat's shell/anchor state survives across turns regardless of which
+    /// handle serves them.
+    pub fn with_runtime_extensions(
+        mut self,
+        extensions: Arc<crate::execution_recipe::extensions::RuntimeExtensionManager>,
+    ) -> Self {
+        self.runtime_extensions = extensions;
         self
     }
 

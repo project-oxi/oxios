@@ -6513,9 +6513,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-agent"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f6285c32178599e29d08299c241cefa4eb22e0b6be6fede0de141cce8368171"
+checksum = "ece6b59af4f16e51699dc0b979cc99198b88530696ef611a52149868d0b46093"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6545,9 +6545,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-ai"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c9e079da4a6b2de259f89a9995bee5d63aae522ca3978d4d17f5847a7701ced"
+checksum = "f10e8396695a237256baf130637db90f13ffd11e30d02a5a795a9f425b0989ea"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -6586,9 +6586,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-api-stability"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14a6f7375347687fc6b93461895a933d668ebafbe384f8ea9ceb3c41b5ec509a"
+checksum = "ee3a745ea255ff6bd69a8e33c7599ca424781b1eb719b978a715a6a18b240dd4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6597,9 +6597,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-catalog"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcb73f577a5411c8e9447ef9fa78094e02641da775cc2d57cdc23bfacd3aac53"
+checksum = "f333b5de6d9c9aef44b4677fc7ca0ccead0d08a0c722d054780ead1011a661d0"
 dependencies = [
  "dirs 6.0.0",
  "filetime",
@@ -6616,9 +6616,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-hashline"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9cac96f948e3ca543ae43a16ff54d64478ad60f2296269b65131c083436d621"
+checksum = "8cfb12cfa594e5e354ad234a29f1a59f30f80a1392ec3be1c4b87830f3a3da80"
 dependencies = [
  "async-trait",
  "lru 0.18.2",
@@ -6630,9 +6630,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-sdk"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac139d24366a7ce384204158ca3c53fb0ebcc97cbf70ac9c0989d06dc7f9cb73"
+checksum = "8120856a6e67b24a271d9243e00dc0ebccfe0af6d1b8cb95fd569dfc4ef86a44"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6666,9 +6666,9 @@ dependencies = [
 
 [[package]]
 name = "oxicode-snapcompact"
-version = "0.77.0"
+version = "0.81.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e4b662ae8781097767c31ec4323101c1788b31324b1f44fa5dec5bd7bbba005"
+checksum = "9be3fa81f9a88e84e91bdb632cde0ab74cf54c7cc3b3302d367f7ef6edaeff78"
 dependencies = [
  "fontdue",
  "png 0.17.16",

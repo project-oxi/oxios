@@ -5,6 +5,43 @@ All notable changes to this project are documented in this file.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+
+## [Unreleased]
+
+### Added
+
+- **Execution recipe coding host (pilot).** Oxios now consumes the released
+  oxicode-sdk 0.81.0 behavior-pack API (`behavior` feature) through a single,
+  policy-preserving recipe resolution path. `general-v1` (the default)
+  resolves to no pack and leaves the existing CSpace composition untouched;
+  `coding-omp-v1` becomes selectable per project only while
+  `[execution_recipe].coding_pilot = true` plus a `project_bindings` entry.
+  New `crates/oxios-kernel/src/execution_recipe/` module: `ExecutionRecipeResolver`
+  (fixed precedence: explicit > project binding > persona > system default),
+  `GatedBehaviorInstaller` (descriptor reconciliation against a static
+  implementation-id map, preflight with the same `AccessGate` check
+  `GatedTool` applies per call, `GatedTool::with_approval` wrap, register on
+  the turn's existing registry), and a `RuntimeExtensionManager` (bounded
+  hashline snapshot store, persistent shell session, Python/JavaScript eval
+  kernels keyed by `(project, session, canonical workspace)`). Native
+  overlays (`web_search`, `get_search_results`, `todo`) and lifecycle
+  delegation reject pack duplicates with structured `HostRejected`
+  degradations on the installed manifest; essential denials fail the turn
+  before any model call. New `KernelEvent::ExecutionRecipeResolved` +
+  `RuntimeExtensionStatus` (also bridged to the SSE stream as
+  `execution_recipe_resolved` / `runtime_extension_status`); `ExecutionResult`
+  carries `recipe_id` for turn metadata. Pack prompt layers install after
+  persona/project instructions and before the security protocol tail.
+
+### Changed
+
+- **oxicode-sdk 0.77.0 → 0.81.0** (+`behavior` feature; oxicode-agent and
+  oxicode-ai aligned at 0.81.0). Persistent shell/eval/DAP runtimes now ship
+  in oxicode-agent; the coding pilot wires the persistent shell and eval
+  kernels, and reports LSP/DAP/TTSR/delegation as structured degradations
+  until host-side implementations land (rollout steps 6-8).
+
+
 ## [2.0.1] - 2026-09-01
 
 ### Fixed

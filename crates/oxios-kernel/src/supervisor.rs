@@ -405,6 +405,7 @@ impl Supervisor for BasicSupervisor {
             // Check for cancellation before starting.
             let result = if cancelled_done.load(Ordering::Relaxed) {
                 Ok(ExecutionResult {
+                    recipe_id: None,
                     output: "Agent cancelled before execution".into(),
                     steps_completed: 0,
                     success: false,
@@ -456,6 +457,7 @@ impl Supervisor for BasicSupervisor {
                 let mut handles = self.handles.write();
                 handles.remove(&id);
                 Ok(ExecutionResult {
+                    recipe_id: None,
                     output: "Agent task aborted".into(),
                     steps_completed: 0,
                     success: false,
@@ -566,6 +568,7 @@ impl Supervisor for BasicSupervisor {
                 self.persist_agent(id).await;
 
                 Ok(ExecutionResult {
+                    recipe_id: None,
                     output: format!("Agent failed: {e}"),
                     steps_completed: 0,
                     success: false,

@@ -257,6 +257,17 @@ auto_install = true
 # timeout_secs = 15
 # region = "kr-KR"     # Brave country/search_lang hint (e.g. "kr-KR", "en-US")
 
+# Execution recipe resolution (coding host design). `general-v1` is the
+# system default — ordinary turns keep the existing tool composition.
+# `coding-omp-v1` becomes selectable per project only while coding_pilot is
+# true, via project_bindings. Unknown binding ids degrade to general-v1.
+# [execution_recipe]
+# enabled = true
+# coding_pilot = false
+# coding_shell = true
+# coding_eval = true
+# project_bindings = { "<project-uuid>" = "coding-omp-v1" }
+
 # Agent history log (enabled by default).
 # Controls how past agent executions are retained for transparent observation.
 [agent_log]

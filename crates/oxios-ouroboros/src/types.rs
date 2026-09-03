@@ -75,6 +75,12 @@ pub struct ExecutionResult {
     /// pre-block-stream runs (frontend falls back to `reasoning_text`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_segments: Vec<ReasoningSegment>,
+    /// Execution recipe selected for this turn (execution-recipe design).
+    /// `Some("coding-omp-v1")` for coding-recipe turns; `None` for
+    /// `general-v1` (the default composition) so existing payloads stay
+    /// round-trip clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_id: Option<String>,
 }
 
 /// One positioned reasoning span within a turn (block-stream transparency).

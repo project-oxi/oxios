@@ -442,6 +442,67 @@ pub enum KernelEvent {
         /// Error description.
         error: String,
     },
+    /// Execution recipe resolved for a turn (execution-recipe design).
+    /// Emitted once per coding-recipe turn before the first model call;
+    /// carries the installed tool manifest (names + implementation ids,
+    /// never secrets) and the structured degradation report.
+    ExecutionRecipeResolved {
+        /// Owning execution.
+        exec_id: uuid::Uuid,
+        /// Executing agent.
+        agent_id: crate::types::AgentId,
+        /// Owning chat turn key, when bound to a chat.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        /// Selected recipe id (e.g. "coding-omp-v1").
+        recipe: String,
+        /// Behavior pack ids selected.
+        packs: Vec<String>,
+        /// Precedence level that produced the selection.
+        source: String,
+        /// Canonical workspace root for the turn.
+        workspace: std::path::PathBuf,
+        /// Installed tools: model-visible name + implementation id.
+        tools: Vec<RecipeToolEntry>,
+        /// Structured degradation records (feature + reason).
+        degraded: Vec<RecipeDegradedEntry>,
+        /// Pinned compatibility target from the pack ledger.
+        compatibility_target: String,
+    },
+    /// Runtime extension lifecycle change (started/reused/stopped/failed).
+    RuntimeExtensionStatus {
+        /// Owning execution.
+        exec_id: uuid::Uuid,
+        /// Executing agent.
+        agent_id: crate::types::AgentId,
+        /// Extension slug (e.g. "hashline", "shell", "eval").
+        extension: String,
+        /// `started` | `reused` | `stopped` | `failed`.
+        state: String,
+        /// Optional human-readable detail (no secrets).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+/// One installed behavior tool in [`KernelEvent::ExecutionRecipeResolved`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecipeToolEntry {
+    /// Model-visible tool name.
+    pub name: String,
+    /// Stable implementation id from the pack descriptor.
+    pub implementation: String,
+}
+
+/// One structured degradation in [`KernelEvent::ExecutionRecipeResolved`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecipeDegradedEntry {
+    /// Feature slug or exposed tool name.
+    pub feature: String,
+    /// Why it degraded (human-readable, no secrets).
+    pub reason: String,
+    /// Model-visible names affected.
+    pub affected_tools: Vec<String>,
 }
 
 /// Convert a KernelEvent to an AuditAction for the audit trail.
@@ -653,6 +714,23 @@ pub fn kernel_event_to_audit_action(event: &KernelEvent) -> AuditAction {
         | KernelEvent::CompressionDone { .. }
         | KernelEvent::CompressionFailed { .. } => AuditAction::Other {
             detail: "compression".to_string(),
+        },
+        KernelEvent::ExecutionRecipeResolved {
+            recipe,
+            packs,
+            tools,
+            ..
+        } => AuditAction::Other {
+            detail: format!(
+                "recipe:{recipe}:packs={}:tools={}",
+                packs.join(","),
+                tools.len()
+            ),
+        },
+        KernelEvent::RuntimeExtensionStatus {
+            extension, state, ..
+        } => AuditAction::Other {
+            detail: format!("extension:{extension}:{state}"),
         },
     }
 }

@@ -123,6 +123,7 @@ See `docs/ARCHITECTURE.md` for the full reference (subsystems, data flow, depend
 | `docs/design-knowledge-ui.md` | Knowledge UI (frontend components, shortcuts, architecture) |
 | `docs/channel-plugin-guide.md` | Adding a new channel |
 | `docs/USER-GUIDE.md` | Changing user-facing features or CLI behavior |
+| `docs/designs/2026-08-31-execution-recipe-coding-host-design.md` | Modifying turn execution behavior, tool registration, or coding recipe wiring |
 | `share/default-config.toml` | Changing configuration options |
 
 ## Release

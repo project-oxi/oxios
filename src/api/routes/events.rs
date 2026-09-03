@@ -704,6 +704,37 @@ pub(crate) fn sanitize_event(event: &oxios_kernel::event_bus::KernelEvent) -> se
         | KernelEvent::CompressionFailed { .. } => serde_json::json!({
             "type": "compression",
         }),
+        // Execution-recipe structured payloads (design "Events, UI, and
+        // automation"): the Web "Coding environment" panel derives from
+        // these — no secrets, tool names + implementation ids only.
+        KernelEvent::ExecutionRecipeResolved {
+            recipe,
+            packs,
+            source,
+            tools,
+            degraded,
+            compatibility_target,
+            ..
+        } => serde_json::json!({
+            "type": "execution_recipe_resolved",
+            "recipe": recipe,
+            "packs": packs,
+            "source": source,
+            "tools": tools,
+            "degraded": degraded,
+            "compatibility_target": compatibility_target,
+        }),
+        KernelEvent::RuntimeExtensionStatus {
+            extension,
+            state,
+            detail,
+            ..
+        } => serde_json::json!({
+            "type": "runtime_extension_status",
+            "extension": extension,
+            "state": state,
+            "detail": detail,
+        }),
     };
     // Merge payload into base
     if let serde_json::Value::Object(mut map) = base {

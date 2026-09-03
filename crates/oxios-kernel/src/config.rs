@@ -1341,6 +1341,45 @@ pub struct OxiosConfig {
     /// oxiline (timeline) integration config.
     #[serde(default)]
     pub timeline: TimelineConfig,
+    /// Execution recipe resolution (execution-recipe coding host design).
+    /// `general-v1` is the default; the coding pilot is off unless
+    /// `coding_pilot = true`.
+    #[serde(default)]
+    pub execution_recipe: ExecutionRecipeConfig,
+}
+
+/// Configuration for execution-recipe resolution (design
+/// `docs/designs/2026-08-31-execution-recipe-coding-host-design.md`).
+///
+/// `general-v1` (no pack) is the system default; `coding-omp-v1` is only
+/// selectable while [`Self::coding_pilot`] is on, via a project binding.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ExecutionRecipeConfig {
+    /// Master switch for recipe resolution. `false` forces `general-v1`.
+    pub enabled: bool,
+    /// Pilot gate for `coding-omp-v1` selection. Off by default.
+    pub coding_pilot: bool,
+    /// Wire a persistent shell session for coding turns (pack `bash` routes
+    /// through OMP-style session semantics).
+    pub coding_shell: bool,
+    /// Wire persistent Python/JavaScript eval kernels for coding turns.
+    pub coding_eval: bool,
+    /// Project uuid → recipe id (e.g. `"coding-omp-v1"`). Honored only while
+    /// [`Self::coding_pilot`] is on; unknown ids degrade to `general-v1`.
+    pub project_bindings: std::collections::HashMap<String, String>,
+}
+
+impl Default for ExecutionRecipeConfig {
+    fn default() -> Self {
+        ExecutionRecipeConfig {
+            enabled: true,
+            coding_pilot: false,
+            coding_shell: true,
+            coding_eval: true,
+            project_bindings: std::collections::HashMap::new(),
+        }
+    }
 }
 
 /// Image generation configuration.

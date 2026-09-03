@@ -388,6 +388,7 @@ mod tests {
     #[test]
     fn better_of_prefers_success() {
         let ok = ExecutionResult {
+            recipe_id: None,
             output: "ok".into(),
             steps_completed: 0,
             success: true,
@@ -413,6 +414,7 @@ mod tests {
     #[test]
     fn better_of_prefers_more_steps_on_tie() {
         let base = ExecutionResult {
+            recipe_id: None,
             output: String::new(),
             steps_completed: 0,
             success: false,

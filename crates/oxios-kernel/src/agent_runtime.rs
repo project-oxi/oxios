@@ -403,6 +403,39 @@ impl AgentRuntime {
         // minimal | control). An explicit directive hint overrides the profile.
         let tool_profile = persona.as_ref().map(|p| p.tool_profile).unwrap_or_default();
         let cspace = resolve_cspace(cspace_hint, tool_profile, agent_id);
+
+        // Execution recipe resolution (execution-recipe coding host design):
+        // runs alongside persona/CSpace resolution, before any tool
+        // registration. `general-v1` (the default) changes nothing downstream.
+        let resolved_execution = {
+            let recipe_cfg = self.kernel_handle.engine.execution_recipe_config();
+            crate::execution_recipe::ExecutionRecipeResolver::new(recipe_cfg).resolve(
+                crate::execution_recipe::RecipeRequest {
+                    project_id,
+                    explicit: None,
+                    persona_id,
+                },
+            )
+        };
+        // Pack prompt layers are known from the released pack definition at
+        // resolve time (the manifest confirms them at install time).
+        let pack_prompt_layers: Vec<(String, String)> = if resolved_execution.is_coding() {
+            oxicode_sdk::behavior::BehaviorPackResolver::with_builtin_packs()
+                .ok()
+                .and_then(|r| {
+                    r.pack(&resolved_execution.pack_ids[0]).map(|p| {
+                        p.prompt_layers
+                            .iter()
+                            .map(|l| (l.id.clone(), l.body.clone()))
+                            .collect()
+                    })
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let pack_prompt_layers_ref: &[(String, String)] = &pack_prompt_layers;
+
         // Build system prompt (without SKILL.md injection — capabilities are
         // surfaced through the CSpace tool set + semantic retrieval instead).
         // The `brain` skill bullet is advertised only when a brain is bound
@@ -418,6 +451,7 @@ impl AgentRuntime {
             None,
             None,
             brain_line.as_deref(),
+            pack_prompt_layers_ref,
         );
 
         // Semantic capability retrieval: find tools relevant to this task's goal.
@@ -467,6 +501,7 @@ impl AgentRuntime {
                 capabilities_xml.as_deref(),
                 kernel_manifest.as_deref(),
                 brain_line.as_deref(),
+                pack_prompt_layers_ref,
             );
         }
 
@@ -615,6 +650,7 @@ impl AgentRuntime {
                 project_id,
                 restore_state,
                 tool_profile,
+                &resolved_execution,
             )
             .await?
         };
@@ -705,8 +741,10 @@ impl AgentRuntime {
             tool_calls = tool_calls.len(),
             "AgentRuntime finished"
         );
-
         let result = ExecutionResult {
+            recipe_id: resolved_execution
+                .is_coding()
+                .then(|| resolved_execution.recipe.0.clone()),
             output: final_content.clone(),
             steps_completed,
             success,
@@ -859,6 +897,7 @@ async fn run_agent(
     project_id: Option<uuid::Uuid>,
     restore_state: Option<&serde_json::Value>,
     tool_profile: ToolProfile,
+    resolved: &crate::execution_recipe::ResolvedExecution,
 ) -> Result<(
     String,
     usize,
@@ -1056,15 +1095,89 @@ async fn run_agent(
         &cspace,
         search_cache,
         agent_id,
-        access_gate,
-        agent_context,
-        Some(approval_gate),
-        Some(approval_event_bus),
-        Some(approval_pending),
-        Some(path_access_pending),
+        access_gate.clone(),
+        agent_context.clone(),
+        Some(approval_gate.clone()),
+        Some(approval_event_bus.clone()),
+        Some(approval_pending.clone()),
+        Some(path_access_pending.clone()),
         tool_profile != ToolProfile::Control,
         project_id,
     );
+    // ── Coding recipe install (execution-recipe design) ──
+    //
+    // Pack tools flow through the SAME gated installer seam (the single
+    // registration path); native same-name tools are replaced by registry
+    // overwrite, native overlays reject the pack versions with structured
+    let mut coding_snapshot_store: Option<Arc<dyn oxicode_sdk::oxicode_hashline::SnapshotStore>> =
+        None;
+    if resolved.is_coding() {
+        let installed = crate::execution_recipe::install_coding_turn(
+            &kernel_handle.runtime_extensions,
+            kernel_handle.exec.access_manager(),
+            &registry,
+            access_gate.clone(),
+            &agent_context,
+            Some(approval_gate.clone()),
+            Some(approval_event_bus.clone()),
+            Some(approval_pending.clone()),
+            Some(path_access_pending.clone()),
+            resolved,
+            &workspace,
+            session_id.as_deref(),
+            project_id,
+        )?;
+        let manifest = installed.manifest;
+        coding_snapshot_store = Some(installed.snapshot_store);
+
+        // Structured turn events on the existing bus (design: no second
+        // transport; no secrets in payloads).
+        let _ =
+            approval_event_bus.publish(crate::event_bus::KernelEvent::ExecutionRecipeResolved {
+                exec_id,
+                agent_id,
+                session_id: session_id.clone(),
+                recipe: resolved.recipe.0.clone(),
+                packs: resolved.pack_ids.iter().map(|p| p.0.clone()).collect(),
+                source: format!("{:?}", resolved.source),
+                workspace: workspace.clone(),
+                tools: manifest
+                    .tools
+                    .iter()
+                    .map(|t| crate::event_bus::RecipeToolEntry {
+                        name: t.exposed_name.clone(),
+                        implementation: t.descriptor.0.clone(),
+                    })
+                    .collect(),
+                degraded: manifest
+                    .degraded
+                    .iter()
+                    .map(|d| crate::event_bus::RecipeDegradedEntry {
+                        feature: d.feature.clone(),
+                        reason: format!("{:?}", d.reason),
+                        affected_tools: d.affected_tools.clone(),
+                    })
+                    .collect(),
+                compatibility_target: manifest.compatibility.target.clone(),
+            });
+        for st in &installed.statuses {
+            let _ =
+                approval_event_bus.publish(crate::event_bus::KernelEvent::RuntimeExtensionStatus {
+                    exec_id,
+                    agent_id,
+                    extension: st.extension.clone(),
+                    state: st.state.clone(),
+                    detail: st.detail.clone(),
+                });
+        }
+        tracing::info!(
+            exec_id = %exec_id,
+            recipe = %resolved.recipe,
+            tools = manifest.tools.len(),
+            degraded = manifest.degraded.len(),
+            "coding recipe installed"
+        );
+    }
 
     tracing::info!(
         exec_id = %exec_id,
@@ -1118,6 +1231,10 @@ async fn run_agent(
         todo: session_id.as_deref().map(|sid| {
             kernel_handle.todos.for_session(sid) as Arc<dyn oxicode_sdk::TodoStateProvider>
         }),
+        // Recipe-validated patch contribution (execution-recipe design):
+        // only services the host itself supplied flow back into the
+        // config — the pack can never widen the host inventory.
+        snapshot_store: coding_snapshot_store,
         // RFC-035 Phase B/C: pass through gap 1/3 config to oxicode-sdk 0.54.0+.
         max_tool_result_bytes: config.max_tool_result_bytes,
         // subagent_depth = CURRENT depth (0 = top-level). The in-process
@@ -1904,6 +2021,9 @@ fn build_directive_system_prompt(
         capabilities_xml,
         kernel_manifest,
         brain_line.as_deref(),
+        // Forked child prompts carry no pack layers: forks resolve their own
+        // recipe (rollout step 6 moves coding children onto the lifecycle).
+        &[],
     )
 }
 
@@ -2057,6 +2177,11 @@ fn build_system_prompt_inner(
     capabilities_xml: Option<&str>,
     kernel_manifest: Option<&str>,
     brain_line: Option<&str>,
+    // (id, body) prompt layers contributed by the resolved behavior pack.
+    // Empty for general-v1 turns. Installed AFTER persona/project
+    // instructions and BEFORE the security protocol tail, so a pack can
+    // never override Oxios security text.
+    pack_prompt_layers: &[(String, String)],
 ) -> String {
     let mut prompt = String::from(
         "You are an autonomous agent in the Oxios operating system.\n\
@@ -2121,6 +2246,16 @@ fn build_system_prompt_inner(
     if let Some(pp) = persona_prompt {
         prompt.push_str("\n## Persona\n");
         prompt.push_str(pp);
+        prompt.push('\n');
+    }
+
+    // Behavior-pack prompt layers (execution-recipe design order: Oxios
+    // security text > persona/project > pack layers > request context).
+    for (layer_id, body) in pack_prompt_layers {
+        prompt.push_str("\n## Behavior Pack (");
+        prompt.push_str(layer_id);
+        prompt.push_str(")\n");
+        prompt.push_str(body);
         prompt.push('\n');
     }
 
@@ -2367,6 +2502,7 @@ mod tests {
             None,
             None,
             None,
+            &[],
         );
         // The four pinned type values must appear verbatim (the frontend
         // matches these exact substrings — paraphrasing breaks the preview).
@@ -2404,6 +2540,7 @@ mod tests {
             None,
             None,
             None,
+            &[],
         );
         assert!(
             !prompt.contains("brain skill"),
@@ -2428,6 +2565,7 @@ mod tests {
             None,
             None,
             brain_line.as_deref(),
+            &[],
         );
         assert!(prompt.contains(
             "- **Memory**: the `brain` skill — the connected oxibrain CLI. Connected brain space: `work`."

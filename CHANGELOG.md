@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [2.2.0] - 2026-09-04
+
+### Added
+
+- **Config single-source + immediate GUI reflection.** One
+  `Arc<RwLock<OxiosConfig>>` is now shared by the gateway EngineApi, both
+  KernelHandles' EngineApi (cached control-plane + preliminary AgentRuntime
+  handle), and the web surface's AppState. `PUT/PATCH /api/config` writes
+  reach kernel per-turn reads (`execution_recipe`, `search`,
+  `role_routing`) on the next turn — previously each EngineApi held a
+  private boot-time clone nothing ever updated, so those sections silently
+  required a daemon restart. `execution_recipe` is classified
+  hot-reloadable in `HOT_RELOADABLE_SECTIONS` / `/api/config/meta`.
+
+- **Settings GUI: execution recipe section + per-project binding.** The
+  settings page gains an `[execution_recipe]` section (resolver, coding
+  pilot, persistent shell, eval kernels). The project control room gains a
+  binding select backed by the new `PUT /api/projects/:id/execution-recipe`
+  (validates the recipe id, persists config.toml, takes effect on the
+  project's next agent turn). Dead SystemAgentSettings card (hardcoded
+  empty props) removed. Regression test pins the shared-handle propagation.
+
 ## [2.1.0] - 2026-09-03
 
 ### Added

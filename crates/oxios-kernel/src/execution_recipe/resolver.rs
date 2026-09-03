@@ -182,12 +182,12 @@ mod tests {
 
     #[test]
     fn disabled_resolver_always_yields_general_v1() {
-        let mut c = ExecutionRecipeConfig::default();
-        c.enabled = false;
-        c.coding_pilot = true;
-        let mut bindings = HashMap::new();
-        bindings.insert(project().to_string(), CODING_OMP_V1.to_string());
-        c.project_bindings = bindings;
+        let c = ExecutionRecipeConfig {
+            enabled: false,
+            coding_pilot: true,
+            project_bindings: HashMap::from([(project().to_string(), CODING_OMP_V1.to_string())]),
+            ..Default::default()
+        };
         let r = ExecutionRecipeResolver::new(c);
         let resolved = r.resolve(RecipeRequest {
             project_id: Some(project()),

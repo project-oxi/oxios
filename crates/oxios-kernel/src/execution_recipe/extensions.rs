@@ -254,7 +254,7 @@ mod tests {
         let _ = mgr.acquire(key("/tmp/w"), flags(true, false));
         mgr.release(&key("/tmp/w"));
         let again = mgr.acquire(key("/tmp/w"), flags(true, false));
-        assert_eq!(again.statuses.iter().all(|s| s.state == "started"), true);
+        assert!(again.statuses.iter().all(|s| s.state == "started"));
     }
 
     #[test]

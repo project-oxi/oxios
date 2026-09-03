@@ -17,13 +17,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn coding_config() -> ExecutionRecipeConfig {
-    let mut c = ExecutionRecipeConfig::default();
-    c.enabled = true;
-    c.coding_pilot = true;
-    c.coding_shell = true;
-    c.coding_eval = true;
-    c.project_bindings = HashMap::from([(uuid::Uuid::nil().to_string(), CODING_OMP_V1.into())]);
-    c
+    ExecutionRecipeConfig {
+        enabled: true,
+        coding_pilot: true,
+        coding_shell: true,
+        coding_eval: true,
+        project_bindings: HashMap::from([(uuid::Uuid::nil().to_string(), CODING_OMP_V1.into())]),
+    }
 }
 
 fn permissive_gate(
@@ -163,8 +163,10 @@ fn coding_pilot_installs_the_full_composition() {
 
 #[test]
 fn pilot_off_never_selects_the_coding_pack() {
-    let mut cfg = ExecutionRecipeConfig::default();
-    cfg.project_bindings = HashMap::from([(uuid::Uuid::nil().to_string(), CODING_OMP_V1.into())]);
+    let cfg = ExecutionRecipeConfig {
+        project_bindings: HashMap::from([(uuid::Uuid::nil().to_string(), CODING_OMP_V1.into())]),
+        ..Default::default()
+    };
     let resolver = ExecutionRecipeResolver::new(cfg);
     let resolved = resolver.resolve(RecipeRequest {
         project_id: Some(uuid::Uuid::nil()),

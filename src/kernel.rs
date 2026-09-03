@@ -34,6 +34,10 @@ pub struct Kernel {
     event_bus: EventBus,
     state_store: Arc<oxios_kernel::state_store::StateStore>,
     config: OxiosConfig,
+    /// Single shared config source — ONE `Arc<RwLock<OxiosConfig>>` handed to
+    /// both KernelHandles' EngineApi and the web surface's AppState, so
+    /// `/api/config` writes are visible to per-turn kernel reads immediately.
+    config_handle: Arc<parking_lot::RwLock<OxiosConfig>>,
     skill_manager: Arc<SkillManager>,
     supervisor: Arc<dyn Supervisor>,
     access_manager: Arc<parking_lot::Mutex<AccessManager>>,
@@ -187,9 +191,11 @@ impl Kernel {
                         self.access_manager.clone(),
                     ),
                     oxios_kernel::A2aApi::new(self.a2a_protocol.clone()),
-                    // EngineApi — LLM providers, models, config + routing stats + engine hot-swap
+                    // EngineApi — LLM providers, models, config + routing stats + engine hot-swap.
+                    // Shares the single config_handle Arc so /api/config writes
+                    // and the typed engine setters observe one consistent view.
                     Arc::new(oxios_kernel::EngineApi::new(
-                        Arc::new(parking_lot::RwLock::new(self.config.clone())),
+                        self.config_handle.clone(),
                         self.config_path.clone(),
                         Arc::new(oxios_kernel::RoutingStats::new()),
                         Arc::clone(&self.engine_handle),
@@ -481,6 +487,14 @@ impl Kernel {
     /// Configuration reference.
     pub fn config(&self) -> &OxiosConfig {
         &self.config
+    }
+
+    /// The shared config handle — the SAME `Arc` held by both EngineApi
+    /// instances and the web surface's `AppState`. Web routes mutate config
+    /// through this; kernel per-turn reads (`execution_recipe_config`,
+    /// `search_config`, `role_routing`) observe the writes immediately.
+    pub fn config_handle(&self) -> Arc<parking_lot::RwLock<OxiosConfig>> {
+        Arc::clone(&self.config_handle)
     }
 
     /// Apply CLI overrides for the E2EE remote companion surface (RFC-044 §6.2).
@@ -1397,13 +1411,25 @@ impl KernelBuilder {
         // Routing stats — shared between EngineApi and AgentRuntime
         let routing_stats = Arc::new(oxios_kernel::RoutingStats::new());
 
+        // ── Single config source (config hot-reload unification) ──
+        //
+        // ONE Arc<RwLock<OxiosConfig>> shared by the gateway EngineApi, both
+        // KernelHandles' EngineApi (cached control-plane + preliminary
+        // AgentRuntime handle), and the web surface's AppState. PUT/PATCH
+        // /api/config writes `*state.config.write()` through this same Arc,
+        // so kernel consumers that read per turn (execution_recipe,
+        // search, role_routing) see GUI changes immediately. Before this,
+        // each EngineApi held a private boot-time clone that nothing ever
+        // updated.
+        let config_handle = Arc::new(parking_lot::RwLock::new(config.clone()));
+
         // EngineHandle was created earlier (before OuroborosEngine) so both the
         // Ouroboros phases and AgentRuntime resolve the live default model
         // through the same handle. EngineApi writes (set_model / set_api_key)
         // rebuild and swap it; AgentRuntime reads the latest on each execute().
         // ── Gateway APIs — Arc-wrapped for sharing with Gateway and KernelHandle ──
         let engine_api = Arc::new(oxios_kernel::EngineApi::new(
-            Arc::new(parking_lot::RwLock::new(config.clone())),
+            Arc::clone(&config_handle),
             config_path.clone(),
             Arc::clone(&routing_stats),
             Arc::clone(&engine_handle),
@@ -1486,9 +1512,13 @@ impl KernelBuilder {
                     access_manager.clone(),
                 ),
                 oxios_kernel::A2aApi::new(a2a_protocol.clone()),
-                // EngineApi — routing stats shared between EngineApi and AgentRuntime + engine hot-swap
+                // EngineApi — routing stats shared between EngineApi and AgentRuntime + engine hot-swap.
+                // Shares the SAME config Arc as the gateway EngineApi, the cached
+                // control-plane handle, and AppState — so PUT/PATCH /api/config
+                // reaches the per-turn reads (execution_recipe, search, role_routing)
+                // without a restart.
                 Arc::new(oxios_kernel::EngineApi::new(
-                    Arc::new(parking_lot::RwLock::new(config.clone())),
+                    Arc::clone(&config_handle),
                     config_path.clone(),
                     Arc::clone(&routing_stats),
                     Arc::clone(&engine_handle),
@@ -1747,6 +1777,10 @@ impl KernelBuilder {
             event_bus: event_bus.clone(),
             state_store: state_store.clone(),
             config,
+            // Single shared config source: the cached handle's EngineApi, the
+            // preliminary AgentRuntime handle's EngineApi, and the web
+            // surface's AppState all dereference THIS Arc (see build() above).
+            config_handle: Arc::clone(&config_handle),
             skill_manager,
             supervisor,
             access_manager,

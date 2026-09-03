@@ -1799,6 +1799,11 @@ const HOT_RELOADABLE_SECTIONS: &[(&str, &str)] = &[
     ("resource_monitor", "resource_monitor"),
     ("token_maxing", "quota_tracker"),
     ("orchestrator", "infra_api"),
+    // Config single-source unification: AppState.config IS the kernel
+    // EngineApi's RwLock (one shared Arc), so writes here are observed by the
+    // per-turn reads in `AgentRuntime::execute_inner` on the next turn —
+    // no restart, no extra propagation step.
+    ("execution_recipe", "agent_runtime"),
 ];
 
 /// Subset of fields that always require a restart even inside a
@@ -2084,6 +2089,19 @@ mod patch_tests {
         let mut restart = Vec::new();
         classify_patch(&base, &patch, "", &mut applied, &mut restart);
         assert_eq!(applied, vec!["exec.allowed_commands"]);
+        assert!(restart.is_empty());
+    }
+
+    #[test]
+    fn classify_execution_recipe_as_hot_reloadable() {
+        // Config single-source unification: the pilot toggles are read per
+        // turn through the shared config Arc, so they apply immediately.
+        let base = json!({"execution_recipe": {"coding_pilot": false}});
+        let patch = json!({"execution_recipe": {"coding_pilot": true}});
+        let mut applied = Vec::new();
+        let mut restart = Vec::new();
+        classify_patch(&base, &patch, "", &mut applied, &mut restart);
+        assert_eq!(applied, vec!["execution_recipe.coding_pilot"]);
         assert!(restart.is_empty());
     }
 

@@ -171,8 +171,8 @@ pub(crate) use operate_routes::{
     handle_operate_runs,
 };
 pub(crate) use project_routes::{
-    handle_project_create, handle_project_delete, handle_project_get, handle_project_roots_status,
-    handle_project_update, handle_projects_list,
+    handle_project_create, handle_project_delete, handle_project_execution_recipe_put,
+    handle_project_get, handle_project_roots_status, handle_project_update, handle_projects_list,
 };
 pub(crate) use resource_routes::{
     handle_resource_history, handle_resource_overload, handle_resource_snapshot,
@@ -659,6 +659,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/projects/{id}", get(handle_project_get))
         .route("/api/projects/{id}", put(handle_project_update))
         .route("/api/projects/{id}", delete(handle_project_delete))
+        .route(
+            "/api/projects/{id}/execution-recipe",
+            put(handle_project_execution_recipe_put),
+        )
         .route(
             "/api/projects/{id}/roots/status",
             get(handle_project_roots_status),

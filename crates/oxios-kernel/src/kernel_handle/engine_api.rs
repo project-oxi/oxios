@@ -2276,4 +2276,41 @@ mod tests {
         let raw = "I couldn't generate suggestions for this.";
         assert!(parse_follow_up_chips(raw).is_err());
     }
+    /// Regression (config single-source unification): a write through the
+    /// shared config Arc — exactly what `PUT/PATCH /api/config` does via
+    /// `*state.config.write()` — must be visible to the per-turn reads
+    /// (`execution_recipe_config`, `search_config`, `role_routing`) WITHOUT
+    /// constructing a new EngineApi. Guards against reintroducing a private
+    /// boot-time config clone.
+    #[test]
+    fn shared_config_write_reaches_per_turn_reads() {
+        use crate::config::{ExecutionRecipeConfig, SearchProvider};
+        use crate::engine::{EngineHandle, OxiosEngine};
+
+        let engine = Arc::new(OxiosEngine::new("anthropic/claude-sonnet-4-20250514"));
+        let handle = Arc::new(EngineHandle::new(engine));
+        let config = Arc::new(parking_lot::RwLock::new(OxiosConfig::default()));
+        let api = EngineApi::new(
+            Arc::clone(&config),
+            PathBuf::from("/tmp/oxios-config-share-test-NONEXISTENT.toml"),
+            Arc::new(RoutingStats::new()),
+            handle,
+        );
+
+        // The API-write shape: mutate the config through the shared Arc.
+        {
+            let mut cfg = config.write();
+            cfg.execution_recipe = ExecutionRecipeConfig {
+                enabled: true,
+                coding_pilot: true,
+                ..Default::default()
+            };
+            cfg.search.provider = SearchProvider::Tavily;
+        }
+
+        // Per-turn reads observe the write immediately — no restart, no
+        // re-construction.
+        assert!(api.execution_recipe_config().coding_pilot);
+        assert_eq!(api.search_config().provider, SearchProvider::Tavily);
+    }
 }

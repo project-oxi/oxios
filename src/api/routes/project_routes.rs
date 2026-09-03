@@ -237,7 +237,92 @@ pub(crate) async fn handle_project_delete(
 
     Ok(StatusCode::NO_CONTENT)
 }
-// ─── Tests ──────────────────────────────────────────────────────────────────
+
+/// PUT /api/projects/:id/execution-recipe — Bind (or clear) the project's
+/// execution recipe (execution-recipe coding host design).
+///
+/// Writes `[execution_recipe].project_bindings` through the shared config
+/// Arc and persists config.toml. The binding is observed by the recipe
+/// resolver on the project's NEXT agent turn (it re-reads the config every
+/// turn — no restart). `recipe: null` clears the binding.
+pub(crate) async fn handle_project_execution_recipe_put(
+    state: State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<SetExecutionRecipeRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let api = project_api!(state);
+    api.get_project(&id)
+        .ok_or_else(|| AppError::NotFound("Project not found".into()))?;
+
+    // Validate the recipe id up front: the resolver would silently degrade
+    // an unknown id to general-v1, which would mask a typo.
+    if let Some(recipe) = body
+        .recipe
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let known = [
+            oxios_kernel::execution_recipe::GENERAL_V1,
+            oxios_kernel::execution_recipe::CODING_OMP_V1,
+        ];
+        if !known.contains(&recipe) {
+            return Err(AppError::BadRequest(format!(
+                "Unknown recipe '{recipe}'. Known recipes: {}",
+                known.join(", ")
+            )));
+        }
+    }
+
+    {
+        let mut cfg = state.config.write();
+        match body
+            .recipe
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(recipe) => {
+                cfg.execution_recipe
+                    .project_bindings
+                    .insert(id.clone(), recipe.to_string());
+            }
+            None => {
+                cfg.execution_recipe.project_bindings.remove(&id);
+            }
+        }
+    }
+
+    // Persist config.toml (same whole-file write as the other section routes).
+    let content = {
+        let cfg = state.config.read();
+        toml::to_string_pretty(&*cfg)
+            .map_err(|e: toml::ser::Error| AppError::Internal(e.to_string()))?
+    };
+    tokio::fs::write(&state.config_path, content)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let bound = state
+        .config
+        .read()
+        .execution_recipe
+        .project_bindings
+        .get(&id)
+        .cloned();
+    Ok(Json(serde_json::json!({
+        "project_id": id,
+        "recipe": bound,
+    })))
+}
+
+/// Request body for [`handle_project_execution_recipe_put`].
+#[derive(Debug, Deserialize)]
+pub(crate) struct SetExecutionRecipeRequest {
+    /// Recipe id to bind (e.g. `"coding-omp-v1"`), or `null` to clear.
+    #[serde(default)]
+    pub(crate) recipe: Option<String>,
+}
 
 #[cfg(test)]
 mod tests {

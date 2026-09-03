@@ -33,6 +33,7 @@ const ICON_MAP: Record<SectionIconKey, React.ComponentType<{ className?: string 
   engine: Bot,
   kernel: Cpu,
   exec: Terminal,
+  executionRecipe: Wrench,
   security: Shield,
   orchestrator: Zap,
   context: Brain,

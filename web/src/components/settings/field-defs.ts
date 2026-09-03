@@ -588,6 +588,43 @@ const budgetSection: SettingsSectionDef = {
   ],
 }
 
+const executionRecipeSection: SettingsSectionDef = {
+  key: 'execution_recipe',
+  labelKey: 'settings.sectionExecutionRecipe',
+  descriptionKey: 'settings.executionRecipeDescription',
+  iconKey: 'executionRecipe',
+  groupId: 'ai',
+  fields: [
+    {
+      key: 'enabled',
+      labelKey: 'settings.executionRecipeEnabled',
+      descriptionKey: 'settings.executionRecipeEnabledDesc',
+      type: 'toggle',
+    },
+    {
+      key: 'coding_pilot',
+      labelKey: 'settings.codingPilot',
+      descriptionKey: 'settings.codingPilotDesc',
+      type: 'toggle',
+      dependsOn: { field: 'enabled', value: true },
+    },
+    {
+      key: 'coding_shell',
+      labelKey: 'settings.codingShell',
+      descriptionKey: 'settings.codingShellDesc',
+      type: 'toggle',
+      dependsOn: { field: 'coding_pilot', value: true },
+    },
+    {
+      key: 'coding_eval',
+      labelKey: 'settings.codingEval',
+      descriptionKey: 'settings.codingEvalDesc',
+      type: 'toggle',
+      dependsOn: { field: 'coding_pilot', value: true },
+    },
+  ],
+}
+
 // ---------------------------------------------------------------------------
 // All new sections (MVP)
 // ---------------------------------------------------------------------------
@@ -598,6 +635,7 @@ export const NEW_SECTIONS: SettingsSectionDef[] = [
   brainSection,
   telegramSection,
   auditSection,
+  executionRecipeSection,
   calendarSection,
   agentLogSection,
   resourceMonitorSection,
@@ -619,7 +657,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     id: 'ai',
     labelKey: 'settings.groupAi',
-    sectionKeys: ['engine'],
+    sectionKeys: ['engine', 'execution_recipe'],
   },
   {
     id: 'exec_security',
@@ -703,6 +741,7 @@ export type SectionIconKey =
   | 'kernel'
   | 'exec'
   | 'security'
+  | 'executionRecipe'
   | 'orchestrator'
   | 'context'
   | 'gateway'
@@ -743,14 +782,14 @@ export interface SectionMeta {
 }
 
 export const SECTION_META: SectionMeta[] = [
-  // System Agents (LobeHub-inspired model assignment)
+  // Execution recipe (coding host) — declarative; hot-reloadable.
   {
-    id: 'system-agents',
-    labelKey: 'settings.sectionSystemAgents',
-    descriptionKey: 'settings.systemAgentsDescription',
+    id: 'execution_recipe',
+    labelKey: 'settings.sectionExecutionRecipe',
+    descriptionKey: 'settings.executionRecipeDescription',
     groupId: 'ai',
-    iconKey: 'systemAgents',
-    custom: true,
+    iconKey: 'executionRecipe',
+    custom: false,
   },
   // AI Image generation
   {

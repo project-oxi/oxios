@@ -8,7 +8,6 @@ pub use oxios_gateway::{Surface, SurfaceContext};
 use anyhow::Result;
 use oxios_gateway::ActiveWebDist;
 use std::path::Path;
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::Kernel;
@@ -74,7 +73,9 @@ pub async fn activate_surfaces(
                 let ctx = SurfaceContext {
                     kernel: kernel.handle(),
                     gateway: kernel.gateway(),
-                    config: Arc::new(parking_lot::RwLock::new(config.clone())),
+                    // The SAME Arc the kernel EngineApis hold — `/api/config`
+                    // writes reach kernel per-turn reads without a restart.
+                    config: kernel.config_handle(),
                     config_path: config_path.to_path_buf(),
                     web_dist: web_dist.clone(),
                     shutdown: shutdown.clone(),

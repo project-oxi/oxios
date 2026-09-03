@@ -1,5 +1,6 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, FolderOpen } from 'lucide-react'
+import { ArrowLeft, FolderOpen, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { OperateInspector } from '@/components/operate/operate-inspector'
@@ -9,8 +10,10 @@ import { ErrorState } from '@/components/shared/error-state'
 import { LoadingCards } from '@/components/shared/loading'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { type OperateRun, useOperateProjectContext } from '@/hooks/use-operate'
+import { api } from '@/lib/api-client'
 import { formatRelativeTime } from '@/lib/utils'
 
 /**
@@ -70,6 +73,8 @@ export function ProjectControlRoom({ projectId }: { projectId: string }) {
           {project.instructions}
         </p>
       )}
+
+      <ExecutionRecipeCard projectId={projectId} />
 
       {/* Roots — present only when the backend records root liveness. */}
       {roots && roots.length > 0 && (
@@ -171,5 +176,73 @@ function BackLink() {
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
       </Link>
     </Button>
+  )
+}
+
+/**
+ * Execution recipe binding (execution-recipe coding host design). One
+ * select per project: the binding is written straight to the shared config
+ * (single config Arc) + config.toml and observed by the recipe resolver on
+ * the project's NEXT agent turn — no restart. `null` clears the binding.
+ */
+function ExecutionRecipeCard({ projectId }: { projectId: string }) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
+  const [error, setError] = useState(false)
+
+  const bound = useQuery({
+    queryKey: ['project-recipe', projectId],
+    queryFn: async () => {
+      const cfg = await api.get<{
+        execution_recipe?: { project_bindings?: Record<string, string> }
+      }>('/api/config')
+      return cfg.execution_recipe?.project_bindings?.[projectId] ?? null
+    },
+  })
+
+  const save = useMutation({
+    mutationFn: (recipe: string) =>
+      api
+        .put<{ project_id: string; recipe: string | null }>(
+          `/api/projects/${projectId}/execution-recipe`,
+          { recipe: recipe === '' ? null : recipe },
+        )
+        .then((res) => res),
+    onSuccess: (data) => {
+      setError(false)
+      qc.setQueryData(['project-recipe', projectId], data.recipe)
+    },
+    onError: () => setError(true),
+  })
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Wrench className="h-4 w-4" aria-hidden="true" />
+          {t('operate.project.executionRecipe')}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1.5">
+        <Select
+          value={bound.data ?? ''}
+          onValueChange={(v: string) => save.mutate(v)}
+          disabled={bound.isLoading || save.isPending}
+          placeholder={
+            save.isPending ? t('operate.project.recipeSaving') : t('operate.project.recipeNone')
+          }
+          aria-label={t('operate.project.executionRecipe')}
+          options={[
+            { value: '', label: t('operate.project.recipeNone') },
+            { value: 'coding-omp-v1', label: 'coding-omp-v1' },
+            { value: 'general-v1', label: 'general-v1' },
+          ]}
+          className="w-72"
+        />
+        {error && (
+          <p className="text-xs text-destructive">{bound.error ? String(bound.error) : ''}</p>
+        )}
+      </CardContent>
+    </Card>
   )
 }

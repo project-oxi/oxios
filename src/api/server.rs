@@ -9,10 +9,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::api::bridge::WebBridgeHandle;
-use crate::api::error::AppError;
 use crate::api::middleware::RateLimiter;
 use oxios_gateway::ActiveWebDist;
-use oxios_kernel::{KernelHandle, OxiosConfig, config};
+use oxios_kernel::{KernelHandle, OxiosConfig};
 
 /// Shared application state for the web dashboard.
 ///
@@ -56,19 +55,5 @@ impl std::fmt::Debug for AppState {
             .field("config", &"...")
             .field("config_path", &self.config_path)
             .finish()
-    }
-}
-
-impl AppState {
-    /// Reload config from disk and update in-memory state.
-    #[allow(dead_code)]
-    pub async fn reload_config(&self) -> Result<(), AppError> {
-        let config = config::load_config(&self.config_path)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        *self.config.write() = config;
-
-        tracing::info!("Config hot-reloaded from {}", self.config_path.display());
-        Ok(())
     }
 }
